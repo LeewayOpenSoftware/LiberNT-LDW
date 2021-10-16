@@ -987,6 +987,9 @@
           }
         }
 
+        /* mark the string as not yet converted */
+        entry->string = NULL;
+
         entry++;
       }
 
