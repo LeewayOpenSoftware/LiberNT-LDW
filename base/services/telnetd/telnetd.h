@@ -10,6 +10,8 @@
 #define _INC_WINDOWS
 #include <winsock2.h>
 #include <strsafe.h>
+#include <winreg.h>
+#include <userenv.h>
 
 #define STATUS_PENDING ((DWORD)0x00000103)
 
@@ -42,6 +44,9 @@
 #define MODE "\x01"
 
 #define HANDSHAKE_TIMEOUT (3)
+#define MAX_LOGIN_ATTEMPTS (3)
+#define LOGIN_FAILURE_DELAY (2000)
+#define MAX_ALLOWED_CLIENTS (16)
 
 /*
 ** types
@@ -58,7 +63,15 @@ typedef struct client_s
   DWORD    dwProcessId;
   HANDLE   hChildStdinWr;   
   HANDLE   hChildStdoutRd;
+  HANDLE   hToken;
+  HANDLE   hProfile;
 } client_t;
+
+typedef struct client_range_s
+{
+  ULONG Address;
+  ULONG Mask;
+} client_range_t;
 
 typedef enum
 {
@@ -73,12 +86,15 @@ typedef enum
 static BOOL WINAPI Cleanup(DWORD dwControlType);
 static void WaitForConnect(void);
 static BOOLEAN StartSocketInterface(void);
+static void LoadConfiguration(void);
+static BOOLEAN IsClientAllowed(const struct sockaddr_in *sa);
+static BOOLEAN AuthenticateUser(client_t *client, HANDLE *phToken);
 static void CreateSocket(void);
 static void UserLogin(int client_socket);
 static DWORD WINAPI UserLoginThread(LPVOID);
 static int DoTelnetHandshake(int sock);
 static int ReceiveLine(int sock, char *buffer, int len, EchoMode echo);
-static void RunShell(client_t *client); 
+static void RunShell(client_t *client, HANDLE hToken);
 //static BOOL CreateChildProcess(const char *); 
 static DWORD WINAPI MonitorChildThread(LPVOID);
 static DWORD WINAPI WriteToPipeThread(LPVOID); 

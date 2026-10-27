@@ -36,6 +36,9 @@ static inline int telnetd_printf(const char *format, ...);
 static BOOLEAN bShutdown = 0;
 static BOOLEAN bSocketInterfaceInitialised = 0;
 static int sock;
+static ULONG bindAddress = INADDR_ANY;
+static client_range_t allowedClients[MAX_ALLOWED_CLIENTS];
+static DWORD allowedClientCount = 0;
 
 /* In the future, some options might be passed here to handle
  * authentication options in the registry or command line
@@ -51,6 +54,8 @@ int kickoff_telnetd(void)
 
 //  DetectPlatform();
   SetConsoleCtrlHandler(Cleanup, 1);
+
+  LoadConfiguration();
 
   if (!StartSocketInterface())
     ErrorExit("Unable to start socket interface\n");
@@ -98,6 +103,94 @@ static BOOLEAN StartSocketInterface(void)
   return 1;
 }
 
+static BOOLEAN ParseClientRange(const char *text, client_range_t *range)
+{
+  char address[16];
+  const char *slash = strchr(text, '/');
+  size_t length = slash ? (size_t)(slash - text) : strlen(text);
+  long bits = 32;
+  ULONG parsed;
+
+  if (length == 0 || length >= sizeof(address))
+    return FALSE;
+  memcpy(address, text, length);
+  address[length] = '\0';
+
+  if (slash) {
+    char *end;
+    bits = strtol(slash + 1, &end, 10);
+    if (end == slash + 1 || *end != '\0' || bits < 0 || bits > 32)
+      return FALSE;
+  }
+
+  parsed = inet_addr(address);
+  if (parsed == INADDR_NONE && strcmp(address, "255.255.255.255") != 0)
+    return FALSE;
+
+  range->Mask = bits ? htonl(0xFFFFFFFFUL << (32 - bits)) : 0;
+  range->Address = parsed & range->Mask;
+  return TRUE;
+}
+
+static void LoadConfiguration(void)
+{
+  HKEY hKey;
+  char value[1024];
+  DWORD size;
+  DWORD type;
+  const char *entry;
+
+  if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                    "SYSTEM\\CurrentControlSet\\Services\\telnetd\\Parameters",
+                    0,
+                    KEY_QUERY_VALUE,
+                    &hKey) != ERROR_SUCCESS)
+    return;
+
+  size = sizeof(value) - 1;
+  if (RegQueryValueExA(hKey, "BindAddress", NULL, &type, (LPBYTE)value, &size) == ERROR_SUCCESS &&
+      type == REG_SZ) {
+    value[size] = '\0';
+    if (inet_addr(value) != INADDR_NONE)
+      bindAddress = inet_addr(value);
+    else
+      telnetd_printf("Ignoring invalid BindAddress '%s'\n", value);
+  }
+
+  size = sizeof(value) - 2;
+  if (RegQueryValueExA(hKey, "AllowedClients", NULL, &type, (LPBYTE)value, &size) == ERROR_SUCCESS &&
+      type == REG_MULTI_SZ) {
+    value[size] = '\0';
+    value[size + 1] = '\0';
+    for (entry = value; *entry != '\0'; entry += strlen(entry) + 1) {
+      if (allowedClientCount >= MAX_ALLOWED_CLIENTS) {
+        telnetd_printf("Ignoring AllowedClients entries after the first %d\n", MAX_ALLOWED_CLIENTS);
+        break;
+      }
+      if (ParseClientRange(entry, &allowedClients[allowedClientCount]))
+        allowedClientCount++;
+      else
+        telnetd_printf("Ignoring invalid AllowedClients entry '%s'\n", entry);
+    }
+  }
+
+  RegCloseKey(hKey);
+}
+
+static BOOLEAN IsClientAllowed(const struct sockaddr_in *sa)
+{
+  DWORD i;
+
+  if (allowedClientCount == 0)
+    return TRUE;
+
+  for (i = 0; i < allowedClientCount; i++) {
+    if ((sa->sin_addr.s_addr & allowedClients[i].Mask) == allowedClients[i].Address)
+      return TRUE;
+  }
+  return FALSE;
+}
+
 /* CreateSocket */
 static void CreateSocket(void)
 {
@@ -109,7 +202,7 @@ static void CreateSocket(void)
 
    memset(&sa, 0, sizeof(sa));
    sa.sin_family = AF_INET;
-   sa.sin_addr.s_addr = INADDR_ANY;
+   sa.sin_addr.s_addr = bindAddress;
    sa.sin_port = htons(TELNET_PORT);
 
    if (bind(sock, (struct sockaddr*) &sa, sizeof(sa)) != 0)
@@ -120,13 +213,17 @@ static void CreateSocket(void)
 static void WaitForConnect(void)
 {
   struct sockaddr_in sa;
+  int sa_len = sizeof(sa);
   int new_sock;
 
   if (listen(sock, 1) < 0)
      ErrorExit("Cannot listen on socket");
 
-  if ((new_sock = accept(sock, (struct sockaddr*) &sa, NULL)) < 0) {
+  if ((new_sock = accept(sock, (struct sockaddr*) &sa, &sa_len)) < 0) {
     fprintf(stderr, "Failed to accept incoming call\n");
+  } else if (!IsClientAllowed(&sa)) {
+    telnetd_printf("Refused connection from %s\n", inet_ntoa(sa.sin_addr));
+    closesocket(new_sock);
   } else {
     telnetd_printf("user connected on socket %d, port %d, address %lx\n", new_sock,
                                        htons(sa.sin_port), sa.sin_addr.s_addr);
@@ -151,77 +248,80 @@ static void UserLogin(int client_socket)
     CloseHandle(threadHandle);
 }
 
+static BOOLEAN AuthenticateUser(client_t *client, HANDLE *phToken)
+{
+  char       welcome[256];
+  char       hostname[64] = "Unknown";
+  char      *pwdPrompt = "\r\npass:";
+  char      *userPrompt = "\r\nuser:";
+  char      *failure = "\r\nLogin incorrect\r\n";
+  char       userID[USERID_SIZE];
+  char       password[USERID_SIZE];
+  char      *terminator;
+  int        attempt;
+  BOOL       loggedOn;
+
+  gethostname(hostname, sizeof(hostname));
+  StringCbPrintfA(welcome, sizeof(welcome), "\r\nWelcome to %s, please identify yourself\r\n", hostname);
+
+  if (send(client->socket, welcome, strlen(welcome), 0) < 0)
+    return FALSE;
+
+  for (attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt++) {
+    if (send(client->socket, userPrompt, strlen(userPrompt), 0) < 0)
+      return FALSE;
+    if (ReceiveLine(client->socket, userID, sizeof(userID) - 1, Echo) < 0)
+      return FALSE;
+    userID[USERID_SIZE - 1] = '\0';
+    if ((terminator = strchr(userID, CR)) != NULL)
+      *terminator = '\0';
+
+    if (send(client->socket, pwdPrompt, strlen(pwdPrompt), 0) < 0)
+      return FALSE;
+    if (ReceiveLine(client->socket, password, sizeof(password) - 1, Password) < 0) {
+      SecureZeroMemory(password, sizeof(password));
+      return FALSE;
+    }
+    password[USERID_SIZE - 1] = '\0';
+    if ((terminator = strchr(password, CR)) != NULL)
+      *terminator = '\0';
+
+    loggedOn = LogonUserA(userID,
+                          ".",
+                          password,
+                          LOGON32_LOGON_INTERACTIVE,
+                          LOGON32_PROVIDER_DEFAULT,
+                          phToken);
+    SecureZeroMemory(password, sizeof(password));
+
+    if (loggedOn) {
+      StringCchCopyA(client->userID, ARRAYSIZE(client->userID), userID);
+      telnetd_printf("User '%s' logged on\n", client->userID);
+      return TRUE;
+    }
+
+    telnetd_printf("Logon failed for user '%s' (error %lu)\n", userID, GetLastError());
+    Sleep(LOGIN_FAILURE_DELAY);
+    if (send(client->socket, failure, strlen(failure), 0) < 0)
+      return FALSE;
+  }
+
+  return FALSE;
+}
+
 /* Function: UserLoginThread */
 static DWORD WINAPI UserLoginThread(LPVOID data)
 {
   client_t  *client = (client_t *) data;
-  char       welcome[256];
-  char       hostname[64] = "Unknown";
-  char      *pwdPrompt = "\r\npass:";
-  //char      *logonPrompt = "\r\nLogin OK, please wait...";
-  //char      *byebye = "\r\nWrong! bye bye...\r\n";
-  char       userID[USERID_SIZE];
-  char       password[USERID_SIZE];
-  int        received;
-  char      *terminator;
+  HANDLE     hToken;
 
-  if (DoTelnetHandshake(client->socket)) {
+  if (DoTelnetHandshake(client->socket) || !AuthenticateUser(client, &hToken)) {
     closesocket(client->socket);
     free(client);
     return 0;
   }
 
-  gethostname(hostname, sizeof(hostname));
-  sprintf(welcome, "\r\nWelcome to %s, please identify yourself\r\n\r\nuser:", hostname);
-
-  if (send(client->socket, welcome, strlen(welcome), 0) < 0) {   
-    closesocket(client->socket);
-    free(client);
-    return 0;
-  }
-  received = ReceiveLine(client->socket, userID, sizeof(userID), Echo );
-  if (received < 0) {
-    closesocket(client->socket);
-    free(client);
-    return 0;
-  } else if (received) {
-    if ((terminator = strchr(userID, CR)) != NULL) {
-      *terminator = '\0';
-    }
-  }
-
-  if (send(client->socket, pwdPrompt, strlen(pwdPrompt), 0) < 0) {   
-    closesocket(client->socket);
-    free(client);
-    return 0;
-  }
-  received = ReceiveLine(client->socket, password, sizeof(password), Password );
-
-#if 0
-  if (received < 0) {
-    closesocket(client->socket);
-    free(client);
-    return 0;
-  } else if (received) {
-    if ((terminator = strchr(password, CR)) != NULL) {
-      *terminator = '\0';
-    }
-  }
-#endif
-
-  /* TODO: do authentication here */
-
-  
-  telnetd_printf("User '%p' logged on\n", userID);
-#if 0
-  strcpy(client->userID, userID);
-  if (send(client->socket, logonPrompt, strlen(logonPrompt), 0) < 0) {   
-    closesocket(client->socket);
-    free(client);
-    return 0;
-  }
-#endif
-  RunShell(client);
+  RunShell(client, hToken);
   return 0;
 }
 
@@ -357,8 +457,8 @@ static int ReceiveLine(int sock, char *buffer, int len, EchoMode echo)
 /*
 ** Function: RunShell
 */
-static void RunShell(client_t *client) 
-{ 
+static void RunShell(client_t *client, HANDLE hToken)
+{
    HANDLE                threadHandle;
    HANDLE                hChildStdinRd;
    HANDLE                hChildStdinWr;
@@ -368,6 +468,8 @@ static void RunShell(client_t *client)
    PROCESS_INFORMATION   piProcInfo;
    SECURITY_ATTRIBUTES   saAttr;
    char cmd_path[MAX_PATH];
+   LPVOID environment = NULL;
+   PROFILEINFOA profile;
 
    if (!GetEnvironmentVariableA("COMSPEC", cmd_path, ARRAYSIZE(cmd_path)))
    {
@@ -414,19 +516,50 @@ static void RunShell(client_t *client)
    //si.dwFlags |= STARTF_USESHOWWINDOW;
    //si.wShowWindow = SW_SHOW;
 
-   if (!CreateProcess(cmd_path,                  // executable module
-                      NULL,                      // command line 
-                      NULL,                      // process security attributes 
-                      NULL,                      // primary thread security attributes 
-                      TRUE,                      // handles are inherited 
-                      DETACHED_PROCESS +         // creation flags 
-                      CREATE_NEW_PROCESS_GROUP,
-                      NULL,                      // use parent's environment 
-                      NULL,                      // use parent's current directory 
-                      &si,                       // startup info
-                      &piProcInfo)) {
-     ErrorExit("Create process failed");
+   client->hToken = hToken;
+   client->hProfile = NULL;
+
+   ZeroMemory(&profile, sizeof(profile));
+   profile.dwSize = sizeof(profile);
+   profile.dwFlags = PI_NOUI;
+   profile.lpUserName = client->userID;
+   if (LoadUserProfileA(hToken, &profile))
+     client->hProfile = profile.hProfile;
+   else
+     telnetd_printf("LoadUserProfile failed (error %lu)\n", GetLastError());
+
+   if (!CreateEnvironmentBlock(&environment, hToken, FALSE))
+     environment = NULL;
+
+   if (!CreateProcessAsUserA(hToken,
+                             cmd_path,
+                             NULL,
+                             NULL,
+                             NULL,
+                             TRUE,
+                             CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP |
+                             (environment ? CREATE_UNICODE_ENVIRONMENT : 0),
+                             environment,
+                             NULL,
+                             &si,
+                             &piProcInfo)) {
+     telnetd_printf("Create process failed (error %lu)\n", GetLastError());
+     if (environment)
+       DestroyEnvironmentBlock(environment);
+     CloseHandle(hChildStdoutRd);
+     CloseHandle(hChildStdoutWr);
+     CloseHandle(hChildStdinRd);
+     CloseHandle(hChildStdinWr);
+     if (client->hProfile)
+       UnloadUserProfile(hToken, client->hProfile);
+     CloseHandle(hToken);
+     closesocket(client->socket);
+     free(client);
+     return;
    }
+
+   if (environment)
+     DestroyEnvironmentBlock(environment);
 
    client->hProcess = piProcInfo.hProcess;
    client->dwProcessId = piProcInfo.dwProcessId;
@@ -476,8 +609,12 @@ static DWORD WINAPI MonitorChildThread(LPVOID data)
   Sleep(500);
 
   CloseHandle(client->hChildStdoutRd);
-  CloseHandle(client->hChildStdinWr);       
+  CloseHandle(client->hChildStdinWr);
   CloseHandle(client->hProcess);
+
+  if (client->hProfile)
+    UnloadUserProfile(client->hToken, client->hProfile);
+  CloseHandle(client->hToken);
 
   closesocket(client->socket);
 
