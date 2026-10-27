@@ -3813,7 +3813,23 @@ NdisMRegisterDevice(
          DeviceBlock->MajorFunction[i] = MajorFunctions[i];
 
     DeviceBlock->DeviceObject = DeviceObject;
-    DeviceBlock->SymbolicName = SymbolicName;
+
+    /* Keep a private copy of the symbolic link name. Miniports typically build
+     * it on their stack in MiniportInitialize, so the caller's PNDIS_STRING is
+     * long dead by the time NdisMDeregisterDevice runs. */
+    DeviceBlock->SymbolicName.Length = 0;
+    DeviceBlock->SymbolicName.MaximumLength = SymbolicName->Length;
+    DeviceBlock->SymbolicName.Buffer = ExAllocatePoolWithTag(NonPagedPool,
+                                                             SymbolicName->Length ? SymbolicName->Length : sizeof(WCHAR),
+                                                             NDIS_TAG);
+    if (!DeviceBlock->SymbolicName.Buffer)
+    {
+        NDIS_DbgPrint(MIN_TRACE, ("Insufficient resources\n"));
+        IoDeleteSymbolicLink(SymbolicName);
+        IoDeleteDevice(DeviceObject);
+        return NDIS_STATUS_RESOURCES;
+    }
+    RtlCopyUnicodeString(&DeviceBlock->SymbolicName, SymbolicName);
 
     *pDeviceObject = DeviceObject;
     *NdisDeviceHandle = DeviceBlock;
@@ -3836,10 +3852,23 @@ NdisMDeregisterDevice(
  */
 {
     PNDIS_M_DEVICE_BLOCK DeviceBlock = NdisDeviceHandle;
+    UNICODE_STRING SymbolicName;
+
+    if (!DeviceBlock)
+        return NDIS_STATUS_INVALID_PARAMETER;
+
+    /* The device block lives in the device extension, which IoDeleteDevice
+     * frees. Take what we need out of it first, then delete the link before
+     * the device (the reverse of the registration order). */
+    SymbolicName = DeviceBlock->SymbolicName;
+
+    if (SymbolicName.Buffer)
+        IoDeleteSymbolicLink(&SymbolicName);
 
     IoDeleteDevice(DeviceBlock->DeviceObject);
 
-    IoDeleteSymbolicLink(DeviceBlock->SymbolicName);
+    if (SymbolicName.Buffer)
+        ExFreePoolWithTag(SymbolicName.Buffer, NDIS_TAG);
 
     return NDIS_STATUS_SUCCESS;
 }

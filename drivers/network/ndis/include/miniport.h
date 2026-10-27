@@ -33,7 +33,7 @@ typedef struct _NDIS_M_DRIVER_BLOCK {
 /* There must be some defined struct to do this... */
 typedef struct _NDIS_M_DEVICE_BLOCK {
     PDEVICE_OBJECT DeviceObject;
-    PNDIS_STRING   SymbolicName;
+    UNICODE_STRING SymbolicName;   /* private copy, see NdisMRegisterDevice */
     PDRIVER_DISPATCH MajorFunction[IRP_MJ_MAXIMUM_FUNCTION+1];
 } NDIS_M_DEVICE_BLOCK, *PNDIS_M_DEVICE_BLOCK;
 
