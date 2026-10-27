@@ -68,6 +68,10 @@ Ndis6HasMandatoryKeywords(
     _In_ PDEVICE_OBJECT Pdo)
 {
     static const PCWSTR Keywords[] = { L"*IfType", L"*MediaType", L"*PhysicalMediaType" };
+    /* Ethernet defaults used when the INF install did not materialize a keyword:
+     * IF_TYPE_ETHERNET_CSMACD, NdisMedium802_3, NdisPhysicalMedium802_3. */
+    static const ULONG EthernetDefaults[] = { 6, 0, 14 };
+    ULONG Missing = 0;
     union
     {
         KEY_VALUE_PARTIAL_INFORMATION Information;
@@ -81,7 +85,9 @@ Ndis6HasMandatoryKeywords(
 
     PAGED_CODE();
 
-    Status = IoOpenDeviceRegistryKey(Pdo, PLUGPLAY_REGKEY_DRIVER, KEY_QUERY_VALUE, &DriverKey);
+    Status = IoOpenDeviceRegistryKey(Pdo, PLUGPLAY_REGKEY_DRIVER, KEY_QUERY_VALUE | KEY_SET_VALUE, &DriverKey);
+    if (!NT_SUCCESS(Status))
+        Status = IoOpenDeviceRegistryKey(Pdo, PLUGPLAY_REGKEY_DRIVER, KEY_QUERY_VALUE, &DriverKey);
     if (!NT_SUCCESS(Status))
     {
         DbgPrint("NDIS6: START PDO %p: IoOpenDeviceRegistryKey(DRIVER) failed 0x%08lx, cannot check the mandatory keywords\n",
@@ -97,16 +103,30 @@ Ndis6HasMandatoryKeywords(
             Query.Information.Type != REG_DWORD ||
             Query.Information.DataLength != sizeof(ULONG))
         {
-            DbgPrint("NDIS6: START PDO %p: driver key lacks a valid %ws (status 0x%08lx, type %lu, length %lu); START will fail\n",
+            NTSTATUS SetStatus;
+
+            DbgPrint("NDIS6: START PDO %p: driver key lacks a valid %ws (status 0x%08lx, type %lu, length %lu); using the Ethernet default %lu\n",
                      Pdo, Keywords[i], Status,
                      NT_SUCCESS(Status) ? Query.Information.Type : 0,
-                     NT_SUCCESS(Status) ? Query.Information.DataLength : 0);
-            break;
+                     NT_SUCCESS(Status) ? Query.Information.DataLength : 0,
+                     EthernetDefaults[i]);
+            Missing++;
+
+            /* Persist the default so netcfgx/iphlpapi, which read the same
+             * values from the driver key, agree with what NDIS assumed. */
+            SetStatus = ZwSetValueKey(DriverKey, &ValueName, 0, REG_DWORD,
+                                      (PVOID)&EthernetDefaults[i], sizeof(ULONG));
+            if (!NT_SUCCESS(SetStatus))
+                DbgPrint("NDIS6: START PDO %p: could not write %ws=%lu to the driver key (0x%08lx), continuing anyway\n",
+                         Pdo, Keywords[i], EthernetDefaults[i], SetStatus);
         }
     }
 
     ZwClose(DriverKey);
-    return i == RTL_NUMBER_OF(Keywords);
+    if (Missing != 0)
+        DbgPrint("NDIS6: START PDO %p: %lu mandatory keyword(s) were missing, continuing with Ethernet defaults\n",
+                 Pdo, Missing);
+    return TRUE;
 }
 
 static VOID
