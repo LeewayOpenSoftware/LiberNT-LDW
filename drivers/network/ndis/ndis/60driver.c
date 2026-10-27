@@ -1227,6 +1227,8 @@ Ndis6DispatchPnp(
     if (LowerDevice == NULL)
     {
         /* Shouldn't happen if AddDevice ran correctly. Complete defensively. */
+        DbgPrint("NDIS6: PnP minor 0x%02x on FDO %p: no lower device (adapter %p), completing with STATUS_INVALID_DEVICE_STATE\n",
+                 Stack->MinorFunction, DeviceObject, Adapter);
         return Ndis6CompleteIrp(Irp, STATUS_INVALID_DEVICE_STATE);
     }
 
@@ -1244,7 +1246,11 @@ Ndis6DispatchPnp(
                 ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
                 NdisStatus = Ext->DriverBlock->PnpCharacteristics.MiniportStartDeviceHandler(Ext->MiniportAddDeviceContext, Irp);
                 if (NdisStatus != NDIS_STATUS_SUCCESS)
+                {
+                    DbgPrint("NDIS6: START PDO %p: MiniportStartDeviceHandler returned 0x%08lx, failing START\n",
+                             Adapter->NdisMiniportBlock.PhysicalDeviceObject, NdisStatus);
                     return Ndis6CompleteIrp(Irp, (NTSTATUS)NdisStatus);
+                }
             }
 
             /* ---------------------------------------------------------
@@ -1255,7 +1261,11 @@ Ndis6DispatchPnp(
              * --------------------------------------------------------- */
             Status = Ndis6ForwardPnpIrpAndWait(LowerDevice, Irp);
             if (!NT_SUCCESS(Status))
+            {
+                DbgPrint("NDIS6: START PDO %p: the lower driver (bus) failed START with 0x%08lx\n",
+                         Adapter->NdisMiniportBlock.PhysicalDeviceObject, Status);
                 return Ndis6CompleteIrp(Irp, Status);
+            }
 
             /* Save resources AFTER PCI has run. The resource lists live
              * in the incoming stack location. Don't deep-copy; PnP
@@ -1293,9 +1303,19 @@ Ndis6DispatchPnp(
              * run on REMOVE. If it fails, the driver has cleaned up
              * internally — we must NOT call HaltEx (MS DDK contract). */
             if (Ndis6HasMandatoryKeywords(Adapter->NdisMiniportBlock.PhysicalDeviceObject))
+            {
+                DbgPrint("NDIS6: START PDO %p: resources saved (%lu translated descriptor(s)), calling MiniportInitializeEx\n",
+                         Adapter->NdisMiniportBlock.PhysicalDeviceObject,
+                         (Ext && Ext->AllocatedResourcesTranslated && Ext->AllocatedResourcesTranslated->Count > 0)
+                             ? Ext->AllocatedResourcesTranslated->List[0].PartialResourceList.Count : 0);
                 NdisStatus = Ndis6CallMiniportInitializeEx(Adapter);
+            }
             else
+            {
+                DbgPrint("NDIS6: START PDO %p: mandatory keywords check failed, failing START with NDIS_STATUS_FAILURE (Code 10)\n",
+                         Adapter->NdisMiniportBlock.PhysicalDeviceObject);
                 NdisStatus = NDIS_STATUS_FAILURE;
+            }
             if (NdisStatus == NDIS_STATUS_SUCCESS)
             {
                 if (Ext)

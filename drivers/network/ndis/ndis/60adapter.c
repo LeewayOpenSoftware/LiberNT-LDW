@@ -83,7 +83,11 @@ Ndis6HasMandatoryKeywords(
 
     Status = IoOpenDeviceRegistryKey(Pdo, PLUGPLAY_REGKEY_DRIVER, KEY_QUERY_VALUE, &DriverKey);
     if (!NT_SUCCESS(Status))
+    {
+        DbgPrint("NDIS6: START PDO %p: IoOpenDeviceRegistryKey(DRIVER) failed 0x%08lx, cannot check the mandatory keywords\n",
+                 Pdo, Status);
         return FALSE;
+    }
 
     for (i = 0; i < RTL_NUMBER_OF(Keywords); i++)
     {
@@ -93,6 +97,10 @@ Ndis6HasMandatoryKeywords(
             Query.Information.Type != REG_DWORD ||
             Query.Information.DataLength != sizeof(ULONG))
         {
+            DbgPrint("NDIS6: START PDO %p: driver key lacks a valid %ws (status 0x%08lx, type %lu, length %lu); START will fail\n",
+                     Pdo, Keywords[i], Status,
+                     NT_SUCCESS(Status) ? Query.Information.Type : 0,
+                     NT_SUCCESS(Status) ? Query.Information.DataLength : 0);
             break;
         }
     }
@@ -901,14 +909,26 @@ Ndis6CallMiniportInitializeEx(
     NDIS_STATUS                    Status;
 
     if (Adapter == NULL || !Adapter->IsNdis6)
+    {
+        DbgPrint("NDIS6: InitializeEx skipped: adapter %p is not an NDIS 6 adapter\n", Adapter);
         return NDIS_STATUS_INVALID_PARAMETER;
+    }
 
     Ext = NDIS6_EXT(Adapter);
     if (Ext == NULL || Ext->DriverBlock == NULL)
+    {
+        DbgPrint("NDIS6: InitializeEx skipped: adapter %p has no extension (%p) or driver block\n", Adapter, Ext);
         return NDIS_STATUS_INVALID_PARAMETER;
+    }
 
     if (Ext->DriverBlock->Characteristics.InitializeHandlerEx == NULL)
+    {
+        DbgPrint("NDIS6: InitializeEx skipped: driver block %p registered no InitializeHandlerEx (NDIS %u.%u)\n",
+                 Ext->DriverBlock,
+                 Ext->DriverBlock->Characteristics.MajorNdisVersion,
+                 Ext->DriverBlock->Characteristics.MinorNdisVersion);
         return NDIS_STATUS_BAD_CHARACTERISTICS;
+    }
 
     /* STOP/START reuses the extension after the preceding halt drained it. */
     if (Ext->LegacyRequestsClosed)
