@@ -369,6 +369,138 @@ HalPciRouteProvider(
     return FALSE;
 }
 
+/* ----------------------------------------------------------------------------
+ *  Bridge-level _PRT support.
+ *
+ *  ACPI allows a _PRT on any PCI-PCI bridge (including PCI Express root
+ *  ports). Firmware that describes the devices behind a root port this way
+ *  leaves the root bus _PRT without an entry for the endpoint, so a lookup
+ *  that only knows root-bridge tables fails and pci.sys falls back to the
+ *  firmware interrupt line, which in APIC mode is a PIC-mode value. Walk the
+ *  device objects below each root bridge, read the secondary bus number of
+ *  every bridge from configuration space, and cache its _PRT keyed by that
+ *  bus so HalPciRouteProvider answers for devices behind it.
+ * -------------------------------------------------------------------------- */
+
+static ULONG PrtBridgeEntries;
+static ULONG PrtBridgeTables;
+
+static
+BOOLEAN
+AcpiPrtReadBridgeBuses(
+    _In_ ULONG Bus,
+    _In_ ULONG Device,
+    _In_ ULONG Function,
+    _Out_ PUCHAR Secondary,
+    _Out_ PUCHAR Subordinate)
+{
+    PCI_SLOT_NUMBER Slot;
+    UCHAR HeaderType;
+    UCHAR Buses[2];
+    USHORT VendorId;
+
+    Slot.u.AsULONG = 0;
+    Slot.u.bits.DeviceNumber = Device;
+    Slot.u.bits.FunctionNumber = Function;
+
+    if (HalGetBusDataByOffset(PCIConfiguration, Bus, Slot.u.AsULONG, &VendorId,
+                              FIELD_OFFSET(PCI_COMMON_CONFIG, VendorID), sizeof(VendorId)) != sizeof(VendorId) ||
+        VendorId == PCI_INVALID_VENDORID || VendorId == 0)
+    {
+        return FALSE;
+    }
+
+    if (HalGetBusDataByOffset(PCIConfiguration, Bus, Slot.u.AsULONG, &HeaderType,
+                              FIELD_OFFSET(PCI_COMMON_CONFIG, HeaderType), sizeof(HeaderType)) != sizeof(HeaderType))
+    {
+        return FALSE;
+    }
+
+    HeaderType &= ~PCI_MULTIFUNCTION;
+    if (HeaderType != PCI_BRIDGE_TYPE && HeaderType != PCI_CARDBUS_BRIDGE_TYPE)
+        return FALSE;
+
+    if (HalGetBusDataByOffset(PCIConfiguration, Bus, Slot.u.AsULONG, Buses,
+                              FIELD_OFFSET(PCI_COMMON_CONFIG, u.type1.SecondaryBus), sizeof(Buses)) != sizeof(Buses))
+    {
+        return FALSE;
+    }
+
+    *Secondary = Buses[0];
+    *Subordinate = Buses[1];
+    return TRUE;
+}
+
+static
+VOID
+AcpiPrtWalkBridges(
+    _In_ ACPI_HANDLE Parent,
+    _In_ ULONG Segment,
+    _In_ UCHAR ParentBus,
+    _In_ ULONG Depth)
+{
+    ACPI_HANDLE Child = NULL;
+
+    if (Depth > 8)
+        return;
+
+    while (ACPI_SUCCESS(AcpiGetNextObject(ACPI_TYPE_DEVICE, Parent, Child, &Child)))
+    {
+        ACPI_OBJECT Result;
+        ACPI_BUFFER Buffer = { sizeof(Result), &Result };
+        ACPI_HANDLE PrtHandle;
+        ULONG Device, Function, Function0, FunctionLimit, Fn;
+        UCHAR Secondary = 0, Subordinate = 0;
+        BOOLEAN IsBridge = FALSE;
+
+        if (ACPI_FAILURE(AcpiEvaluateObjectTyped(Child, METHOD_NAME__ADR, NULL, &Buffer, ACPI_TYPE_INTEGER)))
+            continue;
+
+        Device = (ULONG)(Result.Integer.Value >> 16) & 0xFFFF;
+        Function = (ULONG)Result.Integer.Value & 0xFFFF;
+        if (Device >= PCI_MAX_DEVICES)
+            continue;
+
+        /* _ADR function 0xFFFF means "any function"; probe them all. */
+        Function0 = (Function == 0xFFFF) ? 0 : Function;
+        FunctionLimit = (Function == 0xFFFF) ? PCI_MAX_FUNCTION : Function + 1;
+        if (FunctionLimit > PCI_MAX_FUNCTION)
+            continue;
+
+        for (Fn = Function0; Fn < FunctionLimit; Fn++)
+        {
+            if (AcpiPrtReadBridgeBuses(ParentBus, Device, Fn, &Secondary, &Subordinate))
+            {
+                IsBridge = TRUE;
+                break;
+            }
+        }
+
+        if (!IsBridge || Secondary <= ParentBus)
+            continue;
+
+        if (ACPI_SUCCESS(AcpiGetHandle(Child, METHOD_NAME__PRT, &PrtHandle)))
+        {
+            ULONG Before = PrtCacheCount;
+            ACPI_STATUS Status = AcpiPrtBuildForHandle(Child, Segment, Secondary);
+            if (ACPI_SUCCESS(Status))
+            {
+                PrtBridgeTables++;
+                PrtBridgeEntries += PrtCacheCount - Before;
+                DPRINT1("ACPI: bridge %02x:%02x.%lu _PRT -> %lu route(s) for bus %u (seg %lu)\n",
+                        ParentBus, Device, Fn, PrtCacheCount - Before, Secondary, Segment);
+            }
+            else
+            {
+                DPRINT1("ACPI: bridge %02x:%02x.%lu _PRT evaluation failed (0x%X)\n",
+                        ParentBus, Device, Fn, Status);
+            }
+        }
+
+        AcpiPrtWalkBridges(Child, Segment, Secondary, Depth + 1);
+    }
+}
+
 static
 ACPI_STATUS
 AcpiEnumRootBridgeCallback(
@@ -415,6 +547,7 @@ AcpiEnumRootBridgeCallback(
     }
 
     AcpiPrtBuildForHandle(ObjHandle, Segment, (UCHAR)Bus);
+    AcpiPrtWalkBridges(ObjHandle, Segment, (UCHAR)Bus, 0);
     return AE_OK;
 }
 
@@ -422,13 +555,15 @@ int
 acpi_pci_link_init(VOID)
 {
     AcpiPrtResetCache();
+    PrtBridgeEntries = 0;
+    PrtBridgeTables = 0;
 
     (void)AcpiGetDevices("PNP0A03", AcpiEnumRootBridgeCallback, NULL, NULL);
     (void)AcpiGetDevices("PNP0A08", AcpiEnumRootBridgeCallback, NULL, NULL);
 
     HalpRegisterPciRouteQuery(HalPciRouteProvider);
-    DPRINT("ACPI: PCI routing provider registered (%lu entries available)\n",
-            PrtCacheCount);
+    DPRINT1("ACPI: PCI routing provider registered: %lu route(s), %lu from %lu bridge-level _PRT table(s)\n",
+            PrtCacheCount, PrtBridgeEntries, PrtBridgeTables);
 
     return 0;
 }

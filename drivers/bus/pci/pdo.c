@@ -2312,7 +2312,7 @@ PciPdoRoutedInterruptLine(
         {
             if (Depth != 0)
             {
-                DPRINT("PCI PDO: _PRT routes %02x:%02x.%u INT%c# through %02x:%02x.%u INT%c# to GSI %lu (line was %u)\n",
+                DPRINT1("PCI PDO: _PRT routes %02x:%02x.%u INT%c# through %02x:%02x.%u INT%c# to GSI %lu (line was %u)\n",
                         (UCHAR)DeviceExtension->PciDevice->BusNumber,
                         DeviceExtension->PciDevice->SlotNumber.u.bits.DeviceNumber,
                         DeviceExtension->PciDevice->SlotNumber.u.bits.FunctionNumber,
@@ -2326,7 +2326,7 @@ PciPdoRoutedInterruptLine(
             }
             else if ((UCHAR)Gsi != InterruptLine)
             {
-                DPRINT("PCI PDO: _PRT routes %02x:%02x.%u INT%c# to GSI %lu (line was %u)\n",
+                DPRINT1("PCI PDO: _PRT routes %02x:%02x.%u INT%c# to GSI %lu (line was %u)\n",
                         (UCHAR)DeviceExtension->PciDevice->BusNumber,
                         DeviceExtension->PciDevice->SlotNumber.u.bits.DeviceNumber,
                         DeviceExtension->PciDevice->SlotNumber.u.bits.FunctionNumber,
@@ -2348,6 +2348,17 @@ PciPdoRoutedInterruptLine(
         CurrentPin = (UCHAR)(((CurrentPin - 1 + CurrentExtension->PciDevice->SlotNumber.u.bits.DeviceNumber) & 3) + 1);
         CurrentExtension = CurrentFdoExtension->ParentPdo;
         Depth++;
+    }
+
+    if (InterruptPin != 0)
+    {
+        DPRINT1("PCI PDO: no _PRT route for %02x:%02x.%u INT%c# after %lu level(s); using firmware line %u\n",
+                (UCHAR)DeviceExtension->PciDevice->BusNumber,
+                DeviceExtension->PciDevice->SlotNumber.u.bits.DeviceNumber,
+                DeviceExtension->PciDevice->SlotNumber.u.bits.FunctionNumber,
+                'A' + InterruptPin - 1,
+                Depth,
+                InterruptLine);
     }
 #endif
 
@@ -4369,6 +4380,13 @@ PdoStartDevice(
                             RawPartialDesc->u.Interrupt.Vector);
                 }
 
+                DPRINT1("PCI PDO: START %02x:%02x.%u legacy IRQ line %u (system vector %u, GSI level %lu)\n",
+                        (UCHAR)DeviceExtension->PciDevice->BusNumber,
+                        DeviceExtension->PciDevice->SlotNumber.u.bits.DeviceNumber,
+                        DeviceExtension->PciDevice->SlotNumber.u.bits.FunctionNumber,
+                        LegacyLine,
+                        RawPartialDesc->u.Interrupt.Vector,
+                        RawPartialDesc->u.Interrupt.Level);
                 DPRINT("Assigning PCI_INTERRUPT_LINE %u (system vector %u) to PCI device 0x%x on seg %u bus 0x%x\n",
                        LegacyLine,
                        RawPartialDesc->u.Interrupt.Vector,
