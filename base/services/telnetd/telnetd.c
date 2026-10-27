@@ -260,9 +260,15 @@ static BOOLEAN AuthenticateUser(client_t *client, HANDLE *phToken)
   char      *terminator;
   int        attempt;
   BOOL       loggedOn;
+  struct sockaddr_in peer;
+  int        peerLength = sizeof(peer);
+  char       peerText[32] = "unknown";
 
   gethostname(hostname, sizeof(hostname));
-  StringCbPrintfA(welcome, sizeof(welcome), "\r\nWelcome to %s, please identify yourself\r\n", hostname);
+  if (getpeername(client->socket, (struct sockaddr *)&peer, &peerLength) == 0)
+    StringCbPrintfA(peerText, sizeof(peerText), "%s:%u", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
+  telnetd_printf("Connection from %s\n", peerText);
+  StringCbPrintfA(welcome, sizeof(welcome), "\r\nWelcome to %s, connection from %s, please identify yourself\r\n", hostname, peerText);
 
   if (send(client->socket, welcome, strlen(welcome), 0) < 0)
     return FALSE;
