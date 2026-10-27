@@ -726,6 +726,8 @@ Ndis6IsrWrapper(
     if (Ext == NULL || !Ndis6ReferenceInterrupt(Ext))
         return FALSE;
 
+    InterlockedIncrement(&Ext->DiagIsr);
+
     if (Ext->IntChars.InterruptHandler == NULL)
     {
         Ndis6DereferenceInterrupt(Ext, FALSE);
@@ -736,6 +738,9 @@ Ndis6IsrWrapper(
         Ext->MiniportInterruptContext,
         &QueueDpc,
         &TargetCpus);
+
+    if (Recognized)
+        InterlockedIncrement(&Ext->DiagIsrRecognized);
 
     if (Recognized && QueueDpc && KeInsertQueueDpc(&Ext->InterruptDpc, NULL, NULL))
         return Recognized;
@@ -759,6 +764,8 @@ Ndis6DpcWrapper(
 
     if (Ext == NULL)
         return;
+
+    InterlockedIncrement(&Ext->DiagDpc);
 
     ThrottleParameters.MaxNblsToIndicate = NDIS_INDICATE_ALL_NBLS;
     ThrottleParameters.MoreNblsPending = FALSE;
@@ -812,6 +819,8 @@ Ndis6MsiIsrWrapper(
     if (Ext == NULL || !Ndis6ReferenceInterrupt(Ext))
         return FALSE;
 
+    InterlockedIncrement(&Ext->DiagIsr);
+
     if (Ext->IntChars.MessageInterruptHandler != NULL)
     {
         Recognized = Ext->IntChars.MessageInterruptHandler(
@@ -835,11 +844,84 @@ Ndis6MsiIsrWrapper(
         return FALSE;
     }
 
+    if (Recognized)
+        InterlockedIncrement(&Ext->DiagIsrRecognized);
+
     if (Recognized && QueueDpc && KeInsertQueueDpc(&Ext->InterruptDpc, NULL, (PVOID)(ULONG_PTR)MessageId))
         return Recognized;
 
     Ndis6DereferenceInterrupt(Ext, FALSE);
     return Recognized;
+}
+
+/* DIAG: periodic counter dump so a debug.log from the DEBUG boot entry shows
+ * whether interrupts, DPCs, receive indications and sends ever happen. */
+static VOID
+Ndis6DiagPrint(
+    _In_ PNDIS6_ADAPTER_EXT Ext,
+    _In_ PCSTR Tag)
+{
+    ULONG Vector = Ext->InterruptVector;
+    if (Ext->MsiConnected && Ext->MsiTable != NULL && Ext->MsiTable->MessageCount > 0)
+        Vector = Ext->MsiTable->MessageInfo[0].Vector;
+
+    DbgPrint("NDIS6 DIAG %s PDO %p: mode=%s msi_wanted=%u vec=%lu irql=%u isr=%ld recognized=%ld dpc=%ld "
+             "rx_calls=%ld rx_nbls=%ld tx_calls=%ld tx_nbls=%ld tx_done=%ld oids=%ld\n",
+             Tag, Ext->PhysicalDeviceObject,
+             Ext->MsiConnected ? "MSI" : "LINE",
+             (ULONG)Ext->IntChars.MsiSupported,
+             Vector, (ULONG)Ext->InterruptIrql,
+             Ext->DiagIsr, Ext->DiagIsrRecognized, Ext->DiagDpc,
+             Ext->DiagRxCalls, Ext->DiagRxNbl,
+             Ext->DiagTxCalls, Ext->DiagTxNbl, Ext->DiagTxComplete,
+             Ext->DiagOid);
+}
+
+static VOID NTAPI
+Ndis6DiagTimerDpc(
+    _In_     PKDPC Dpc,
+    _In_opt_ PVOID DeferredContext,
+    _In_opt_ PVOID SystemArgument1,
+    _In_opt_ PVOID SystemArgument2)
+{
+    PNDIS6_ADAPTER_EXT Ext = (PNDIS6_ADAPTER_EXT)DeferredContext;
+
+    UNREFERENCED_PARAMETER(Dpc);
+    UNREFERENCED_PARAMETER(SystemArgument1);
+    UNREFERENCED_PARAMETER(SystemArgument2);
+
+    if (Ext != NULL)
+        Ndis6DiagPrint(Ext, "tick");
+}
+
+static VOID
+Ndis6DiagStartTimer(
+    _In_ PNDIS6_ADAPTER_EXT Ext)
+{
+    LARGE_INTEGER DueTime;
+
+    if (Ext->DiagTimerStarted)
+        return;
+
+    KeInitializeTimer(&Ext->DiagTimer);
+    KeInitializeDpc(&Ext->DiagTimerDpc, Ndis6DiagTimerDpc, Ext);
+    DueTime.QuadPart = -10 * 10000000LL;          /* first dump after 10 s */
+    KeSetTimerEx(&Ext->DiagTimer, DueTime, 10000, &Ext->DiagTimerDpc);
+    Ext->DiagTimerStarted = TRUE;
+    Ndis6DiagPrint(Ext, "connected");
+}
+
+static VOID
+Ndis6DiagStopTimer(
+    _In_ PNDIS6_ADAPTER_EXT Ext)
+{
+    if (!Ext->DiagTimerStarted)
+        return;
+
+    KeCancelTimer(&Ext->DiagTimer);
+    KeFlushQueuedDpcs();
+    Ext->DiagTimerStarted = FALSE;
+    Ndis6DiagPrint(Ext, "disconnect");
 }
 
 NDIS_STATUS
@@ -979,6 +1061,7 @@ NdisMRegisterInterruptEx(
                          Ext->InterruptObject);
             }
 
+            Ndis6DiagStartTimer(Ext);
             *NdisInterruptHandle = (NDIS_HANDLE)Ext;
             return NDIS_STATUS_SUCCESS;
         }
@@ -1042,6 +1125,7 @@ NdisMRegisterInterruptEx(
     MiniportInterruptCharacteristics->InterruptType    = NDIS_CONNECT_LINE_BASED;
     MiniportInterruptCharacteristics->MessageInfoTable = NULL;
 
+    Ndis6DiagStartTimer(Ext);
     *NdisInterruptHandle = (NDIS_HANDLE)Ext;
     return NDIS_STATUS_SUCCESS;
 }
@@ -1056,6 +1140,7 @@ Ndis6DisconnectInterrupt(
         return;
 
     ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+    Ndis6DiagStopTimer(Ext);
     Ndis6StopInterruptRundown(Ext);
 
     if (Ext->MsiConnected && Ext->MsiTable != NULL)

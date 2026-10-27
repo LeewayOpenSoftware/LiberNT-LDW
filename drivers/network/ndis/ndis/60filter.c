@@ -2012,7 +2012,29 @@ Ndis6FilterTerminalOidRequest(
     if (!Ext->Initialized || Ext->MiniportAdapterContext == NULL)
         return NDIS_STATUS_ADAPTER_NOT_READY;
 
-    return Ext->DriverBlock->Characteristics.OidRequestHandler(Ext->MiniportAdapterContext, OidRequest);
+    {
+        NDIS_STATUS DiagStatus;
+        ULONG DiagOid = 0, DiagValue = 0;
+        PCSTR DiagKind = "other";
+        if (OidRequest->RequestType == NdisRequestSetInformation)
+        {
+            DiagKind = "set";
+            DiagOid = OidRequest->DATA.SET_INFORMATION.Oid;
+            if (OidRequest->DATA.SET_INFORMATION.InformationBufferLength >= sizeof(ULONG) &&
+                OidRequest->DATA.SET_INFORMATION.InformationBuffer != NULL)
+                DiagValue = *(PULONG)OidRequest->DATA.SET_INFORMATION.InformationBuffer;
+        }
+        else if (OidRequest->RequestType == NdisRequestQueryInformation)
+        {
+            DiagKind = "query";
+            DiagOid = OidRequest->DATA.QUERY_INFORMATION.Oid;
+        }
+        DiagStatus = Ext->DriverBlock->Characteristics.OidRequestHandler(Ext->MiniportAdapterContext, OidRequest);
+        InterlockedIncrement(&Ext->DiagOid);
+        DbgPrint("NDIS6 DIAG OID PDO %p: %s 0x%08lx value=0x%08lx -> 0x%08lx\n",
+                 Ext->PhysicalDeviceObject, DiagKind, DiagOid, DiagValue, (ULONG)DiagStatus);
+        return DiagStatus;
+    }
 }
 
 BOOLEAN

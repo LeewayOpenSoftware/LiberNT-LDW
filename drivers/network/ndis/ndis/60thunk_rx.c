@@ -477,6 +477,27 @@ NdisMIndicateReceiveNetBufferLists(
     if (Adapter == NULL || !Adapter->IsNdis6 || NetBufferLists == NULL)
         return;
 
+    /* DIAG: count receive indications; print the first three in full. */
+    {
+        PNDIS6_ADAPTER_EXT DiagExt = NDIS6_EXT(Adapter);
+        if (DiagExt != NULL)
+        {
+            LONG DiagCount = 0, DiagCalls;
+            PNET_BUFFER_LIST DiagNbl;
+            for (DiagNbl = NetBufferLists; DiagNbl != NULL; DiagNbl = NET_BUFFER_LIST_NEXT_NBL(DiagNbl))
+                DiagCount++;
+            InterlockedExchangeAdd(&DiagExt->DiagRxNbl, DiagCount);
+            DiagCalls = InterlockedIncrement(&DiagExt->DiagRxCalls);
+            if (DiagCalls <= 3)
+            {
+                PNET_BUFFER DiagNb = NET_BUFFER_LIST_FIRST_NB(NetBufferLists);
+                DbgPrint("NDIS6 DIAG RX #%ld PDO %p: nbls=%ld (arg %lu) flags=0x%lx firstlen=%lu\n",
+                         DiagCalls, DiagExt->PhysicalDeviceObject, DiagCount, NumberOfNetBufferLists,
+                         ReceiveFlags, DiagNb ? NET_BUFFER_DATA_LENGTH(DiagNb) : 0);
+            }
+        }
+    }
+
     /* Phase 8: walk the chain bottom→top — bottommost filter sees the
      * RX first, then up through each filter, finally to the terminal
      * which wraps NBs in legacy NDIS_PACKETs and indicates to bound
