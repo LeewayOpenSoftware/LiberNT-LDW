@@ -476,6 +476,8 @@ RcddAssertMode(
          RcddSetPaletteEntries(dhpdev, ppdev->PaletteEntries, 0, 256);
       }
 
+      RcddRemapSurface(ppdev);
+
       /* The scan-out contents are unknown; re-present the full shadow. */
       RcddPresent(ppdev, NULL);
 
