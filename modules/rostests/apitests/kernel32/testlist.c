@@ -51,6 +51,7 @@ extern void func_GetTempFileName(void);
 extern void func_GetTempPath2(void);
 extern void func_GetVolumeInformation(void);
 extern void func_InitOnce(void);
+extern void func_InversionL2(void);
 extern void func_WineGroups12(void);
 extern void func_interlck(void);
 extern void func_IoCompletion(void);
@@ -152,6 +153,7 @@ const struct test winetest_testlist[] =
     { "GetTempPath2",                func_GetTempPath2 },
     { "GetVolumeInformation",        func_GetVolumeInformation },
     { "InitOnce",                    func_InitOnce },
+    { "InversionL2",                 func_InversionL2 },
     { "WineGroups12",                func_WineGroups12 },
     { "interlck",                    func_interlck },
     { "IoCompletion",                func_IoCompletion },

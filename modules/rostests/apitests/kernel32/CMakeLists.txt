@@ -53,6 +53,7 @@ list(APPEND SOURCE
     GetTempPath2.c
     GetVolumeInformation.c
     InitOnce.c
+    InversionL2.c
     WineGroups12.c
     interlck.c
     IoCompletion.c
