@@ -1,0 +1,4 @@
+#include <windef.h>
+#include <winuser.h>
+
+1 RT_MANIFEST "utf8acp_on.manifest"

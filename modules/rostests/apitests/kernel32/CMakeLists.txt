@@ -1,6 +1,7 @@
 
 add_subdirectory(muitest)
 add_subdirectory(redirptest)
+add_subdirectory(utf8acp)
 
 add_message_headers(ANSI FormatMessage.mc)
 
@@ -24,6 +25,7 @@ list(APPEND SOURCE
     DosPathToSessionPath.c
     IsValidLocaleName.c
     CompatLinks.c
+    Utf8ActiveCodePage.c
     VerifyScripts.c
     GetDurationFormat.c
     TimeZoneEx.c
@@ -115,7 +117,7 @@ target_link_libraries(kernel32_apitest wine ${PSEH_LIB})
 set_module_type(kernel32_apitest win32cui)
 add_delay_importlibs(kernel32_apitest advapi32 shlwapi)
 add_importlibs(kernel32_apitest netapi32 user32 msvcrt kernel32 ntdll)
-add_dependencies(kernel32_apitest FormatMessage)
+add_dependencies(kernel32_apitest FormatMessage utf8acp_on utf8acp_off)
 add_pch(kernel32_apitest precomp.h "${PCH_SKIP_SOURCE}")
 add_rostests_file(TARGET kernel32_apitest)
 
