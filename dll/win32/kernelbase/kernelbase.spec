@@ -506,8 +506,8 @@
 @ stdcall GetPackageFamilyNameFromToken(ptr ptr ptr)
 @ stdcall GetPackageFullName(long ptr ptr)
 @ stdcall GetPackageFullNameFromToken(ptr ptr ptr)
-@ stdcall -version=0x602+ GetPackagePathByFullName(wstr ptr wstr) kernel32.GetPackagePathByFullName
-@ stdcall -version=0x602+ GetPackagesByPackageFamily(wstr ptr ptr ptr ptr) kernel32.GetPackagesByPackageFamily
+@ stdcall -version=0x602+ GetPackagePathByFullName(wstr ptr wstr)
+@ stdcall -version=0x602+ GetPackagesByPackageFamily(wstr ptr ptr ptr ptr)
 @ stdcall -version=0x601+ GetPerformanceInfo(ptr long) kernel32.K32GetPerformanceInfo
 @ stdcall -version=0x600+ GetPhysicallyInstalledSystemMemory(ptr) kernel32.GetPhysicallyInstalledSystemMemory
 @ stdcall GetPriorityClass(long) kernel32.GetPriorityClass

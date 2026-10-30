@@ -612,8 +612,8 @@
 @ stdcall -version=0x602+ GetPackageFamilyNameFromToken(ptr ptr ptr) kernelbase.GetPackageFamilyNameFromToken
 @ stdcall -version=0x602+ GetPackageFullNameFromToken(ptr ptr ptr) kernelbase.GetPackageFullNameFromToken
 @ stdcall -version=0x602+ GetApplicationUserModelIdFromToken(ptr ptr ptr) kernelbase.GetApplicationUserModelIdFromToken
-@ stdcall -version=0x602+ GetPackagePathByFullName(wstr ptr wstr)
-@ stdcall -version=0x602+ GetPackagesByPackageFamily(wstr ptr ptr ptr ptr)
+@ stdcall -version=0x602+ GetPackagePathByFullName(wstr ptr wstr) kernelbase.GetPackagePathByFullName
+@ stdcall -version=0x602+ GetPackagesByPackageFamily(wstr ptr ptr ptr ptr) kernelbase.GetPackagesByPackageFamily
 @ stdcall -version=0x600+ GetPhysicallyInstalledSystemMemory(ptr)
 @ stdcall GetPriorityClass(long)
 @ stdcall GetPrivateProfileIntA(str str long str)
