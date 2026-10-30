@@ -3645,7 +3645,15 @@ ReenumerateDeviceInstance(
 
     if (ulMinorAction & CM_REENUMERATE_RETRY_INSTALLATION)
     {
-        DPRINT1("CM_REENUMERATE_RETRY_INSTALLATION not implemented!\n");
+        DWORD ulStatus = 0, ulProblem = 0;
+
+        UpdateDeviceConfigFlags(pszDeviceInstance, 0, CONFIGFLAG_FAILEDINSTALL);
+        if (GetDeviceStatus(pszDeviceInstance, &ulStatus, &ulProblem) == CR_SUCCESS &&
+            (ulStatus & DN_HAS_PROBLEM) &&
+            ulProblem == CM_PROB_FAILED_INSTALL)
+        {
+            ClearDeviceStatus(pszDeviceInstance, DN_HAS_PROBLEM, ulProblem);
+        }
     }
 
     RtlInitUnicodeString(&EnumerateDeviceData.DeviceInstance,
