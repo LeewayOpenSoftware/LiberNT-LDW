@@ -300,6 +300,8 @@ struct norm_table
     /* WORD[]       composition character sequences */
 };
 
+extern DECLSPEC_IMPORT USHORT NlsAnsiCodePage;
+
 static CPTABLEINFO ansi_cpinfo;
 static CPTABLEINFO oem_cpinfo;
 static UINT unix_cp = CP_UTF8;
@@ -2315,6 +2317,8 @@ static const CPTABLEINFO *get_codepage_table( UINT codepage )
     switch (codepage)
     {
     case CP_ACP:
+        /* The manifest of the process can make the ANSI code page UTF-8 */
+        if (NlsAnsiCodePage == CP_UTF8) return &utf8_cpinfo;
         return &ansi_cpinfo;
     case CP_OEMCP:
         return &oem_cpinfo;

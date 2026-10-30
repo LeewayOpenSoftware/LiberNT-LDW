@@ -16,6 +16,9 @@
 
 #include <k32.h>
 
+/* Exported by ntdll; 65001 once a manifest chose the UTF-8 active code page */
+extern DECLSPEC_IMPORT USHORT NlsAnsiCodePage;
+
 #define NDEBUG
 #include <debug.h>
 
@@ -757,6 +760,9 @@ GetCPInfo(UINT CodePage,
         return FALSE;
     }
 
+    if (CodePage == CP_ACP && NlsAnsiCodePage == CP_UTF8)
+        CodePage = CP_UTF8;
+
     CodePageEntry = IntGetCodePageEntry(CodePage);
     if (CodePageEntry == NULL)
     {
@@ -896,6 +902,10 @@ UINT
 WINAPI
 GetACP(VOID)
 {
+    /* The loader switches the process to UTF-8 when its manifest asks for it */
+    if (NlsAnsiCodePage == CP_UTF8)
+        return CP_UTF8;
+
     return AnsiCodePage.CodePageTable.CodePage;
 }
 

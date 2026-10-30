@@ -27,6 +27,25 @@ PUSHORT NlsUnicodeToMbAnsiTable = NULL;
 PUSHORT NlsLeadByteInfo = NULL; /* exported */
 
 USHORT NlsOemCodePage = 0;
+
+/*
+ * Set by the user mode loader when the application manifest asks for the UTF-8
+ * active code page. Kernel mode never sets them, so it never leaves the tables.
+ */
+typedef NTSTATUS (NTAPI *PRTLP_UTF8_TO_UNICODE)(PWCHAR, ULONG, PULONG, PCSTR, ULONG);
+typedef NTSTATUS (NTAPI *PRTLP_UNICODE_TO_UTF8)(PCHAR, ULONG, PULONG, PCWCH, ULONG);
+static PRTLP_UTF8_TO_UNICODE RtlpUtf8ToUnicode = NULL;
+static PRTLP_UNICODE_TO_UTF8 RtlpUnicodeToUtf8 = NULL;
+
+VOID NTAPI
+RtlpSetUtf8ActiveCodePage(IN PRTLP_UTF8_TO_UNICODE ToUnicode,
+                          IN PRTLP_UNICODE_TO_UTF8 FromUnicode)
+{
+    RtlpUtf8ToUnicode = ToUnicode;
+    RtlpUnicodeToUtf8 = FromUnicode;
+    NlsAnsiCodePage = 65001;
+    NlsMbCodePageTag = FALSE;
+}
 BOOLEAN NlsMbOemCodePageTag = FALSE; /* exported */
 PUSHORT NlsOemToUnicodeTable = NULL;
 PCHAR NlsUnicodeToOemTable = NULL;
@@ -290,6 +309,9 @@ RtlMultiByteToUnicodeN(OUT PWCHAR UnicodeString,
 
     PAGED_CODE_RTL();
 
+    if (RtlpUtf8ToUnicode)
+        return RtlpUtf8ToUnicode(UnicodeString, UnicodeSize, ResultSize, MbString, MbSize);
+
     if (!NlsMbCodePageTag)
     {
         /* single-byte code page */
@@ -380,6 +402,15 @@ RtlMultiByteToUnicodeSize(OUT PULONG UnicodeSize,
     ULONG Length = 0;
 
     PAGED_CODE_RTL();
+
+    if (RtlpUtf8ToUnicode)
+    {
+        ULONG Needed = 0;
+
+        RtlpUtf8ToUnicode(NULL, 0, &Needed, MbString, MbSize);
+        *UnicodeSize = Needed;
+        return STATUS_SUCCESS;
+    }
 
     if (!NlsMbCodePageTag)
     {
@@ -602,6 +633,9 @@ RtlUnicodeToMultiByteN(OUT PCHAR MbString,
 
     PAGED_CODE_RTL();
 
+    if (RtlpUnicodeToUtf8)
+        return RtlpUnicodeToUtf8(MbString, MbSize, ResultSize, UnicodeString, UnicodeSize);
+
     if (!NlsMbCodePageTag)
     {
         /* single-byte code page */
@@ -671,6 +705,15 @@ RtlUnicodeToMultiByteSize(OUT PULONG MbSize,
     ULONG MbLength = 0;
 
     PAGED_CODE_RTL();
+
+    if (RtlpUnicodeToUtf8)
+    {
+        ULONG Needed = 0;
+
+        RtlpUnicodeToUtf8(NULL, 0, &Needed, UnicodeString, UnicodeSize);
+        *MbSize = Needed;
+        return STATUS_SUCCESS;
+    }
 
     if (!NlsMbCodePageTag)
     {

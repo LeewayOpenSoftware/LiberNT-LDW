@@ -2311,6 +2311,30 @@ LdrpInitializeProcessCompat(PVOID pProcessActctx, PVOID* pOldShimData)
     }
 }
 
+VOID NTAPI
+RtlpSetUtf8ActiveCodePage(
+    IN NTSTATUS (NTAPI *ToUnicode)(PWCHAR, ULONG, PULONG, PCSTR, ULONG),
+    IN NTSTATUS (NTAPI *FromUnicode)(PCHAR, ULONG, PULONG, PCWCH, ULONG));
+
+/*
+ * activeCodePage in the application manifest: "UTF-8" makes the ANSI code page of the
+ * process UTF-8 (Windows 10 1903 and later). Anything else leaves the system code page.
+ */
+VOID
+NTAPI
+LdrpInitializeActiveCodePage(VOID)
+{
+    static const WCHAR Namespace2019[] = L"http://schemas.microsoft.com/SMI/2019/WindowsSettings";
+    WCHAR Value[16];
+
+    if (!NT_SUCCESS(RtlQueryActivationContextApplicationSettings(0, NULL, Namespace2019, L"activeCodePage",
+                                                                 Value, RTL_NUMBER_OF(Value), NULL)))
+        return;
+
+    if (!_wcsicmp(Value, L"UTF-8"))
+        RtlpSetUtf8ActiveCodePage(RtlUTF8ToUnicodeN, RtlUnicodeToUTF8N);
+}
+
 VOID
 NTAPI
 LdrpInitializeDotLocalSupport(PRTL_USER_PROCESS_PARAMETERS ProcessParameters)
@@ -3274,6 +3298,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     }
 
     RtlpInitializeActCtx(&OldShimData);
+    LdrpInitializeActiveCodePage();
 
     /* Walk the IAT and load all the DLLs */
     ImportStatus = IsCorILOnlyImage ? STATUS_SUCCESS : LdrpWalkImportDescriptor(LdrpDefaultPath.Buffer, LdrpImageEntry);
