@@ -697,7 +697,7 @@
 @ stdcall GetTempPathW(long ptr)
 @ stdcall -version=0xA00+ GetTempPath2A(long ptr)
 @ stdcall -version=0xA00+ GetTempPath2W(long ptr)
-@ stdcall GetThreadContext(long ptr)
+@ stdcall GetThreadContext(long ptr) kernelbase.GetThreadContext
 @ stdcall -version=0x602+ GetThreadInformation(long long ptr long) kernelbase.GetThreadInformation
 @ stdcall -version=0x600+ GetThreadErrorMode() kernelbase.GetThreadErrorMode
 @ stdcall -version=0x601+ GetThreadGroupAffinity(long ptr)
@@ -1015,7 +1015,7 @@
 @ stdcall -version=0x600+ QueryUnbiasedInterruptTime(ptr)
 @ stdcall -version=0x602+ QueryUnbiasedInterruptTimePrecise(ptr)
 @ stdcall QueueUserAPC(ptr long long)
-@ stdcall QueueUserWorkItem(ptr ptr long)
+@ stdcall QueueUserWorkItem(ptr ptr long) kernelbase.QueueUserWorkItem
 @ stdcall -norelay RaiseException(long long long ptr)
 @ stdcall -version=0x602+ RaiseFailFastException(ptr ptr long) kernelbase.RaiseFailFastException
 @ stdcall ReOpenFile(ptr long long long)
@@ -1261,8 +1261,8 @@
 @ stdcall SetTapePosition(ptr long long long long long)
 @ stdcall SetTermsrvAppInstallMode(long)
 @ stdcall SetThreadAffinityMask(long long)
-@ stdcall -version=0x601+ SetThreadGroupAffinity(long ptr ptr)
-@ stdcall SetThreadContext(long ptr)
+@ stdcall -version=0x601+ SetThreadGroupAffinity(long ptr ptr) kernelbase.SetThreadGroupAffinity
+@ stdcall SetThreadContext(long ptr) kernelbase.SetThreadContext
 @ stdcall -version=0x600+ SetThreadErrorMode(long ptr) kernelbase.SetThreadErrorMode
 @ stdcall SetThreadExecutionState(long)
 @ stdcall SetThreadIdealProcessor(long long)

@@ -582,7 +582,7 @@
 @ stdcall GetTempPath2W(long ptr) kernel32.GetTempPath2W
 @ stdcall GetTempPathA(long ptr) kernel32.GetTempPathA
 @ stdcall GetTempPathW(long ptr) kernel32.GetTempPathW
-@ stdcall GetThreadContext(long ptr) kernel32.GetThreadContext
+@ stdcall GetThreadContext(long ptr)
 @ stdcall GetThreadDescription(ptr ptr)
 @ stdcall GetThreadErrorMode()
 @ stdcall -version=0x601+ GetThreadGroupAffinity(long ptr) kernel32.GetThreadGroupAffinity
@@ -991,7 +991,7 @@
 @ stdcall -version=0x601+ QueryWorkingSet(long ptr long) kernel32.K32QueryWorkingSet
 @ stdcall -version=0x601+ QueryWorkingSetEx(long ptr long) kernel32.K32QueryWorkingSetEx
 @ stdcall QueueUserAPC(ptr long long) kernel32.QueueUserAPC
-@ stdcall QueueUserWorkItem(ptr ptr long) kernel32.QueueUserWorkItem
+@ stdcall QueueUserWorkItem(ptr ptr long)
 @ stdcall QuirkIsEnabled(ptr)
 @ stdcall QuirkIsEnabled3(ptr ptr)
 @ stdcall RaiseException(long long long ptr) kernel32.RaiseException
@@ -1198,10 +1198,10 @@
 @ stdcall SetSystemFileCacheSize(long long long) kernel32.SetSystemFileCacheSize
 @ stdcall SetSystemTime(ptr) kernel32.SetSystemTime
 @ stdcall SetSystemTimeAdjustment(long long) kernel32.SetSystemTimeAdjustment
-@ stdcall SetThreadContext(long ptr) kernel32.SetThreadContext
+@ stdcall SetThreadContext(long ptr)
 @ stdcall SetThreadDescription(ptr wstr)
 @ stdcall SetThreadErrorMode(long ptr)
-@ stdcall -version=0x601+ SetThreadGroupAffinity(long ptr ptr) kernel32.SetThreadGroupAffinity
+@ stdcall -version=0x601+ SetThreadGroupAffinity(long ptr ptr)
 @ stdcall SetThreadIdealProcessor(long long) kernel32.SetThreadIdealProcessor
 @ stdcall SetThreadIdealProcessorEx(long ptr ptr) kernel32.SetThreadIdealProcessorEx
 @ stdcall SetThreadInformation(long long ptr long)
