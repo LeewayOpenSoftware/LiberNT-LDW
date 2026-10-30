@@ -1,5 +1,6 @@
 add_executable(cfgmgr32_apitest
     reenumerate.c
+    installdevinst.c
     testlist.c)
 
 set_module_type(cfgmgr32_apitest win32cui)

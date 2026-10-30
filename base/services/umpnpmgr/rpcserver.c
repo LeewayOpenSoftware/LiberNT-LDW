@@ -6640,10 +6640,43 @@ PNP_SetObjectProp(
 DWORD
 WINAPI
 PNP_InstallDevInst(
-    handle_t hBinding)
+    handle_t hBinding,
+    LPCWSTR pszDeviceInstanceId,
+    DWORD ulFlags,
+    DWORD *pulReboot)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    DRVINST_JOB_ID JobId = 0;
+    DRVINST_JOB_INFO Info;
+    BOOL Installed;
+
+    if (pulReboot)
+        *pulReboot = 0;
+
+    if (!IsCallerAdministrator(hBinding))
+        return ERROR_ACCESS_DENIED;
+
+    if (ulFlags & ~DRVINST_F_SILENT)
+        return ERROR_INVALID_FLAGS;
+
+    if (!pszDeviceInstanceId || !pszDeviceInstanceId[0] ||
+        lstrlenW(pszDeviceInstanceId) >= DRVINST_DEVICE_ID_CCH)
+        return ERROR_INVALID_PARAMETER;
+
+    Installed = DrvInstRunDeviceJob(pszDeviceInstanceId, DRVINST_SOURCE_USER, ulFlags, &JobId);
+
+    if (JobId != 0 && DrvInstGetJobInfo(JobId, &Info))
+    {
+        if (!Installed)
+            return Info.Result.Win32 ? Info.Result.Win32 : ERROR_INSTALL_FAILURE;
+        if (pulReboot && (Info.Result.Flags & DRVINST_RF_NEEDREBOOT))
+            *pulReboot = 1;
+    }
+    else if (!Installed)
+    {
+        return ERROR_INSTALL_FAILURE;
+    }
+
+    return ERROR_SUCCESS;
 }
 
 

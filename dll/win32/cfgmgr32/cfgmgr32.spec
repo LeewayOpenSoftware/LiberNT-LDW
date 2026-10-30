@@ -10,6 +10,7 @@
 @ stub CM_Add_Driver_Package_ExW
 @ stdcall LnCM_Add_Driver_PackageW(wstr long ptr)
 @ stdcall LnCM_Add_Driver_Package_ExW(wstr long ptr ptr)
+@ stdcall LnCM_Install_DevInstW(wstr long ptr)
 @ stdcall CM_Add_Empty_Log_Conf(ptr ptr long long)
 @ stdcall CM_Add_Empty_Log_Conf_Ex(ptr ptr long long ptr)
 @ stdcall CM_Add_IDA(ptr str long)

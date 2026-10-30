@@ -164,6 +164,13 @@ DrvInstSubmitInfJob(
     _Out_ PDRVINST_JOB_ID OutJobId);
 
 BOOL
+DrvInstRunDeviceJob(
+    _In_ PCWSTR DeviceInstanceId,
+    _In_ ULONG Source,
+    _In_ ULONG Flags,
+    _Out_opt_ PDRVINST_JOB_ID OutJobId);
+
+BOOL
 DrvInstGetJobInfo(
     _In_ DRVINST_JOB_ID JobId,
     _Out_ PDRVINST_JOB_INFO Info);

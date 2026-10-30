@@ -46,6 +46,13 @@ LnCM_Delete_Driver_Package_ExW(
     _In_ PVOID Reserved,
     _In_ HMACHINE hMachine);
 
+CONFIGRET
+WINAPI
+LnCM_Install_DevInstW(
+    _In_ PCWSTR DeviceInstanceId,
+    _In_ ULONG Flags,
+    _Out_opt_ PBOOL NeedReboot);
+
 /* Maps the Win32-style errors of the server call to CONFIGRET codes. */
 static CONFIGRET
 MapStoreRpcError(
@@ -208,4 +215,42 @@ LnCM_Delete_Driver_Package_ExW(
         return CR_INVALID_MACHINENAME;
 
     return LnCM_Delete_Driver_PackageW(DriverPackageInfPathOrPublishedName, Flags, Reserved);
+}
+
+CONFIGRET
+WINAPI
+LnCM_Install_DevInstW(
+    _In_ PCWSTR DeviceInstanceId,
+    _In_ ULONG Flags,
+    _Out_opt_ PBOOL NeedReboot)
+{
+    RPC_BINDING_HANDLE BindingHandle;
+    DWORD Reboot = 0;
+    DWORD Error;
+
+    if (NeedReboot)
+        *NeedReboot = FALSE;
+
+    if (Flags != 0)
+        return CR_INVALID_FLAG;
+    if (!DeviceInstanceId || !DeviceInstanceId[0])
+        return CR_INVALID_DEVINST;
+
+    if (!PnpGetLocalHandles(&BindingHandle))
+        return CR_FAILURE;
+
+    RpcTryExcept
+    {
+        Error = PNP_InstallDevInst(BindingHandle, DeviceInstanceId, Flags, &Reboot);
+    }
+    RpcExcept(EXCEPTION_EXECUTE_HANDLER)
+    {
+        Error = RpcExceptionCode();
+    }
+    RpcEndExcept;
+
+    if (Error == ERROR_SUCCESS && NeedReboot)
+        *NeedReboot = (Reboot != 0);
+
+    return MapStoreRpcError(Error);
 }

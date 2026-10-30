@@ -982,7 +982,10 @@ cpp_quote("#if _WIN32_WINNT >= 0x0501")
     DWORD
     __stdcall
     PNP_InstallDevInst(
-        [in] handle_t hBinding);
+        [in] handle_t hBinding,
+        [in, string, ref] LPCWSTR pszDeviceInstanceId,
+        [in] DWORD ulFlags,
+        [out] DWORD *pulReboot);
 
     /* Function 69 */
     DWORD
