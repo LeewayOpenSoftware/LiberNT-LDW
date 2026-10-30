@@ -24,6 +24,7 @@
 #include "driver_cache.h"
 
 #include <cfgmgr32.h>
+#include <umpnpmgr/drvinst.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <winnls.h>
@@ -850,6 +851,63 @@ DiInstallDevice(
         *NeedReboot = TRUE;
 
     return Result;
+}
+
+BOOL WINAPI
+DiRollbackDriver(
+    IN HDEVINFO DeviceInfoSet,
+    IN PSP_DEVINFO_DATA DeviceInfoData,
+    IN HWND hwndParent OPTIONAL,
+    IN DWORD Flags,
+    OUT PBOOL NeedReboot OPTIONAL)
+{
+    WCHAR DeviceInstanceId[MAX_DEVICE_ID_LEN];
+    DEVINST DevInst;
+    ULONG Status = 0, Problem = 0;
+    DWORD Error;
+
+    TRACE("DiRollbackDriver(%p %p %p 0x%lx %p)\n",
+          DeviceInfoSet, DeviceInfoData, hwndParent, Flags, NeedReboot);
+
+    if (NeedReboot)
+        *NeedReboot = FALSE;
+
+    if (!DeviceInfoSet || DeviceInfoSet == INVALID_HANDLE_VALUE || !DeviceInfoData)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (Flags & ~ROLLBACK_BITS)
+    {
+        SetLastError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    if (!IsUserAdmin())
+    {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    if (!SetupDiGetDeviceInstanceIdW(DeviceInfoSet, DeviceInfoData,
+                                     DeviceInstanceId, RTL_NUMBER_OF(DeviceInstanceId), NULL))
+        return FALSE;
+
+    Error = DrvInstRollback(DeviceInstanceId);
+    if (Error != ERROR_SUCCESS)
+    {
+        SetLastError(Error);
+        return FALSE;
+    }
+
+    if (NeedReboot &&
+        CM_Locate_DevNodeW(&DevInst, DeviceInstanceId, CM_LOCATE_DEVNODE_NORMAL) == CR_SUCCESS &&
+        CM_Get_DevNode_Status(&Status, &Problem, DevInst, 0) == CR_SUCCESS &&
+        ((Status & DN_NEED_RESTART) || Problem == CM_PROB_NEED_RESTART))
+    {
+        *NeedReboot = TRUE;
+    }
+
+    return TRUE;
 }
 
 BOOL WINAPI
