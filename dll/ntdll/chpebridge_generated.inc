@@ -638,10 +638,11 @@ NTSTATUS NTAPI ChpeAutoLdrEnumerateLoadedModules(ULONG a0, PLDR_ENUM_CALLBACK a1
 }
 _Static_assert(__builtin_types_compatible_p(__typeof__(&ChpeAutoLdrEnumerateLoadedModules), __typeof__(&LdrEnumerateLoadedModules)), "LdrEnumerateLoadedModules bridge signature mismatch");
 
-ULONG_PTR NTAPI ChpeStubLdrFindResourceEx_U(PVOID a0, PVOID a1, PVOID a2, PVOID a3, PVOID a4)
+NTSTATUS NTAPI ChpeAutoLdrFindResourceEx_U(ULONG a0, PVOID a1, PULONG_PTR a2, ULONG a3, PIMAGE_RESOURCE_DATA_ENTRY *a4)
 {
-    return 0;
+    return LdrFindResourceEx_U(a0, a1, a2, a3, a4);
 }
+_Static_assert(__builtin_types_compatible_p(__typeof__(&ChpeAutoLdrFindResourceEx_U), __typeof__(&LdrFindResourceEx_U)), "LdrFindResourceEx_U bridge signature mismatch");
 
 /* Native definition: dll/ntdll/ldr/ldrapi.c */
 #ifdef LdrFlushAlternateResourceModules

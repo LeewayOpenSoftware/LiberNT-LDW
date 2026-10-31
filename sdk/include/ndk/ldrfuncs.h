@@ -55,6 +55,16 @@ LdrFindResource_U(
 
 NTSTATUS
 NTAPI
+LdrFindResourceEx_U(
+    _In_ ULONG Flags,
+    _In_ PVOID BaseAddress,
+    _In_ PULONG_PTR Path,
+    _In_ ULONG Count,
+    _Out_ PIMAGE_RESOURCE_DATA_ENTRY *ResourceDataEntry
+);
+
+NTSTATUS
+NTAPI
 LdrEnumResources(
     _In_ PVOID BaseAddress,
     _In_ PLDR_RESOURCE_INFO ResourceInfo,

@@ -58,6 +58,7 @@ list(APPEND SOURCE
     wow64_native_process.c
     LdrEnumResources.c
     LdrFindResource_U.c
+    LdrFindResourceEx_U.c
     LdrGetDllHandleByName.c
     LdrLoadDll.c
     LdrQueryProcessModuleInformation.c

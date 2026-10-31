@@ -162,7 +162,7 @@
 @ stdcall -version=0x501-0x502 LdrFindCreateProcessManifest(long ptr ptr long ptr)
 @ stdcall LdrFindEntryForAddress(ptr ptr)
 @ stdcall LdrFindResourceDirectory_U(ptr ptr long ptr)
-@ stdcall -stub LdrFindResourceEx_U(ptr ptr ptr ptr ptr) ; 5.1 and higher
+@ stdcall LdrFindResourceEx_U(long ptr ptr long ptr) ; 5.1 and higher
 @ stdcall LdrFindResource_U(ptr ptr long ptr)
 @ stdcall LdrFlushAlternateResourceModules()
 @ stdcall LdrGetDllHandle(wstr ptr ptr ptr)

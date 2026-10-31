@@ -283,6 +283,46 @@ LdrFindResource_U(PVOID BaseAddress,
     return status;
 }
 
+/*
+ * LdrFindResourceEx_U: only what black-box probes of Windows 11 (26100) showed is implemented
+ * (shared/libernt/compat-debt/ntdll-research/PROBE-RESULTS.md, group B):
+ *  - Flags 0 with Count 3 finds the same entry as LdrFindResource_U at the language level.
+ *  - Flags 0 with Count 0, 2 or 5, and Flags 1 with Count 3, fail with 0xC00000F1.
+ *  - A NULL Path faults (the exception is not caught), as it does there.
+ * Everything else (other flags, Count 1 or 4 or above 5, the short path of Flags 2, whose result was not
+ * characterised) returns STATUS_NOT_IMPLEMENTED instead of an invented success.
+ */
+NTSTATUS NTAPI
+LdrFindResourceEx_U(IN ULONG Flags,
+                    IN PVOID BaseAddress,
+                    IN PULONG_PTR Path,
+                    IN ULONG Count,
+                    OUT PIMAGE_RESOURCE_DATA_ENTRY *ResourceDataEntry)
+{
+    LDR_RESOURCE_INFO ResourceInfo;
+
+    if (Flags == 0)
+    {
+        if (Count == 0 || Count == 2 || Count == 5)
+            return (NTSTATUS)0xC00000F1;
+        if (Count != 3)
+            return STATUS_NOT_IMPLEMENTED;
+    }
+    else if (Flags == 1 && Count == 3)
+    {
+        return (NTSTATUS)0xC00000F1;
+    }
+    else
+    {
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
+    ResourceInfo.Type = Path[0];
+    ResourceInfo.Name = Path[1];
+    ResourceInfo.Language = Path[2];
+    return LdrFindResource_U(BaseAddress, &ResourceInfo, 3, ResourceDataEntry);
+}
+
 #ifndef __i386__
 /*
  * @implemented

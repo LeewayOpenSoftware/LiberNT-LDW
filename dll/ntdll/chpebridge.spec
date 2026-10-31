@@ -366,7 +366,7 @@
 112 stdcall -version=0x600+ LdrAddLoadAsDataTable(ptr wstr long ptr) ChpeStubLdrAddLoadAsDataTable
 114 stdcall LdrDisableThreadCalloutsForDll(ptr) ChpeAutoLdrDisableThreadCalloutsForDll
 116 stdcall LdrEnumerateLoadedModules(long ptr ptr) ChpeAutoLdrEnumerateLoadedModules
-119 stdcall  LdrFindResourceEx_U(ptr ptr ptr ptr ptr) ChpeStubLdrFindResourceEx_U
+119 stdcall LdrFindResourceEx_U(long ptr ptr long ptr) ChpeAutoLdrFindResourceEx_U
 121 stdcall LdrFlushAlternateResourceModules() ChpeAutoLdrFlushAlternateResourceModules
 125 stdcall -version=0x600+ LdrGetFailureData() ChpeStubLdrGetFailureData
 126 stdcall -version=0x600+ LdrGetFileNameFromLoadAsDataTable(ptr ptr) ChpeStubLdrGetFileNameFromLoadAsDataTable
