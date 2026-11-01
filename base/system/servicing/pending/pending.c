@@ -388,6 +388,43 @@ S1MoveFileEx(
     return Status;
 }
 
+static VOID S1Log(_In_ PCWSTR Msg);
+
+/* A hash step that fails must say which one and why: the journal used to
+ * record every hashing problem as STATUS_S1_HASH_MISMATCH, so a read that
+ * failed in the native boot environment looked like a changed file. */
+static VOID
+S1LogHashFailure(
+    _In_ PCWSTR Step,
+    _In_ NTSTATUS Status,
+    _In_ PCWSTR Path)
+{
+    WCHAR Line[200];
+    SIZE_T Len = wcslen(Path);
+
+    swprintf(Line, RTL_NUMBER_OF(Line), L"S1: %ls: cannot hash 0x%08lx ...%ls",
+             Step, (unsigned long)Status, Len > 90 ? Path + Len - 90 : Path);
+    S1Log(Line);
+}
+
+static VOID
+S1LogHashMismatch(
+    _In_ PCWSTR Step,
+    _In_ PCWSTR Path,
+    _In_reads_(S1_SHA256_SIZE) const uint8_t *Actual,
+    _In_reads_(S1_SHA256_SIZE) const uint8_t *Expected)
+{
+    WCHAR Line[220];
+    SIZE_T Len = wcslen(Path);
+
+    swprintf(Line, RTL_NUMBER_OF(Line),
+             L"S1: %ls: hash differs actual %02x%02x%02x%02x.. expected %02x%02x%02x%02x.. ...%ls",
+             Step, Actual[0], Actual[1], Actual[2], Actual[3],
+             Expected[0], Expected[1], Expected[2], Expected[3],
+             Len > 80 ? Path + Len - 80 : Path);
+    S1Log(Line);
+}
+
 static NTSTATUS
 S1HashFile(
     _In_ PCWSTR Path,
@@ -1074,10 +1111,22 @@ S1ApplyOperation(
             /* The target must still be what the plan recorded: a drifted
              * target means the backup would capture the wrong bytes and
              * the later originalSha256 restore check would fail. */
-            if (Op->HasOriginal == S1_TRUE &&
-                (!NT_SUCCESS(S1HashFile(TargetW, Current)) ||
-                 memcmp(Current, Op->OriginalSha256, S1_SHA256_SIZE) != 0))
-                return STATUS_S1_HASH_MISMATCH;
+            if (Op->HasOriginal == S1_TRUE)
+            {
+                NTSTATUS HashSt = S1HashFile(TargetW, Current);
+
+                if (!NT_SUCCESS(HashSt))
+                {
+                    /* a hashing failure is reported as itself, not as a changed file */
+                    S1LogHashFailure(L"target before replace", HashSt, TargetW);
+                    return HashSt;
+                }
+                if (memcmp(Current, Op->OriginalSha256, S1_SHA256_SIZE) != 0)
+                {
+                    S1LogHashMismatch(L"target before replace", TargetW, Current, Op->OriginalSha256);
+                    return STATUS_S1_HASH_MISMATCH;
+                }
+            }
             Status = S1NtOpen(BackupPath, FILE_READ_DATA, FILE_OPEN, &BackupProbe);
             if (NT_SUCCESS(Status))
                 NtClose(BackupProbe);
@@ -1117,6 +1166,10 @@ S1ApplyOperation(
 
     /* The component is not installed until its final hash matches. */
     Status = S1HashFile(TargetW, Actual);
+    if (!NT_SUCCESS(Status))
+        S1LogHashFailure(L"target after replace", Status, TargetW);
+    else if (memcmp(Actual, Op->ExpectedSha256, S1_SHA256_SIZE) != 0)
+        S1LogHashMismatch(L"target after replace", TargetW, Actual, Op->ExpectedSha256);
     if (!NT_SUCCESS(Status) || memcmp(Actual, Op->ExpectedSha256, S1_SHA256_SIZE) != 0)
     {
         /* revert this operation */
@@ -1171,9 +1224,20 @@ S1RevertOperation(
             /* Fail closed (owner decision): never restore a backup that
              * does not hash to the original content recorded in the plan;
              * a corrupt or swapped backup means the undo is untrusted. */
-            if (!NT_SUCCESS(S1HashFile(BackupPath, BackupHash)) ||
-                memcmp(BackupHash, Op->OriginalSha256, S1_SHA256_SIZE) != 0)
-                return STATUS_S1_HASH_MISMATCH;
+            {
+                NTSTATUS HashSt = S1HashFile(BackupPath, BackupHash);
+
+                if (!NT_SUCCESS(HashSt))
+                {
+                    S1LogHashFailure(L"backup before restore", HashSt, BackupPath);
+                    return HashSt;
+                }
+                if (memcmp(BackupHash, Op->OriginalSha256, S1_SHA256_SIZE) != 0)
+                {
+                    S1LogHashMismatch(L"backup before restore", BackupPath, BackupHash, Op->OriginalSha256);
+                    return STATUS_S1_HASH_MISMATCH;
+                }
+            }
             return S1MoveFileEx(BackupPath, TargetW, TRUE);
         }
         return STATUS_SUCCESS; /* nothing was backed up */
