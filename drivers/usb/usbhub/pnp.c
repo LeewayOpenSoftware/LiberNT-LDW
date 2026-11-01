@@ -1606,7 +1606,7 @@ PortEnumerationFailure:
     {
         ULONG idx;
 
-        DPRINT("USBH_EnumerateHubPorts: re-enumeration requested mid-run (Flags=%lX) – restarting\n",
+        DPRINT("USBH_EnumerateHubPorts: re-enumeration requested mid-run (Flags=%lX) â€“ restarting\n",
                HubExtension->HubFlags);
 
         HubExtension->HubFlags &= ~USBHUB_FDO_FLAG_DO_ENUMERATION;
@@ -3026,6 +3026,26 @@ USBH_PdoRemoveDevice(IN PUSBHUB_PORT_PDO_EXTENSION PortExtension,
                                        &PortExt->PortLink);
                     }
                 }
+            }
+            else if (PortData->DeviceObject == PortDevice)
+            {
+                /*
+                 * A Safely-Remove eject completes IRP_MN_REMOVE_DEVICE while
+                 * the device is still physically attached, so DELETE_PENDING
+                 * was never set by a port disconnect.  The xHC slot is already
+                 * disabled, and the later pull may raise no port-disconnect, so
+                 * leaving this torn-down PDO on the port lets the next connect
+                 * change hand it back to the PnP manager, which then tries to
+                 * start a removed device stack and fails (c0000001 -> "already
+                 * started", problem 10; the stick is then lost until reboot).
+                 * Detach it and re-arm the port as empty so a re-plug
+                 * enumerates a fresh PDO; the deletion path below reclaims this
+                 * stale device and releases its serial.
+                 */
+                PortData->DeviceObject = NULL;
+                PortData->ConnectionStatus = NoDeviceConnected;
+
+                PortExtension->EnumFlags &= ~USBHUB_ENUM_FLAG_DEVICE_PRESENT;
             }
         }
 
