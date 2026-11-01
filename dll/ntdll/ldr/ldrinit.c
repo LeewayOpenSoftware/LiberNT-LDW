@@ -110,6 +110,38 @@ RTL_CRITICAL_SECTION FastPebLock;
 
 BOOLEAN ShowSnaps;
 
+/*
+ * Gecko startup investigation (forward instrumentation, no behaviour change): the loader of these
+ * processes prints its snaps without needing the FLG_SHOW_LDR_SNAPS global flag.
+ */
+static
+BOOLEAN
+LdrpIsGeckoTraceImage(IN PUNICODE_STRING ImagePath)
+{
+    static const PCWSTR Names[] = { L"firefox", L"basilisk", L"dlldirprobe", L"default-browser-agent", L"plugin-container" };
+    ULONG n, i, j, Length;
+    PWCHAR Buffer;
+
+    if (!ImagePath || !ImagePath->Buffer) return FALSE;
+    Buffer = ImagePath->Buffer;
+    Length = ImagePath->Length / sizeof(WCHAR);
+
+    for (n = 0; n < RTL_NUMBER_OF(Names); n++)
+    {
+        ULONG NameLength = (ULONG)wcslen(Names[n]);
+
+        for (i = 0; i + NameLength <= Length; i++)
+        {
+            for (j = 0; j < NameLength; j++)
+            {
+                if (RtlUpcaseUnicodeChar(Buffer[i + j]) != RtlUpcaseUnicodeChar(Names[n][j])) break;
+            }
+            if (j == NameLength) return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 ULONG LdrpFatalHardErrorCount;
 ULONG LdrpActiveUnloadCount;
 
@@ -2833,6 +2865,10 @@ LdrpInitializeProcess(IN PCONTEXT Context,
 
     /* Check if verbose debugging (ShowSnaps) was requested */
     ShowSnaps = Peb->NtGlobalFlag & FLG_SHOW_LDR_SNAPS;
+
+    /* Gecko startup investigation: trace the loader of these processes without a registry flag */
+    if (LdrpIsGeckoTraceImage(&Peb->ProcessParameters->ImagePathName))
+        ShowSnaps = TRUE;
 
     /* Start verbose debugging messages right now if they were requested */
     if (ShowSnaps)

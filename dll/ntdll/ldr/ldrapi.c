@@ -443,6 +443,41 @@ LdrLockLoaderLock(
 }
 
 /*
+ * Gecko startup investigation: who asked for this load. Prints the module and offset of the first
+ * frames of the caller's stack (forward instrumentation, only when the loader snaps are on).
+ */
+static
+VOID
+LdrpTraceLoadCaller(IN PUNICODE_STRING DllName, IN PWSTR SearchPath)
+{
+    PVOID Frames[10];
+    USHORT Count, i;
+    PTEB Teb = NtCurrentTeb();
+
+    DPRINT1("[%p, %p] LDRTRACE LdrLoadDll(\"%wZ\") SearchPath=%S\n",
+            Teb->RealClientId.UniqueProcess, Teb->RealClientId.UniqueThread,
+            DllName, SearchPath ? SearchPath : L"(null)");
+
+    Count = RtlCaptureStackBackTrace(1, RTL_NUMBER_OF(Frames), Frames, NULL);
+    for (i = 0; i < Count; i++)
+    {
+        PLDR_DATA_TABLE_ENTRY Entry;
+
+        if (NT_SUCCESS(LdrFindEntryForAddress(Frames[i], &Entry)))
+        {
+            DPRINT1("[%p, %p] LDRTRACE   caller[%u] %wZ+0x%Ix\n",
+                    Teb->RealClientId.UniqueProcess, Teb->RealClientId.UniqueThread, i,
+                    &Entry->BaseDllName, (ULONG_PTR)Frames[i] - (ULONG_PTR)Entry->DllBase);
+        }
+        else
+        {
+            DPRINT1("[%p, %p] LDRTRACE   caller[%u] %p\n",
+                    Teb->RealClientId.UniqueProcess, Teb->RealClientId.UniqueThread, i, Frames[i]);
+        }
+    }
+}
+
+/*
  * @implemented
  */
 NTSTATUS
@@ -473,6 +508,8 @@ LdrLoadDll(
 
     /* Lock the loader lock */
     LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
+
+    if (ShowSnaps) LdrpTraceLoadCaller(DllName, SearchPath);
 
     /* Check if there's a TLD DLL being loaded */
     OldTldDll = LdrpTopLevelDllBeingLoaded;
@@ -524,6 +561,12 @@ LdrLoadDll(
                              DllName,
                              BaseAddress,
                              TRUE);
+        if (ShowSnaps)
+        {
+            DPRINT1("[%p, %p] LDRTRACE LdrLoadDll(\"%wZ\") -> %08lx\n",
+                    Teb->RealClientId.UniqueProcess, Teb->RealClientId.UniqueThread,
+                    DllName, Status);
+        }
         if (NT_SUCCESS(Status))
         {
             Status = STATUS_SUCCESS;

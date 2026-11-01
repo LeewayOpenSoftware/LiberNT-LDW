@@ -1365,7 +1365,9 @@ co_MsqSendMessage(PTHREADINFO ptirec,
          }
          UserDomainUnlockExclusive(DLT_QUEUE);
 
-         ERR("MsqSendMessage (blocked) timed out 1 Status %lx\n", WaitStatus);
+         ERR("MsqSendMessage (blocked) timed out 1 Status %lx: from tid %p to tid %p hwnd %p msg 0x%x wParam %Ix lParam %Ix timeout %u flags 0x%x\n",
+             WaitStatus, PsGetThreadId(pti->pEThread), PsGetThreadId(ptirec->pEThread),
+             Wnd, Msg, (ULONG_PTR)wParam, (ULONG_PTR)lParam, uTimeout, Flags);
       }
       // Receiving thread passed on and left us hanging with issues still pending.
       else if (WaitStatus == STATUS_WAIT_1)
@@ -1423,7 +1425,9 @@ co_MsqSendMessage(PTHREADINFO ptirec,
             }
             UserDomainUnlockExclusive(DLT_QUEUE);
 
-            WARN("MsqSendMessage timed out 2 Status %lx\n", WaitStatus);
+            WARN("MsqSendMessage timed out 2 Status %lx: from tid %p to tid %p hwnd %p msg 0x%x wParam %Ix lParam %Ix timeout %u flags 0x%x\n",
+                 WaitStatus, PsGetThreadId(pti->pEThread), PsGetThreadId(ptirec->pEThread),
+                 Wnd, Msg, (ULONG_PTR)wParam, (ULONG_PTR)lParam, uTimeout, Flags);
             break;
          }
          // Receiving thread passed on and left us hanging with issues still pending.
