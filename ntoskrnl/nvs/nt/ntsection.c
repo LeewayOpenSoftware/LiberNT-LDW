@@ -619,9 +619,16 @@ MiRelocateImageControlArea(
     BOOLEAN Invalid = FALSE;
     BOOLEAN Unsupported = FALSE;
     NTSTATUS Status = STATUS_SUCCESS;
+    ULONG64 TraceStart = KeQueryInterruptTime();
+    ULONG64 TraceLast = TraceStart;
+    ULONG64 TraceEntries = 0;
 
     if (!Information->ImageDynamicallyRelocated)
         return STATUS_SUCCESS;
+    /* Gecko startup investigation: a hung Firefox/Basilisk thread sits in NtCreateSection for minutes */
+    DbgPrint("NVS-TRACE: relocating image control=%p size=0x%I64x pages=%lu relocbytes=%lu oldbase=0x%I64x
+",
+             Control, (ULONG64)Control->ImageSize, PageCount, Length, OldBase);
     if (!Control->Image64)
     {
         if (!(Information->ImageCharacteristics & IMAGE_FILE_DLL) && OldBase >= MI_ALLOCATION_GRANULARITY &&
@@ -754,6 +761,18 @@ MiRelocateImageControlArea(
                     Unsupported = TRUE;
                     goto Done;
             }
+            if (((++TraceEntries) & 0x3FFFF) == 0)
+            {
+                ULONG64 Now = KeQueryInterruptTime();
+
+                if (Now - TraceLast >= 50000000ULL) /* every 5 s */
+                {
+                    DbgPrint("NVS-TRACE: relocating control=%p entries=%I64u position=%lu/%lu elapsed=%I64u ms
+",
+                             Control, TraceEntries, Position, Length, (Now - TraceStart) / 10000);
+                    TraceLast = Now;
+                }
+            }
             Status = MiImageRelocationBytes(Control, Pages, Address, &Value, Bytes, FALSE);
             if (!NT_SUCCESS(Status))
             {
@@ -791,6 +810,9 @@ MiRelocateImageControlArea(
     }
 
 Done:
+    DbgPrint("NVS-TRACE: relocation done control=%p status=%08lx entries=%I64u applied=%u elapsed=%I64u ms
+",
+             Control, Status, TraceEntries, (ULONG)Applied, (KeQueryInterruptTime() - TraceStart) / 10000);
     if (Reserved && Applied)
     {
         Control->ImageWindow = Window;
