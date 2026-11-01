@@ -2529,8 +2529,10 @@ USBH_ProcessPortStateChange(IN PUSBHUB_FDO_EXTENSION HubExtension,
 
             KeReleaseSpinLock(&HubExtension->RelationsWorkerSpinLock, Irql);
 
-            USBH_ReleaseSerialNumber(PortExtension);
-
+            /* The serial number stays published until this PDO is really
+             * deleted (ghost list or USBH_PdoRemoveDevice): while its
+             * devnode lingers, a re-plugged device of the same serial must
+             * fall back to the port-relative ID instead of colliding. */
             USBH_FreeCachedStrings(PortExtension);
 
             DeviceHandle = InterlockedExchangePointer(&PortExtension->DeviceHandle,
