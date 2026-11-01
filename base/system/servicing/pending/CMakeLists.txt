@@ -13,7 +13,7 @@
 option(LIBERNT_BUILD_UPDATE_PENDING "Build the stage-1 boot applier LiberNTUpdatePending (not part of the ISO)" OFF)
 
 if(LIBERNT_BUILD_UPDATE_PENDING)
-add_executable(LiberNTUpdatePending pending.c)
+add_executable(LiberNTUpdatePending pending.c s1core.c)
 set_module_type(LiberNTUpdatePending nativecui)
 add_importlibs(LiberNTUpdatePending ntdll)
 add_dependencies(LiberNTUpdatePending psdk)
