@@ -1,0 +1,459 @@
+/*
+ * PROJECT:     LiberNT Update - libservicing
+ * LICENSE:     GPL-3.0-or-later (https://spdx.org/licenses/GPL-3.0-or-later)
+ * PURPOSE:     Servicing target: Online (running system) or Image (offline root), the protected
+ *              servicing tree, and the stage 1 white list of what may be replaced
+ * COPYRIGHT:   Copyright 2026 Leeway Open Software
+ *
+ * The Image mode only reads and writes files below the given root. It never loads or runs
+ * anything found there (DESIGN-v0, section 3).
+ *
+ * Trust boundary: everything under <root>\LiberNT\Servicing (store, trust anchor, journal, plan,
+ * backups) decides what the engine installs as an administrator, so the tree is created with a
+ * PROTECTED DACL that grants only SYSTEM and Administrators, and a target whose servicing tree has
+ * another owner or any other ACE is refused (LN_E_INSECURE_TARGET) before anything is read from it.
+ */
+
+#include "libservicing.h"
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+#include <aclapi.h>
+#include <sddl.h>
+
+#define SERVICING_REL L"LiberNT\\Servicing"
+#define LIBERNT_REL   L"LiberNT"
+
+#ifdef LN_TESTING
+PSID LnTestExtraSid = NULL;
+#endif
+
+/* ---- the white list ------------------------------------------------------------------------
+ * Stage 1 policy, stated plainly: this is a list of what MAY be replaced, not a list of what is dangerous.
+ * It admits user-mode DLL/EXE under the four roots and auto/demand drivers, and refuses the kernel, the HAL,
+ * the boot path and the critical processes by name. It does NOT by itself exclude other security-critical
+ * user components (lsasrv, samsrv, msv1_0, sechost, svchost, kernel32, kernelbase...): whoever signs a
+ * package with the development key is trusted to ship them, and the owner decides when that list grows. */
+
+static BOOL StartsWithNoCase(const WCHAR *s, const WCHAR *prefix)
+{
+    return _wcsnicmp(s, prefix, wcslen(prefix)) == 0;
+}
+
+BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
+{
+    static const WCHAR *roots[] =
+    {
+        L"Windows\\System32\\", L"Windows\\SysWOW64\\", L"Program Files\\", L"Program Files (x86)\\"
+    };
+    static const WCHAR *deniedPrefix[] =
+    {
+        L"Windows\\System32\\config\\", L"Windows\\System32\\boot\\", L"LiberNT\\"
+    };
+    /* kernel, HAL, boot path and the critical processes: never replaced by the engine in stage 1 */
+    static const WCHAR *deniedName[] =
+    {
+        L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe", L"ntdll.dll", L"smss.exe",
+        L"csrss.exe", L"wininit.exe", L"winlogon.exe", L"services.exe", L"lsass.exe", L"bootvid.dll",
+        L"kdcom.dll", L"ci.dll", L"win32k.sys", L"win32kbase.sys", L"win32kfull.sys", L"autochk.exe",
+        L"ntldr", L"bootmgr", L"freeldr.sys", L"freeldr.ini"
+    };
+    const WCHAR *base, *ext;
+    size_t i, bl;
+    BOOL inRoot = FALSE, isDriver;
+
+    if (!LnIsSafeRelativePath(rel))
+        return FALSE;
+    for (i = 0; i < sizeof(roots) / sizeof(roots[0]); i++)
+    {
+        if (StartsWithNoCase(rel, roots[i]))
+            inRoot = TRUE;
+    }
+    if (!inRoot)
+        return FALSE;
+    for (i = 0; i < sizeof(deniedPrefix) / sizeof(deniedPrefix[0]); i++)
+    {
+        if (StartsWithNoCase(rel, deniedPrefix[i]))
+            return FALSE;
+    }
+    base = wcsrchr(rel, L'\\');
+    base = base ? base + 1 : rel;
+    for (i = 0; i < sizeof(deniedName) / sizeof(deniedName[0]); i++)
+    {
+        if (!_wcsicmp(base, deniedName[i]))
+            return FALSE;
+    }
+    bl = wcslen(base);
+    if (!_wcsnicmp(base, L"hal", 3) && bl > 4 && !_wcsicmp(base + bl - 4, L".dll"))
+        return FALSE;                                   /* hal*.dll */
+
+    ext = bl > 4 ? base + bl - 4 : L"";
+    isDriver = !_wcsicmp(ext, L".sys");
+    if (isDriver)
+    {
+        /* drivers: only under System32\drivers, and only auto (2) or demand (3) / disabled (4) start;
+         * boot-start (0) and system-start (1) drivers are part of the boot path */
+        return StartsWithNoCase(rel, L"Windows\\System32\\drivers\\") && driverStart >= 2 && driverStart <= 4;
+    }
+    if (driverStart != -1)
+        return FALSE;                                   /* driverStart only makes sense for a .sys */
+    return !_wcsicmp(ext, L".dll") || !_wcsicmp(ext, L".exe");
+}
+
+BOOL LnTargetPathAllowed(const WCHAR *rel)
+{
+    return LnTargetItemAllowed(rel, -1);
+}
+
+/* ---- real path ----------------------------------------------------------------------------- */
+
+static DWORD FinalPath(const WCHAR *path, WCHAR *out, DWORD cap)
+{
+    HANDLE h = CreateFileW(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    DWORD n;
+
+    if (h == INVALID_HANDLE_VALUE)
+        return GetLastError();
+    n = GetFinalPathNameByHandleW(h, out, cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    return (n == 0 || n >= cap) ? ERROR_BAD_PATHNAME : ERROR_SUCCESS;
+}
+
+DWORD LnTargetValidateReal(const LN_TARGET *t, const WCHAR *rel)
+{
+    WCHAR cur[MAX_PATH], deepest[MAX_PATH], finalRoot[MAX_PATH], finalDeep[MAX_PATH], expect[MAX_PATH];
+    const WCHAR *p = rel;
+    DWORD err;
+    size_t rootLen;
+    WCHAR *rootNoSlash;
+
+    if (!LnIsSafeRelativePath(rel))
+        return LN_E_FORBIDDEN_TARGET;
+    wcscpy(cur, t->root);
+    wcscpy(deepest, t->root);
+    while (*p)
+    {
+        const WCHAR *e = wcschr(p, L'\\');
+        size_t n = e ? (size_t)(e - p) : wcslen(p);
+        DWORD attrs;
+
+        if (wcslen(cur) + n + 2 >= MAX_PATH)
+            return ERROR_BAD_PATHNAME;
+        wcsncat(cur, p, n);
+        attrs = GetFileAttributesW(cur);
+        if (attrs == INVALID_FILE_ATTRIBUTES)
+            break;                                      /* the rest does not exist yet: we create it */
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT)
+            return LN_E_FORBIDDEN_TARGET;               /* junction or symbolic link in the way */
+        if (e)
+        {
+            if (!(attrs & FILE_ATTRIBUTE_DIRECTORY))
+                return LN_E_PRECONDITION;
+            wcscpy(deepest, cur);
+            wcscat(cur, L"\\");
+        }
+        if (!e)
+            break;
+        p = e + 1;
+    }
+
+    /* the existing part of the parent chain must resolve to exactly what was written (no 8.3, no alias) */
+    rootNoSlash = _wcsdup(t->root);
+    if (!rootNoSlash)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    rootLen = wcslen(rootNoSlash);
+    if (rootLen > 3 && rootNoSlash[rootLen - 1] == L'\\')
+        rootNoSlash[rootLen - 1] = 0;
+    err = FinalPath(rootNoSlash, finalRoot, MAX_PATH);
+    free(rootNoSlash);
+    if (err)
+        return err;
+    err = FinalPath(deepest, finalDeep, MAX_PATH);
+    if (err)
+        return err;
+    {
+        size_t rl = wcslen(finalRoot);
+        const WCHAR *tail = deepest + wcslen(t->root);
+
+        wcscpy(expect, finalRoot);
+        if (rl && expect[rl - 1] != L'\\' && *tail)
+            wcscat(expect, L"\\");
+        wcscat(expect, tail);
+        rl = wcslen(expect);
+        if (rl > 3 && expect[rl - 1] == L'\\')
+            expect[rl - 1] = 0;
+        rl = wcslen(finalDeep);
+        if (rl > 3 && finalDeep[rl - 1] == L'\\')
+            finalDeep[rl - 1] = 0;
+    }
+    if (_wcsicmp(expect, finalDeep))
+        return LN_E_FORBIDDEN_TARGET;
+    return ERROR_SUCCESS;
+}
+
+/* ---- the protected servicing tree --------------------------------------------------------------- */
+
+static BOOL SidTrusted(PSID sid)
+{
+    BYTE buf[SECURITY_MAX_SID_SIZE];
+    DWORD n = sizeof(buf);
+    static const WELL_KNOWN_SID_TYPE ok[] = { WinLocalSystemSid, WinBuiltinAdministratorsSid };
+    size_t i;
+
+    for (i = 0; i < sizeof(ok) / sizeof(ok[0]); i++)
+    {
+        n = sizeof(buf);
+        if (CreateWellKnownSid(ok[i], NULL, buf, &n) && EqualSid(sid, buf))
+            return TRUE;
+    }
+    {
+        /* NT SERVICE\TrustedInstaller owns the files of a stock Windows tree */
+        SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+        PSID ti = NULL;
+        BOOL same = FALSE;
+
+        if (AllocateAndInitializeSid(&nt, 6, 80, 956008885, 3418522649UL, 1831038044, 1853292631, 2271478464UL, 0, 0, &ti))
+        {
+            same = EqualSid(sid, ti);
+            FreeSid(ti);
+        }
+        if (same)
+            return TRUE;
+    }
+#ifdef LN_TESTING
+    if (LnTestExtraSid && EqualSid(sid, LnTestExtraSid))
+        return TRUE;
+#endif
+    return FALSE;
+}
+
+/* Owner SYSTEM/Administrators and a PROTECTED DACL made only of allow ACEs for SYSTEM/Administrators. */
+static DWORD CheckSecure(const WCHAR *path)
+{
+    PSECURITY_DESCRIPTOR sd = NULL;
+    PSID owner = NULL;
+    PACL dacl = NULL;
+    SECURITY_DESCRIPTOR_CONTROL ctl = 0;
+    DWORD rev, i, result = LN_E_INSECURE_TARGET;
+
+    if (GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                              &owner, NULL, &dacl, NULL, &sd) != ERROR_SUCCESS)
+        return LN_E_INSECURE_TARGET;                    /* no ACLs (FAT) or unreadable: fail closed */
+    if (!owner || !dacl || !GetSecurityDescriptorControl(sd, &ctl, &rev) || !(ctl & SE_DACL_PROTECTED))
+        goto out;
+    if (!SidTrusted(owner) || dacl->AceCount == 0)
+        goto out;
+    for (i = 0; i < dacl->AceCount; i++)
+    {
+        ACE_HEADER *ace;
+
+        if (!GetAce(dacl, i, (void **)&ace))
+            goto out;
+        if (ace->AceType != ACCESS_ALLOWED_ACE_TYPE)
+            goto out;
+        if (!SidTrusted((PSID)&((ACCESS_ALLOWED_ACE *)ace)->SidStart))
+            goto out;
+    }
+    result = ERROR_SUCCESS;
+out:
+    LocalFree(sd);
+    return result;
+}
+
+static DWORD CreateSecureDir(const WCHAR *path)
+{
+    WCHAR sddl[512];
+    PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_ATTRIBUTES sa;
+    DWORD err = ERROR_SUCCESS;
+
+    wcscpy(sddl, L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+#ifdef LN_TESTING
+    if (LnTestExtraSid)
+    {
+        WCHAR *str = NULL;
+
+        if (ConvertSidToStringSidW(LnTestExtraSid, &str))
+        {
+            wcscat(sddl, L"(A;OICI;FA;;;");
+            wcscat(sddl, str);
+            wcscat(sddl, L")");
+            LocalFree(str);
+        }
+    }
+#endif
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL))
+        return GetLastError();
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+    if (!CreateDirectoryW(path, &sa) && GetLastError() != ERROR_ALREADY_EXISTS)
+        err = GetLastError();
+    LocalFree(sd);
+    return err;
+}
+
+/* ---- target -------------------------------------------------------------------------------- */
+
+static BOOL IsGuid(const char *s)
+{
+    int i;
+
+    if (strlen(s) != 36)
+        return FALSE;
+    for (i = 0; i < 36; i++)
+    {
+        char c = s[i];
+
+        if (i == 8 || i == 13 || i == 18 || i == 23)
+        {
+            if (c != '-')
+                return FALSE;
+        }
+        else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static DWORD MakeIdentity(const LN_TARGET *t, char out[65])
+{
+    unsigned char seed[64];
+    LARGE_INTEGER pc;
+    FILETIME ft;
+    DWORD pid = GetCurrentProcessId(), tick = GetTickCount();
+    LN_SHA256_CTX c;
+    unsigned char h[32];
+    HMODULE k = GetModuleHandleW(L"kernel32.dll");
+
+    QueryPerformanceCounter(&pc);
+    GetSystemTimeAsFileTime(&ft);
+    memset(seed, 0, sizeof(seed));
+    memcpy(seed, &pc, sizeof(pc));
+    memcpy(seed + 8, &ft, sizeof(ft));
+    memcpy(seed + 16, &pid, sizeof(pid));
+    memcpy(seed + 20, &tick, sizeof(tick));
+    memcpy(seed + 24, &k, sizeof(k));
+    LnSha256Init(&c);
+    LnSha256Update(&c, seed, sizeof(seed));
+    LnSha256Update(&c, t->root, wcslen(t->root) * sizeof(WCHAR));
+    LnSha256Final(&c, h);
+    {
+        char hex[65];
+
+        LnHexEncode(h, 32, hex);                         /* GUID text from the first 16 bytes */
+        memcpy(out, hex, 8);           out[8] = '-';
+        memcpy(out + 9, hex + 8, 4);   out[13] = '-';
+        memcpy(out + 14, hex + 12, 4); out[18] = '-';
+        memcpy(out + 19, hex + 16, 4); out[23] = '-';
+        memcpy(out + 24, hex + 20, 12);
+        out[36] = 0;
+    }
+    return ERROR_SUCCESS;
+}
+
+DWORD LnTargetOpen(LN_TARGET *t, LN_TARGET_MODE mode, const WCHAR *imageRoot, BOOL create)
+{
+    WCHAR win[MAX_PATH], *idPath, libernt[MAX_PATH];
+    DWORD err, attrs;
+    size_t n;
+    BYTE *data;
+    size_t len;
+
+    memset(t, 0, sizeof(*t));
+    t->mode = mode;
+    if (mode == LnTargetOnline)
+    {
+        if (!GetSystemWindowsDirectoryW(win, MAX_PATH) || win[1] != L':')
+            return ERROR_PATH_NOT_FOUND;
+        t->root[0] = win[0];
+        t->root[1] = L':';
+        t->root[2] = L'\\';
+        t->root[3] = 0;
+    }
+    else if (mode == LnTargetImage)
+    {
+        if (!imageRoot || !*imageRoot || wcslen(imageRoot) > MAX_PATH - 100)
+            return ERROR_BAD_PATHNAME;
+        wcscpy(t->root, imageRoot);
+        n = wcslen(t->root);
+        if (t->root[n - 1] != L'\\')
+            wcscat(t->root, L"\\");
+        attrs = GetFileAttributesW(t->root);
+        if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY))
+            return ERROR_PATH_NOT_FOUND;
+    }
+    else
+        return ERROR_INVALID_PARAMETER;
+
+    wcscpy(libernt, t->root);
+    wcscat(libernt, LIBERNT_REL);
+    wcscpy(t->servicing, t->root);
+    wcscat(t->servicing, SERVICING_REL);
+
+    if (GetFileAttributesW(t->servicing) == INVALID_FILE_ATTRIBUTES)
+    {
+        if (!create)
+            return ERROR_PATH_NOT_FOUND;
+        err = CreateSecureDir(libernt);
+        if (!err)
+            err = CreateSecureDir(t->servicing);
+        if (err)
+            return err;
+    }
+    /* never read the store, the trust anchor or the journal from a tree anyone else could write */
+    err = CheckSecure(libernt);
+    if (!err)
+        err = CheckSecure(t->servicing);
+    if (!err)
+    {
+        /* a link in place of either folder would redirect the whole tree */
+        DWORD a1 = GetFileAttributesW(libernt), a2 = GetFileAttributesW(t->servicing);
+
+        if (a1 == INVALID_FILE_ATTRIBUTES || a2 == INVALID_FILE_ATTRIBUTES ||
+            (a1 & FILE_ATTRIBUTE_REPARSE_POINT) || (a2 & FILE_ATTRIBUTE_REPARSE_POINT))
+            err = LN_E_INSECURE_TARGET;
+    }
+    if (err)
+        return err;
+
+    idPath = LnJoin(t->servicing, L"target-id");
+    if (!idPath)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    err = LnReadFileAll(idPath, &data, &len);
+    if (!err)
+    {
+        if (len >= 36)
+        {
+            char id[65];
+
+            memcpy(id, data, 36);
+            id[36] = 0;
+            if (IsGuid(id))
+                strcpy(t->identity, id);
+            else
+                err = LN_E_MANIFEST_INVALID;
+        }
+        else
+            err = LN_E_MANIFEST_INVALID;
+        free(data);
+    }
+    else if (create && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND))
+    {
+        MakeIdentity(t, t->identity);
+        err = LnWriteFileAtomic(idPath, t->identity, 36);
+    }
+    free(idPath);
+    return err;
+}
+
+WCHAR *LnTargetPath(const LN_TARGET *t, const WCHAR *rel)
+{
+    return LnJoin(t->servicing, rel);
+}
+
+WCHAR *LnTargetFile(const LN_TARGET *t, const WCHAR *rel)
+{
+    return LnJoin(t->root, rel);
+}

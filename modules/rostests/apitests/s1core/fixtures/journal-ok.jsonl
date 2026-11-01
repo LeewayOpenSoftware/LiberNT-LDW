@@ -1,0 +1,3 @@
+{"seq":1,"prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"boot","tx":"48d07070ff2080849aacc43c5638cdaaab7502ebac2a1dfe5f4ec6b991efba82","phase":"verified","op":null,"result":"ok","error":null}
+{"seq":2,"prev":"67a35a15167a0194c290321431eb7f5547bd06008bf67bf25974832f042741ed","ts":"boot","tx":"48d07070ff2080849aacc43c5638cdaaab7502ebac2a1dfe5f4ec6b991efba82","phase":"applying","op":null,"result":"ok","error":null}
+{"seq":3,"prev":"85f731cceb9328585ad05ccf1b1d5e524685ac0c47430b50629945fa57239b7b","ts":"boot","tx":"48d07070ff2080849aacc43c5638cdaaab7502ebac2a1dfe5f4ec6b991efba82","phase":"applied","op":null,"result":"ok","error":null}

@@ -1,0 +1,4 @@
+*.jsonl -text
+*.sig.bin -text
+*.plan.json -text
+rsacases.bin -text
