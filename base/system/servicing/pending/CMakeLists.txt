@@ -5,9 +5,14 @@
 # bootstrap (base/setup/libernt-update/) builds and installs it online or
 # offline. To compile it manually:
 #   ninja LiberNTUpdatePending
-# in a configured amd64 build after uncommenting the line below.
+# in a configured amd64 build after configuring with
+#   -DLIBERNT_BUILD_UPDATE_PENDING=ON
+# (OFF by default: the default tree and the ISO do not contain it. CI sets it
+# only to publish the applier as a separate artifact for field tests).
 
-if(FALSE)
+option(LIBERNT_BUILD_UPDATE_PENDING "Build the stage-1 boot applier LiberNTUpdatePending (not part of the ISO)" OFF)
+
+if(LIBERNT_BUILD_UPDATE_PENDING)
 add_executable(LiberNTUpdatePending pending.c)
 set_module_type(LiberNTUpdatePending nativecui)
 add_importlibs(LiberNTUpdatePending ntdll)

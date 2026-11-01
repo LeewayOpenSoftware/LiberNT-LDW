@@ -78,6 +78,7 @@ jobs:
         ./configure.sh $FLAGS -a ${{matrix.arch}} \
           -DREACTOS_TARGET_NT=${{matrix.ntver}} \
           -DDIAGDATA_CHANNEL= \
+          -DLIBERNT_BUILD_UPDATE_PENDING=ON \
           -DENABLE_CCACHE=1
         ENV_NAME=$([ "${{matrix.compiler}}" = "clang" ] && echo Clang || echo GCC)
         CFG_LOWER=$(echo "${{matrix.config}}" | tr '[:upper:]' '[:lower:]')
@@ -92,6 +93,14 @@ jobs:
       run: |
         . "$HOME/.local/opt/rosbe/rosbe-env.sh"
         ninja -C ${{steps.configure.outputs.outdir}} bootcd liberntimg liberntvhd -k0
+
+    - name: Build stage-1 applier
+      run: |
+        . "$HOME/.local/opt/rosbe/rosbe-env.sh"
+        ninja -C ${{steps.configure.outputs.outdir}} LiberNTUpdatePending
+        f=$(find ${{steps.configure.outputs.outdir}} -name LiberNTUpdatePending.exe | head -n1)
+        mkdir -p applier-out && cp "$f" applier-out/
+        (cd applier-out && sha256sum LiberNTUpdatePending.exe | tee LiberNTUpdatePending.exe.sha256 && wc -c < LiberNTUpdatePending.exe)
 
     - name: Print ccache statistics
       if: ${{ always() && steps.ccache_restore.outcome == 'success' }}
@@ -122,6 +131,12 @@ jobs:
     - name: Name artifacts
       id: images
       run: echo "tag=${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{matrix.config}}-target${{matrix.ntver}}-${GITHUB_SHA::11}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload stage-1 applier
+      uses: actions/upload-artifact@v7
+      with:
+        name: libernt-update-pending-${{steps.images.outputs.tag}}
+        path: applier-out/
 
     - name: Upload bootcd.iso
       uses: actions/upload-artifact@v7
