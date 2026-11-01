@@ -4344,6 +4344,8 @@ PNP_RequestDeviceEject(
     Status = NtPlugPlayControl(PlugPlayControlQueryAndRemoveDevice,
                                &PlugPlayData,
                                sizeof(PlugPlayData));
+    if (pVetoType != NULL)
+        *pVetoType = PlugPlayData.VetoType;
     if (!NT_SUCCESS(Status))
         ret = NtStatusToCrError(Status);
 
