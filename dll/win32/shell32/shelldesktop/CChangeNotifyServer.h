@@ -43,6 +43,10 @@
 #define CN_DELIVER_NOTIFICATION (WM_USER + 3) /* 0x403 */
 #define CN_SUSPEND_RESUME (WM_USER + 6) /* 0x406 */
 #define CN_UNREGISTER_PROCESS (WM_USER + 7) /* 0x407 */
+// Message CN_DRIVE_CHANGE: Drives went away or arrived (sent by the desktop on WM_DEVICECHANGE).
+//   wParam: Bit mask of the drive letters that went away.
+//   lParam: Bit mask of the drive letters that arrived.
+#define CN_DRIVE_CHANGE (WM_USER + 8) /* 0x408 */
 
 // This message is implemented by the broker window which lives in the context of the client
 #define WM_BROKER_NOTIFICATION (WM_USER + 1) /* 0x401 */

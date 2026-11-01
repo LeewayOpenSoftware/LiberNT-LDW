@@ -1324,13 +1324,18 @@ LRESULT CDesktopBrowser::OnGetChangeNotifyServer(UINT uMsg, WPARAM wParam, LPARA
     return (LRESULT)m_hwndChangeNotifyServer;
 }
 
-// Detect DBT_DEVICEARRIVAL and DBT_DEVICEREMOVECOMPLETE
+// Detect DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE and DBT_DEVNODES_CHANGED
 LRESULT CDesktopBrowser::OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
 {
-    if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE)
+    // A volume that comes and goes with its device (a USB stick) is only
+    // announced as DBT_DEVNODES_CHANGED, so re-read the drive map on it too.
+    if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE &&
+        wParam != DBT_DEVNODES_CHANGED)
+    {
         return 0;
+    }
 
-    PDEV_BROADCAST_HDR pHeader = (PDEV_BROADCAST_HDR)lParam;
+    PDEV_BROADCAST_HDR pHeader = (wParam == DBT_DEVNODES_CHANGED) ? NULL : (PDEV_BROADCAST_HDR)lParam;
     if (pHeader && pHeader->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE &&
         IsEqualGUID(((PDEV_BROADCAST_DEVICEINTERFACE_W)pHeader)->dbcc_classguid, GUID_DEVINTERFACE_WPD_SHELL))
     {
@@ -1341,16 +1346,25 @@ LRESULT CDesktopBrowser::OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam,
     }
 
     DWORD dwDrives = ::GetLogicalDrives();
+    DWORD dwRemoved = m_dwDrives & ~dwDrives;
+    DWORD dwAdded = dwDrives & ~m_dwDrives;
+
+    // The change notification server drops its directory watches on the
+    // drives that went away first: their open handles would keep a removed
+    // volume alive. The watches on the drives that came back are recreated.
+    if ((dwRemoved || dwAdded) && ::IsWindow(m_hwndChangeNotifyServer))
+        ::SendMessageW(m_hwndChangeNotifyServer, CN_DRIVE_CHANGE, dwRemoved, dwAdded);
+
     for (INT iDrive = 0; iDrive <= 'Z' - 'A'; ++iDrive)
     {
         WCHAR szPath[MAX_PATH];
         DWORD dwBit = (1 << iDrive);
-        if (!(m_dwDrives & dwBit) && (dwDrives & dwBit)) // The drive is added
+        if (dwAdded & dwBit) // The drive is added
         {
             PathBuildRootW(szPath, iDrive);
             SHChangeNotify(SHCNE_DRIVEADD, SHCNF_PATHW, szPath, NULL);
         }
-        else if ((m_dwDrives & dwBit) && !(dwDrives & dwBit)) // The drive is removed
+        else if (dwRemoved & dwBit) // The drive is removed
         {
             PathBuildRootW(szPath, iDrive);
             SHChangeNotify(SHCNE_DRIVEREMOVED, SHCNF_PATHW, szPath, NULL);
