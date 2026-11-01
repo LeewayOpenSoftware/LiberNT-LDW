@@ -686,6 +686,13 @@ USBSTOR_PdoHandlePnp(
            break;
        }
        case IRP_MN_QUERY_REMOVE_DEVICE:
+       {
+           /* The class driver that claimed the disk answers for it above us
+            * and gives the claim back with its own IRP_MN_REMOVE_DEVICE, so
+            * an outstanding claim is no reason to veto the removal. */
+           Status = STATUS_SUCCESS;
+           break;
+       }
        case IRP_MN_QUERY_STOP_DEVICE:
        {
            if (DeviceExtension->Claimed)
