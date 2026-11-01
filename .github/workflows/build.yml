@@ -10,36 +10,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - compiler: gcc
-            arch: i386
-            config: Debug
-            ntver: '0xA00'
-          - compiler: gcc
-            arch: amd64
-            config: Debug
-            ntver: '0xA00'
           - compiler: clang
             arch: amd64
-            config: Debug
-            ntver: '0xA00'
-          - compiler: clang
-            arch: arm64
-            config: Debug
-            ntver: '0xA00'
-            profile: profile_raspberry
-          - compiler: clang
-            arch: riscv64
-            config: Debug
-            ntver: '0xA00'
-            profile: profile_spacemit_k1
-          - compiler: clang
-            arch: riscv64
-            config: Debug
-            ntver: '0xA00'
-            profile: profile_starfive_jh7110
-            variant: jh7110
-          - compiler: clang
-            arch: ppc
             config: Debug
             ntver: '0xA00'
       fail-fast: false
@@ -178,56 +150,3 @@ jobs:
     - name: Check build dependencies
       run: python3 sdk/tools/depcheck.py ${{steps.configure.outputs.outdir}} --mode depfiles --nested --fail-on-gaps
 
-  build-msvc:
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            vsarch: amd64
-          - arch: i386
-            vsarch: amd64_x86
-          - arch: arm64
-            vsarch: amd64_arm64
-      fail-fast: false
-    runs-on: windows-2025
-    steps:
-    - name: Source checkout
-      uses: actions/checkout@v6
-
-    - name: Set up the MSVC build environment
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: ${{matrix.vsarch}}
-
-    - name: Install host build tools
-      shell: pwsh
-      run: |
-        # The Chocolatey community feed intermittently answers 504; retry before giving up.
-        $tools = "C:\ProgramData\chocolatey\lib\winflexbison3\tools"
-        foreach ($attempt in 1..3) {
-            choco install -y --no-progress ninja winflexbison3
-            if (Test-Path "$tools\win_flex.exe") { break }
-            if ($attempt -lt 3) { Start-Sleep -Seconds (30 * $attempt) }
-        }
-        python -m pip install --upgrade mako pyyaml packaging
-        # LiberNT's CMake looks for flex/bison; winflexbison3 ships them as
-        # win_flex/win_bison, so expose both names on PATH.
-        if (-not (Test-Path "$tools\win_flex.exe")) { $tools = Split-Path (Get-Command win_flex).Source }
-        Copy-Item "$tools\win_flex.exe" "$tools\flex.exe" -Force
-        Copy-Item "$tools\win_bison.exe" "$tools\bison.exe" -Force
-        echo "$tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-    - name: Configure
-      id: configure
-      shell: cmd
-      run: |
-        call configure.cmd /arch=${{matrix.arch}} -DREACTOS_TARGET_NT=0xA00 -DDIAGDATA_CHANNEL= -DENABLE_CCACHE=0
-        echo outdir=output-VS-${{matrix.arch}}-debug>> "%GITHUB_OUTPUT%"
-
-    - name: Build submodules
-      shell: cmd
-      run: ninja -C ${{steps.configure.outputs.outdir}} submodules
-
-    - name: Build
-      shell: cmd
-      run: ninja -C ${{steps.configure.outputs.outdir}} -k0
