@@ -276,6 +276,14 @@ static ULONG   KiUsCount[KIUS_SLOTS];
 static LONG64  KiUsTicksUser = 0;
 static LONG64  KiUsTicksKernel = 0;
 static LONG64  KiUsDropped = 0;
+/* STATE/WAIT sampler: scheduling state of the latched thread, read every tick. */
+static ULONG   KiUsState[8];
+static ULONG   KiUsWait[40];
+static LONG64  KiUsWaitIrp = 0;
+static LONG64  KiUsStateTicks = 0;
+static ULONG   KiUsOffRun = 0;
+static ULONG   KiUsMaxOff = 0;
+static LONG    KiUsStateStop = 0;   /* stop after the dump: the traced thread may exit next */
 
 VOID NTAPI
 KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode)
@@ -310,6 +318,39 @@ KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode)
     KiUsDropped++;
 }
 
+/* Read the latched thread's state every tick (even when not current) so
+ * off-CPU time is attributed to Ready (scheduling) vs Waiting (I/O/IPC). */
+VOID NTAPI
+KiW32StateSample(VOID)
+{
+    PKTHREAD T = KiW32TraceThread;
+    UCHAR st;
+
+    if (T == NULL || KiUsStateStop)
+        return;
+    KiUsStateTicks++;
+    st = T->State;
+    if (st < 8)
+        KiUsState[st]++;
+    if (st == Running)
+    {
+        KiUsOffRun = 0;
+    }
+    else
+    {
+        if (++KiUsOffRun > KiUsMaxOff)
+            KiUsMaxOff = KiUsOffRun;
+        if (st == Waiting)
+        {
+            UCHAR wr = T->WaitReason;
+            if (wr < 40)
+                KiUsWait[wr]++;
+            if (!IsListEmpty(&((PETHREAD)T)->IrpList))
+                KiUsWaitIrp++;
+        }
+    }
+}
+
 static VOID
 KiUsDump(PCSTR Reason)
 {
@@ -328,6 +369,13 @@ KiUsDump(PCSTR Reason)
 
     DbgPrint("USERSAMP dump reason=%s ticksUser=%I64d ticksKernel=%I64d dropped=%I64d\n",
              Reason, KiUsTicksUser, KiUsTicksKernel, KiUsDropped);
+    DbgPrint("USERSAMP state ticks=%I64d init=%lu ready=%lu running=%lu standby=%lu term=%lu waiting=%lu transition=%lu deferredready=%lu maxoff=%lu waitirp=%I64d\n",
+             KiUsStateTicks, KiUsState[0], KiUsState[1], KiUsState[2], KiUsState[3],
+             KiUsState[4], KiUsState[5], KiUsState[6], KiUsState[7], KiUsMaxOff, KiUsWaitIrp);
+    for (i = 0; i < 40; i++)
+        if (KiUsWait[i])
+            DbgPrint("USERSAMP waitreason %lu count=%lu\n", i, KiUsWait[i]);
+    KiUsStateStop = 1;
 
     if (PsGetCurrentProcess() != Process)
     {
