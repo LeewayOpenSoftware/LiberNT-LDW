@@ -141,6 +141,15 @@ USBSTOR_QueueTerminateRequest(
     FDODeviceExtension = (PFDO_DEVICE_EXTENSION)FDODeviceObject->DeviceExtension;
     ASSERT(FDODeviceExtension->Common.IsFDO);
 
+    if (FDODeviceExtension->Flags & USBSTOR_FDO_FLAGS_DEVICE_GONE)
+    {
+        DbgPrint("PNPDIAG usbstorterm irp %p srb %p iostatus 0x%lx srbstatus 0x%x active %lu reset %lu\n",
+                 Irp, Request, Irp->IoStatus.Status,
+                 (ULONG)(Request ? Request->SrbStatus : 0xff),
+                 (ULONG)((FDODeviceExtension->ActiveSrb == Request) ? 1 : 0),
+                 (ULONG)ResetDevice);
+    }
+
     KeAcquireSpinLock(&FDODeviceExtension->IrpListLock, &OldLevel);
 
     ASSERT(FDODeviceExtension->IrpPendingCount != 0);

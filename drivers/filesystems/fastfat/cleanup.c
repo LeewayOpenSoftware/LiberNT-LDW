@@ -217,6 +217,13 @@ Return Value:
     FileObject = IrpSp->FileObject;
     TypeOfOpen = FatDecodeFileObject( FileObject, &Vcb, &Fcb, &Ccb );
 
+    DbgPrint("PNPDIAG fatcleanupentry fo %p type %u fcb %p vcbcond %u cached %lu unclean %lu open %lu\n",
+             FileObject, (ULONG)TypeOfOpen, Fcb,
+             (ULONG)(Vcb ? Vcb->VcbCondition : 0xff),
+             (ULONG)(FlagOn(FileObject->Flags, FO_CACHE_SUPPORTED) ? 1 : 0),
+             (ULONG)(Fcb ? Fcb->UncleanCount : 0),
+             (ULONG)(Fcb ? Fcb->OpenCount : 0));
+
     //
     //  Special case the unopened file object.  This will occur only when
     //  we are initializing Vcb and IoCreateStreamFileObject is being

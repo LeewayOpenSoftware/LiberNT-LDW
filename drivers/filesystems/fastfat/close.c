@@ -159,6 +159,11 @@ Return Value:
 
     TypeOfOpen = FatDecodeFileObject( FileObject, &Vcb, &Fcb, &Ccb );
 
+    DbgPrint("PNPDIAG fatcloseentry fo %p type %u fcb %p vcbcond %u open %lu\n",
+             FileObject, (ULONG)TypeOfOpen, Fcb,
+             (ULONG)(Vcb ? Vcb->VcbCondition : 0xff),
+             (ULONG)(Fcb ? Fcb->OpenCount : 0));
+
     if (Ccb && IsFileObjectReadOnly(FileObject)) {
 
         SetFlag( Ccb->Flags, CCB_FLAG_READ_ONLY );
