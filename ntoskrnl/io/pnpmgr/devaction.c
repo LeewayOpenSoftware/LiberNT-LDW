@@ -2906,6 +2906,9 @@ IopRemoveDevice(PDEVICE_NODE DeviceNode)
                               ((DeviceNode->Flags & DNF_HAS_PROBLEM) &&
                                DeviceNode->Problem == CM_PROB_FAILED_POST_START);
 
+    DPRINT1("PNPDIAG remove %wZ flags 0x%x problem %u -> %s removal\n",
+            &DeviceNode->InstancePath, DeviceNode->Flags, DeviceNode->Problem,
+            surpriseRemoval ? "SURPRISE" : "safe");
     Status = IopPrepareDeviceForRemoval(DeviceNode->PhysicalDeviceObject, surpriseRemoval);
 
     if (surpriseRemoval)
@@ -3215,6 +3218,12 @@ PiEnumerateDevice(
              * re-plugged device is forced down the surprise-removal path
              * (IopRemoveDevice) and the stack never tears down safely. */
             PiClearDevNodeFlag(ChildDeviceNode, DNF_DEVICE_GONE);
+            DPRINT1("PNPDIAG reuse %wZ state %u problem %u flags 0x%x -> %s\n",
+                    &ChildDeviceNode->InstancePath, ChildDeviceNode->State,
+                    ChildDeviceNode->Problem, ChildDeviceNode->Flags,
+                    (ChildDeviceNode->State == DeviceNodeRemoved &&
+                     ChildDeviceNode->Problem == 0 &&
+                     !(ChildDeviceNode->Flags & DNF_HAS_PROBLEM)) ? "reset" : "deref");
             if (ChildDeviceNode->State == DeviceNodeRemoved &&
                 ChildDeviceNode->Problem == 0 &&
                 !(ChildDeviceNode->Flags & DNF_HAS_PROBLEM))
