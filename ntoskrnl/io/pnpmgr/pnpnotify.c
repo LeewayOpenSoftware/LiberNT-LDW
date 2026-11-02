@@ -303,6 +303,8 @@ PiNotifyTargetDeviceChange(
         notifStruct = ExAllocatePoolWithTag(PagedPool, sizeof(*notifStruct), TAG_PNP_NOTIFY);
         if (!notifStruct)
         {
+            /* We took a reference on DeviceObject above; release it on this exit. */
+            ObDereferenceObject(DeviceObject);
             return;
         }
 
