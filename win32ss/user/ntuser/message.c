@@ -1559,11 +1559,51 @@ co_IntGetPeekMessage( PMSG pMsg,
         {
            if (!(RemoveMsg & PM_NOYIELD))
            {
+              /* Yield to other threads only on a genuine PeekMessage spin -
+               * repeated empty peeks arriving back-to-back with no real work
+               * in between - not on a working message pump. Windows never
+               * yields in PeekMessage; ReactOS does, which on a busy startup
+               * (e.g. Gecko) costs a scheduler quantum per empty peek, i.e.
+               * thousands of them and seconds of delay before the first
+               * window. Count only empty peeks that follow the previous peek
+               * within PEEK_SPIN_WINDOW_US; a larger gap (real work was done)
+               * or a message found resets the count. The threshold reuses
+               * the existing "been spinning" constant of 100 in this file. */
+              #define PEEK_SPIN_YIELD_COUNT 100
+              #define PEEK_SPIN_WINDOW_US   100
+              BOOLEAN DoYield = FALSE;
+
+              if (!Present)
+              {
+                 LARGE_INTEGER Freq, Now;
+                 Now = KeQueryPerformanceCounter(&Freq);
+                 if (pti->llLastPeekTsc != 0 &&
+                     (Now.QuadPart - pti->llLastPeekTsc) <=
+                         (Freq.QuadPart * PEEK_SPIN_WINDOW_US) / 1000000)
+                 {
+                    if (++pti->cEmptyPeekSpins >= PEEK_SPIN_YIELD_COUNT)
+                       DoYield = TRUE;
+                 }
+                 else
+                 {
+                    pti->cEmptyPeekSpins = 0;
+                 }
+                 pti->llLastPeekTsc = Now.QuadPart;
+              }
+              else
+              {
+                 pti->cEmptyPeekSpins = 0;
+              }
+
               IdlePing();
-              // Yield this thread!
-              UserLeave();
-              ZwYieldExecution();
-              UserEnterExclusive();
+              if (DoYield)
+              {
+                 // Yield this thread!
+                 UserLeave();
+                 ZwYieldExecution();
+                 UserEnterExclusive();
+                 pti->cEmptyPeekSpins = 0;
+              }
               // Fall through to exit.
               IdlePong();
            }
