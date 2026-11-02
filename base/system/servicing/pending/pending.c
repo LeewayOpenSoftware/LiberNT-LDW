@@ -109,6 +109,10 @@ static const uint8_t S1DevPublicKey[S1_RSA2048_SIZE] = {
 #ifndef STATUS_S1_HASH_MISMATCH
 #define STATUS_S1_HASH_MISMATCH ((NTSTATUS)0xE0000001L)
 #endif
+/* The data of a file ended before its recorded size: a read failure, never a digest. */
+#ifndef STATUS_S1_SHORT_READ
+#define STATUS_S1_SHORT_READ ((NTSTATUS)0xE0000002L)
+#endif
 
 /* ------------------------------------------------------------------ native IO */
 
@@ -425,6 +429,8 @@ S1LogHashMismatch(
     S1Log(Line);
 }
 
+/* Every chunk is read at an explicit offset (the boot-time file position is
+ * not trusted) and the digest must cover the file's recorded size. */
 static NTSTATUS
 S1HashFile(
     _In_ PCWSTR Path,
@@ -433,24 +439,83 @@ S1HashFile(
     HANDLE Handle;
     NTSTATUS Status;
     IO_STATUS_BLOCK IoStatus;
+    FILE_STANDARD_INFORMATION Info;
+    LARGE_INTEGER Offset;
+    ULONGLONG Size;
+    ULONG Reads = 0;
     uint8_t Buffer[65536];
     S1_SHA256_CTX Ctx;
+    WCHAR Line[200];
+    SIZE_T PathLen = wcslen(Path);
+    PCWSTR Tail = PathLen > 60 ? Path + PathLen - 60 : Path;
 
     Status = S1NtOpen(Path, FILE_READ_DATA, FILE_OPEN, &Handle);
     if (!NT_SUCCESS(Status))
         return Status;
-    S1Sha256Init(&Ctx);
-    for (;;)
+    Status = NtQueryInformationFile(Handle, &IoStatus, &Info, sizeof(Info),
+                                    FileStandardInformation);
+    if (!NT_SUCCESS(Status))
     {
-        Status = NtReadFile(Handle, NULL, NULL, NULL, &IoStatus, Buffer,
-                            sizeof(Buffer), NULL, NULL);
-        if (!NT_SUCCESS(Status) || IoStatus.Information == 0)
+        NtClose(Handle);
+        swprintf(Line, RTL_NUMBER_OF(Line), L"S1: hash: size query failed 0x%08lx ...%ls",
+                 (unsigned long)Status, Tail);
+        S1Log(Line);
+        return Status;
+    }
+    Size = (ULONGLONG)Info.EndOfFile.QuadPart;
+    S1Sha256Init(&Ctx);
+    Offset.QuadPart = 0;
+    while ((ULONGLONG)Offset.QuadPart < Size)
+    {
+        ULONG Want = sizeof(Buffer);
+
+        if (Size - (ULONGLONG)Offset.QuadPart < Want)
+            Want = (ULONG)(Size - (ULONGLONG)Offset.QuadPart);
+        IoStatus.Information = 0;
+        Status = NtReadFile(Handle, NULL, NULL, NULL, &IoStatus, Buffer, Want,
+                            &Offset, NULL);
+        if (Status == STATUS_END_OF_FILE)
+            Status = STATUS_SUCCESS; /* handled below as data ending early */
+        if (!NT_SUCCESS(Status))
+        {
+            swprintf(Line, RTL_NUMBER_OF(Line),
+                     L"S1: hash: read at %lu (%lu B) failed 0x%08lx ...%ls",
+                     (unsigned long)Offset.QuadPart, (unsigned long)Want,
+                     (unsigned long)Status, Tail);
+            S1Log(Line);
             break;
+        }
+        if (IoStatus.Information == 0 || IoStatus.Information > Want)
+        {
+            swprintf(Line, RTL_NUMBER_OF(Line),
+                     L"S1: hash: data ended at %lu of %lu B (read returned %lu of %lu) ...%ls",
+                     (unsigned long)Offset.QuadPart, (unsigned long)Size,
+                     (unsigned long)IoStatus.Information, (unsigned long)Want, Tail);
+            S1Log(Line);
+            Status = STATUS_S1_SHORT_READ;
+            break;
+        }
+        if (IoStatus.Information < Want)
+        {
+            swprintf(Line, RTL_NUMBER_OF(Line),
+                     L"S1: hash: short read at %lu: %lu of %lu B, continuing ...%ls",
+                     (unsigned long)Offset.QuadPart, (unsigned long)IoStatus.Information,
+                     (unsigned long)Want, Tail);
+            S1Log(Line);
+        }
         S1Sha256Update(&Ctx, Buffer, IoStatus.Information);
+        Offset.QuadPart += (LONGLONG)IoStatus.Information;
+        Reads++;
     }
     NtClose(Handle);
+    if (!NT_SUCCESS(Status))
+        return Status;
     S1Sha256Final(&Ctx, Digest);
-    return NT_SUCCESS(Status) || Status == STATUS_END_OF_FILE ? STATUS_SUCCESS : Status;
+    swprintf(Line, RTL_NUMBER_OF(Line),
+             L"S1: hashed %lu B in %lu reads: %02x%02x%02x%02x.. ...%ls",
+             (unsigned long)Size, (unsigned long)Reads, Digest[0], Digest[1], Digest[2], Digest[3], Tail);
+    S1Log(Line);
+    return STATUS_SUCCESS;
 }
 
 /* --------------------------------------------------------------- paths */
