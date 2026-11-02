@@ -2925,6 +2925,12 @@ IopRemoveDevice(PDEVICE_NODE DeviceNode)
             InterlockedIncrement(&PiRemovePendingCloses);
             PiSetDevNodeState(DeviceNode, DeviceNodeRemovePendingCloses);
             KeMemoryBarrier();
+            {
+                PDEVICE_OBJECT _d;
+                for (_d = DeviceNode->PhysicalDeviceObject; _d != NULL; _d = _d->AttachedDevice)
+                    DPRINT1("PNPDIAG stillopen %wZ devobj %p type 0x%x ref %ld\n",
+                            &DeviceNode->InstancePath, _d, _d->DeviceType, _d->ReferenceCount);
+            }
             if (PiDeviceStackIsOpen(DeviceNode->PhysicalDeviceObject))
                 return STATUS_SUCCESS;
 

@@ -188,6 +188,10 @@ USBSTOR_ResetDeviceWorkItemRoutine(
 
     FDODeviceExtension = FdoDevice->DeviceExtension;
 
+    DPRINT1("PNPDIAG usbstor resetdev fdo %p pending %lu active %p flags 0x%lx\n",
+            FdoDevice, FDODeviceExtension->IrpPendingCount,
+            FDODeviceExtension->ActiveSrb, FDODeviceExtension->Flags);
+
     KeMemoryBarrier();
     if (FDODeviceExtension->Flags & USBSTOR_FDO_FLAGS_DEVICE_GONE)
     {
