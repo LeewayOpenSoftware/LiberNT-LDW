@@ -113,6 +113,9 @@ static const uint8_t S1DevPublicKey[S1_RSA2048_SIZE] = {
 #ifndef STATUS_S1_SHORT_READ
 #define STATUS_S1_SHORT_READ ((NTSTATUS)0xE0000002L)
 #endif
+#ifndef FILE_OPEN_FOR_BACKUP_INTENT
+#define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000
+#endif
 
 /* ------------------------------------------------------------------ native IO */
 
@@ -128,13 +131,36 @@ S1NtOpen(
     IO_STATUS_BLOCK IoStatus;
     RtlInitUnicodeString(&Name, Path);
     InitializeObjectAttributes(&Attr, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    /* Backup intent: with SeBackup/SeRestore held (S1EnableServicingPrivileges)
+     * a stock system file's own ACL no longer refuses the open. */
     return NtCreateFile(Handle, Access | SYNCHRONIZE, &Attr, &IoStatus, NULL,
                         FILE_ATTRIBUTE_NORMAL,
                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                         CreateDisposition, FILE_SYNCHRONOUS_IO_NONALERT |
+                        FILE_OPEN_FOR_BACKUP_INTENT |
                         ((CreateDisposition == FILE_CREATE || CreateDisposition == FILE_OPEN_IF)
                          ? FILE_NON_DIRECTORY_FILE : 0), NULL, 0);
 }
+
+#ifndef S1_HOST_APPLIER
+#define S1_SE_BACKUP_PRIVILEGE  17
+#define S1_SE_RESTORE_PRIVILEGE 18
+
+static VOID S1Log(_In_ PCWSTR Msg);
+
+static VOID
+S1EnableServicingPrivileges(VOID)
+{
+    BOOLEAN Was;
+    NTSTATUS B = RtlAdjustPrivilege(S1_SE_BACKUP_PRIVILEGE, TRUE, FALSE, &Was);
+    NTSTATUS R = RtlAdjustPrivilege(S1_SE_RESTORE_PRIVILEGE, TRUE, FALSE, &Was);
+    WCHAR Line[96];
+
+    swprintf(Line, RTL_NUMBER_OF(Line), L"S1: privileges backup 0x%08lx restore 0x%08lx",
+             (unsigned long)B, (unsigned long)R);
+    S1Log(Line);
+}
+#endif
 
 static NTSTATUS
 S1ReadWholeFile(
@@ -1433,6 +1459,7 @@ NtProcessStartup(
         NtTerminateProcess(NtCurrentProcess(), 1);
     }
     S1Log(g_ServicingRoot);
+    S1EnableServicingPrivileges();
 #endif
 
     /* 1. No plan is a successful no-op — but say which no-op it is, so a
