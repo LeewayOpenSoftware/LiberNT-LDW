@@ -1456,6 +1456,12 @@ IntBeginPaint(PWND Window, PPAINTSTRUCT Ps)
    RECT Rect, rcUpdate;
    INT type;
    BOOL Erase = FALSE, bParentDC;
+   extern VOID FASTCALL IntGeckoPhaseMark(PCSTR What, ULONG Bit, LONG a, LONG b, LONG c, LONG d);
+
+   if (Window != NULL && !(Window->style & WS_CHILD))
+      IntGeckoPhaseMark("first WM_PAINT BeginPaint toplevel rect(l,t,r,b)", 0x2,
+                        Window->rcWindow.left, Window->rcWindow.top,
+                        Window->rcWindow.right, Window->rcWindow.bottom);
 
    co_UserHideCaret(Window);
 

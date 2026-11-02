@@ -3286,6 +3286,39 @@ VOID FASTCALL IntGeckoWindowMilestone(PCSTR What)
              (ULONG64)(Now.QuadPart - PsGetProcessCreateTimeQuadPart(Process)) / 10);
 }
 
+/* Generalized gecko phase marker (diag, trace-loader-gecko2 only). Gated on the
+ * gecko image and deduped per-pid by an explicit Bit, so each caller fires once
+ * per process. Prints a timestamp (us after process creation) plus four longs
+ * (e.g. a window rect). Silent for every non-gecko process. */
+VOID FASTCALL IntGeckoPhaseMark(PCSTR What, ULONG Bit, LONG a, LONG b, LONG c, LONG d)
+{
+    static struct { HANDLE Pid; ULONG Done; } SeenP[16];
+    PEPROCESS Process = PsGetCurrentProcess();
+    const CHAR *Image = PsGetProcessImageFileName(Process);
+    HANDLE Pid = PsGetCurrentProcessId();
+    ULONG i, Slot = (ULONG)-1;
+    LARGE_INTEGER Now;
+
+    if (!Image || (_strnicmp(Image, "firefox", 7) && _strnicmp(Image, "basilisk", 8) && _strnicmp(Image, "plugin-conta", 12)))
+        return;
+    for (i = 0; i < RTL_NUMBER_OF(SeenP); i++)
+    {
+        if (SeenP[i].Pid == Pid) { Slot = i; break; }
+        if (Slot == (ULONG)-1 && !SeenP[i].Pid) Slot = i;
+    }
+    if (Slot == (ULONG)-1)
+        return;
+    SeenP[Slot].Pid = Pid;
+    if (SeenP[Slot].Done & Bit)
+        return;
+    SeenP[Slot].Done |= Bit;
+    KeQuerySystemTime(&Now);
+    DbgPrint("PHASE MARK pid=%p %s %s at %I64u us after creation args %ld %ld %ld %ld (win32k)\n",
+             Pid, Image, What,
+             (ULONG64)(Now.QuadPart - PsGetProcessCreateTimeQuadPart(Process)) / 10,
+             a, b, c, d);
+}
+
 BOOLEAN FASTCALL
 co_WinPosShowWindow(PWND Wnd, INT Cmd)
 {
@@ -3306,6 +3339,10 @@ co_WinPosShowWindow(PWND Wnd, INT Cmd)
    style = Wnd->style;
    if (Cmd != SW_HIDE && !(Wnd->style & WS_CHILD))
       IntGeckoWindowMilestone("first top-level window shown");
+   if (Cmd != SW_HIDE && !(Wnd->style & WS_CHILD))
+      IntGeckoPhaseMark("SW_SHOW toplevel rect(l,t,r,b)", 0x1,
+                        Wnd->rcWindow.left, Wnd->rcWindow.top,
+                        Wnd->rcWindow.right, Wnd->rcWindow.bottom);
    if (WasVisible)
       Wnd->state &= ~WNDS_SENDSIZEMOVEMSGS;
 

@@ -22,6 +22,7 @@ NTSTATUS ExitProcessCallback(PEPROCESS Process);
 #ifdef _M_AMD64
 VOID NTAPI KeGeckoW32TraceEvent(PVOID Process, ULONG Reason);
 #endif
+HANDLE NTAPI PsGetProcessInheritedFromUniqueProcessId(PEPROCESS Process);
 NTSTATUS NTAPI ExitThreadCallback(PETHREAD Thread);
 
 /* Undocumented but exported ntoskrnl function */
@@ -334,6 +335,31 @@ InitProcessCallback(PEPROCESS Process)
     {
         ERR_CH(UserProcess, "IntJobConnectProcess failed, Status 0x%08lx\n", Status);
         goto error;
+    }
+
+    /* LiberNT gecko launch-to-creation marker (diag, trace-loader-gecko2 only).
+       Silent unless the connecting process is gecko. WT measures screen time from
+       launch but window time from process creation; this splits the gap by printing
+       firefox createtime and its launcher (parent) createtime at win32k connect. */
+    {
+        const CHAR *GkImg = PsGetProcessImageFileName(Process);
+        if (GkImg && (!_strnicmp(GkImg, "firefox", 7) || !_strnicmp(GkImg, "basilisk", 8)))
+        {
+            LONG64 FfQpc = PsGetProcessCreateTimeQuadPart(Process);
+            HANDLE Ppid = PsGetProcessInheritedFromUniqueProcessId(Process);
+            PEPROCESS Parent = NULL;
+            LONG64 PpQpc = 0;
+            const CHAR *PImg = "?";
+            if (NT_SUCCESS(PsLookupProcessByProcessId(Ppid, &Parent)))
+            {
+                PpQpc = PsGetProcessCreateTimeQuadPart(Parent);
+                PImg = PsGetProcessImageFileName(Parent);
+            }
+            DbgPrint("PHASE LAUNCH firefox pid=%p createtime=%I64u 100ns launcher pid=%p image=%s createtime=%I64u launch-to-creation=%I64d us\n",
+                     PsGetCurrentProcessId(), (ULONG64)FfQpc, Ppid, PImg, (ULONG64)PpQpc,
+                     PpQpc ? (LONG64)((FfQpc - PpQpc) / 10) : (LONG64)(-1));
+            if (Parent) ObDereferenceObject(Parent);
+        }
     }
 
     return STATUS_SUCCESS;

@@ -215,6 +215,14 @@ NtGdiBitBlt(
         return FALSE;
     }
     bRtlDest = (pdcPeek->pdcattr->dwLayout & LAYOUT_RTL) != 0;
+    {
+        /* LiberNT gecko present marker (diag): first BitBlt whose destination is a
+         * direct (to-screen) DC = first visible pixels for the gecko caller. */
+        extern VOID FASTCALL IntGeckoPhaseMark(PCSTR What, ULONG Bit, LONG a, LONG b, LONG c, LONG d);
+        if (pdcPeek->dctype == DCTYPE_DIRECT)
+            IntGeckoPhaseMark("first NtGdiBitBlt to screen (present) dst(x,y,w,h)", 0x4,
+                              XDest, YDest, Width, Height);
+    }
     DC_UnlockDc(pdcPeek);
 
     if ((dwRop & CAPTUREBLT) || bRtlDest)
@@ -1186,6 +1194,19 @@ NtGdiStretchBlt(
     BOOL bNoMirror = (dwRop3 & NOMIRRORBITMAP) != 0;
 
     dwRop3 = dwRop3 & ~(NOMIRRORBITMAP|CAPTUREBLT);
+
+    {
+        /* LiberNT gecko present marker (diag): first StretchBlt to a direct DC. */
+        extern VOID FASTCALL IntGeckoPhaseMark(PCSTR What, ULONG Bit, LONG a, LONG b, LONG c, LONG d);
+        PDC pdcPk = DC_LockDc(hDCDest);
+        if (pdcPk != NULL)
+        {
+            if (pdcPk->dctype == DCTYPE_DIRECT)
+                IntGeckoPhaseMark("first NtGdiStretchBlt to screen (present) dst(x,y,w,h)", 0x4,
+                                  XOriginDest, YOriginDest, WidthDest, HeightDest);
+            DC_UnlockDc(pdcPk);
+        }
+    }
 
     return GreStretchBltMask(
                 hDCDest,
