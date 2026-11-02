@@ -149,6 +149,7 @@ KMT_TESTFUNC Test_FsRtlQueryFileLock;
 KMT_TESTFUNC Test_FsRtlRemoveDotsFromPath;
 KMT_TESTFUNC Test_FsRtlTunnel;
 #if defined(_M_IX86) || defined(_M_AMD64)
+KMT_TESTFUNC Test_HalBusData;
 KMT_TESTFUNC Test_HalPortIo;
 #endif
 KMT_TESTFUNC Test_HalSystemInfo;
@@ -307,13 +308,19 @@ KMT_TESTFUNC Test_RtlException;
 KMT_TESTFUNC Test_RtlGetVersion;
 KMT_TESTFUNC Test_RtlIntSafe;
 KMT_TESTFUNC Test_RtlIsValidOemCharacter;
+KMT_TESTFUNC Test_MmDriverMemory;
 KMT_TESTFUNC Test_MmMapReserve;
 KMT_TESTFUNC Test_MmPhysical;
 KMT_TESTFUNC Test_MmPrefetchPages;
 KMT_TESTFUNC Test_MmPrivatePages;
 KMT_TESTFUNC Test_IoStackKM;
 KMT_TESTFUNC Test_IoActivityId;
+KMT_TESTFUNC Test_IoAcpiCmosRegion;
 KMT_TESTFUNC Test_IoAcpiIoctl;
+KMT_TESTFUNC Test_IoPciPdoPnp;
+KMT_TESTFUNC Test_IoPciD3Cold;
+KMT_TESTFUNC Test_IoPciExpressInterfaces;
+KMT_TESTFUNC Test_IoPciRom;
 KMT_TESTFUNC Test_IoStackLimits;
 KMT_TESTFUNC Test_SmcLib;
 KMT_TESTFUNC Test_SmcLibRemove;
@@ -440,6 +447,7 @@ const KMT_TEST TestList[] =
     { "FsRtlRemoveDotsFromPath",            Test_FsRtlRemoveDotsFromPath },
     { "FsRtlTunnel",                        Test_FsRtlTunnel },
 #if defined(_M_IX86) || defined(_M_AMD64)
+    { "HalBusData",                         Test_HalBusData },
     { "HalPortIo",                          Test_HalPortIo },
 #endif
     { "HalSystemInfo",                      Test_HalSystemInfo },
@@ -486,7 +494,12 @@ const KMT_TEST TestList[] =
     { "IoMdl",                              Test_IoMdl },
     { "IoModern",                           Test_IoModern },
     { "IoActivityId",                       Test_IoActivityId },
+    { "IoAcpiCmosRegion",                   Test_IoAcpiCmosRegion },
     { "IoAcpiIoctl",                        Test_IoAcpiIoctl },
+    { "IoPciPdoPnp",                        Test_IoPciPdoPnp },
+    { "IoPciD3Cold",                        Test_IoPciD3Cold },
+    { "IoPciExpressInterfaces",             Test_IoPciExpressInterfaces },
+    { "IoPciRom",                           Test_IoPciRom },
     { "IoStackLimits",                      Test_IoStackLimits },
     { "SmcLib",                             Test_SmcLib },
     { "SmcLibRemove",                       Test_SmcLibRemove },
@@ -563,6 +576,7 @@ const KMT_TEST TestList[] =
     { "MmWddmRotate",                       Test_MmWddmRotate },
     { "MmWddmRotateValid",                  Test_MmWddmRotateValid },
     { "MmMapReserve",                       Test_MmMapReserve },
+    { "MmDriverMemory",                     Test_MmDriverMemory },
     { "MmPhysical",                         Test_MmPhysical },
     { "MmPrefetchPages",                    Test_MmPrefetchPages },
     { "MmPrivatePages",                     Test_MmPrivatePages },

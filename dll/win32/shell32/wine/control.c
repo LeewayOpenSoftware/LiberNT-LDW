@@ -1033,22 +1033,22 @@ CPlApplet*	Control_LoadApplet(HWND hWnd, LPCWSTR cmd, CPanel* panel)
 
     if (!(applet->hModule = LoadLibraryW(applet->cmd))) {
         g_dwLoadAppletError = GetLastError();
-        WARN("Cannot load control panel applet %s\n", debugstr_w(applet->cmd));
+        ERR("Cannot load control panel applet %s (error %lu)\n", debugstr_w(applet->cmd), g_dwLoadAppletError);
 	goto theError;
     }
     if (!(applet->proc = (APPLET_PROC)GetProcAddress(applet->hModule, "CPlApplet"))) {
         g_dwLoadAppletError = ERROR_PROC_NOT_FOUND;
-        WARN("Not a valid control panel applet %s\n", debugstr_w(applet->cmd));
+        ERR("Control panel applet %s has no CPlApplet export (it loaded fine)\n", debugstr_w(applet->cmd));
 	goto theError;
     }
     if (!applet->proc(hWnd, CPL_INIT, 0L, 0L)) {
         g_dwLoadAppletError = ERROR_GEN_FAILURE;
-        WARN("Init of applet has failed\n");
+        ERR("CPL_INIT of applet %s failed\n", debugstr_w(applet->cmd));
 	goto theError;
     }
     if ((applet->count = applet->proc(hWnd, CPL_GETCOUNT, 0L, 0L)) == 0) {
         g_dwLoadAppletError = ERROR_NOT_FOUND;
-        WARN("No subprogram in applet\n");
+        ERR("Applet %s reports no subprogram (CPL_GETCOUNT is 0)\n", debugstr_w(applet->cmd));
         applet->proc(applet->hWnd, CPL_EXIT, 0, 0);
 	goto theError;
     }

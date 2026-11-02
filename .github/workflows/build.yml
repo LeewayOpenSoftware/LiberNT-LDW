@@ -54,9 +54,9 @@ jobs:
       uses: actions/cache/restore@v5
       with:
         path: ccache
-        key: ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{matrix.config}}-${{matrix.ntver}}-${{github.run_id}}-${{github.run_attempt}}
+        key: ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{github.run_id}}-${{github.run_attempt}}
         restore-keys: |
-          ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{matrix.config}}-${{matrix.ntver}}-
+          ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-
 
     - name: Set ccache settings
       run: |
@@ -72,16 +72,14 @@ jobs:
         FLAGS=""
         [ "${{matrix.compiler}}" = "clang" ] && FLAGS="$FLAGS --clang"
         [ "${{matrix.compiler}}" = "gcc" ] && FLAGS="$FLAGS --gcc"
-        [ "${{matrix.config}}" = "Release" ] && FLAGS="$FLAGS -r"
         [ -n "${{matrix.profile}}" ] && FLAGS="$FLAGS -DROSCONFIG_PROFILE=${{matrix.profile}}"
         [ "${{matrix.compiler}}" = "clang" ] && case "${{matrix.arch}}" in amd64|arm64) FLAGS="$FLAGS -DENABLE_MESA_LLVMPIPE=ON" ;; esac
         ./configure.sh $FLAGS -a ${{matrix.arch}} \
-          -DREACTOS_TARGET_NT=${{matrix.ntver}} \
+          -DREACTOS_TARGET_NT=0xA00 \
           -DDIAGDATA_CHANNEL= \
           -DENABLE_CCACHE=1
         ENV_NAME=$([ "${{matrix.compiler}}" = "clang" ] && echo Clang || echo GCC)
-        CFG_LOWER=$(echo "${{matrix.config}}" | tr '[:upper:]' '[:lower:]')
-        echo "outdir=output-$ENV_NAME-${{matrix.arch}}-$CFG_LOWER" >> "$GITHUB_OUTPUT"
+        echo "outdir=output-$ENV_NAME-${{matrix.arch}}-debug" >> "$GITHUB_OUTPUT"
 
     - name: Build submodules
       run: |
@@ -110,7 +108,7 @@ jobs:
       continue-on-error: true
       env:
         GH_TOKEN: ${{ github.token }}
-        CACHE_KEY_PREFIX: ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{matrix.config}}-${{matrix.ntver}}-
+        CACHE_KEY_PREFIX: ccache-${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-
         CACHE_KEY_KEEP: ${{ steps.ccache_restore.outputs.cache-primary-key }}
       run: |
         gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$CACHE_KEY_PREFIX" --limit 100 --json id,key \
@@ -121,7 +119,7 @@ jobs:
 
     - name: Name artifacts
       id: images
-      run: echo "tag=${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${{matrix.config}}-target${{matrix.ntver}}-${GITHUB_SHA::11}" >> "$GITHUB_OUTPUT"
+      run: echo "tag=${{matrix.compiler}}-${{matrix.arch}}${{matrix.variant}}-${GITHUB_SHA::11}" >> "$GITHUB_OUTPUT"
 
     - name: Upload bootcd.iso
       uses: actions/upload-artifact@v7

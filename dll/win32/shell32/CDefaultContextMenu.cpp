@@ -1816,7 +1816,11 @@ CDefaultContextMenu::InvokeCommand(
         break;
     default:
         Result = E_INVALIDARG;
-        ERR("Unhandled Verb %xl\n", LOWORD(LocalInvokeInfo.lpVerb));
+        ERR("Unhandled Verb %xl (cidl %u keys %u static %u..%u dyn %u..%u cb %u..%u dflt %u..%u first pidl cb %u type %02x)\n",
+            LOWORD(LocalInvokeInfo.lpVerb), m_cidl, m_cKeys, m_iIdSCMFirst, m_iIdSCMLast, m_iIdSHEFirst, m_iIdSHELast,
+            m_iIdCBFirst, m_iIdCBLast, m_iIdDfltFirst, m_iIdDfltLast,
+            (m_cidl && m_apidl && m_apidl[0]) ? m_apidl[0]->mkid.cb : 0,
+            (m_cidl && m_apidl && m_apidl[0] && m_apidl[0]->mkid.cb > 2) ? m_apidl[0]->mkid.abID[0] : 0);
         break;
     }
 

@@ -628,7 +628,9 @@ RawInputProcessMouseInput(const MOUSEINPUT *pMouseInput)
     }
     Raw.data.mouse.ulExtraInformation = (ULONG)pMouseInput->dwExtraInfo;
 
-    if (!Raw.data.mouse.lLastX && !Raw.data.mouse.lLastY && !usButtonFlags)
+    /* an absolute move to (0, 0) is a position (top-left corner), not an empty event */
+    if (!Raw.data.mouse.lLastX && !Raw.data.mouse.lLastY && !usButtonFlags &&
+        !((dwFlags & MOUSEEVENTF_ABSOLUTE) && (dwFlags & MOUSEEVENTF_MOVE)))
         return;
 
     RawInputDispatch(&Raw,

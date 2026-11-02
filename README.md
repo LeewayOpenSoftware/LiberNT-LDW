@@ -1,4 +1,4 @@
-# LiberNT — Leeway Development Works
+# LiberNT - LDW (Leeway Development Works)
 
 **Experimental Development · Compatibility Research · Hardware Validation**
 

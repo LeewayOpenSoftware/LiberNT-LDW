@@ -76,7 +76,7 @@
 @ stub -version=0x600+ CheckForReadOnlyResource
 @ stdcall CheckNameLegalDOS8Dot3A(str str long long long)
 @ stdcall CheckNameLegalDOS8Dot3W(wstr str long long long)
-@ stdcall CheckRemoteDebuggerPresent(long ptr) kernelbase.CheckRemoteDebuggerPresent
+@ stdcall CheckRemoteDebuggerPresent(long ptr)
 @ stdcall -version=0x602+ CheckTokenCapability(ptr ptr ptr) kernelbase.CheckTokenCapability
 @ stdcall ClearCommBreak(long)
 @ stdcall ClearCommError(long ptr ptr)
@@ -827,7 +827,7 @@
 @ stub -version=0x600+ IsCalendarLeapYear
 @ stdcall IsDBCSLeadByte(long)
 @ stdcall IsDBCSLeadByteEx(long long)
-@ stdcall IsDebuggerPresent() kernelbase.IsDebuggerPresent
+@ stdcall IsDebuggerPresent()
 @ stdcall IsNLSDefinedString(long long ptr long long) kernelbase.IsNLSDefinedString
 @ stdcall -version=0x600+ IsNormalizedString(long wstr long) kernelbase.IsNormalizedString
 @ stdcall IsProcessInJob(long long ptr)

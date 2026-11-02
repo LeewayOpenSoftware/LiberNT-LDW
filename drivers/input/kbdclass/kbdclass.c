@@ -10,8 +10,10 @@
 #include "kbdclass.h"
 
 #include <stdio.h>
-#include <pseh/pseh2.h>
 #include <kbdmou.h>
+#include <hidclass.h>
+#include <poclass.h>
+#include <pseh/pseh2.h>
 #include <debug.h>
 
 static DRIVER_UNLOAD DriverUnload;
@@ -27,8 +29,8 @@ static DRIVER_CANCEL ClassCancelRoutine;
 static NTSTATUS
 HandleReadIrp(
 	IN PDEVICE_OBJECT DeviceObject,
-	IN PIRP Irp,
-	BOOLEAN IsInStartIo);
+    IN PREAD_DATA ReadData,
+    IN PIRP Irp OPTIONAL);
 
 static VOID NTAPI
 DriverUnload(IN PDRIVER_OBJECT DriverObject)
@@ -92,16 +94,10 @@ ClassRead(
 	IN PDEVICE_OBJECT DeviceObject,
 	IN PIRP Irp)
 {
-	PCLASS_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
-	KIRQL OldIrql;
-	NTSTATUS Status;
+    PCOMMON_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
+    PREAD_DATA ReadData;
 
 	TRACE_(CLASS_NAME, "IRP_MJ_READ\n");
-
-	if (!((PCOMMON_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->IsClassDO)
-		return ForwardIrpAndForget(DeviceObject, Irp);
-
-	ASSERT(DeviceExtension->Common.IsClassDO);
 
 	if (IoGetCurrentIrpStackLocation(Irp)->Parameters.Read.Length < sizeof(KEYBOARD_INPUT_DATA))
 	{
@@ -112,10 +108,18 @@ ClassRead(
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 
-	KeAcquireSpinLock(&DeviceExtension->SpinLock, &OldIrql);
-	Status = HandleReadIrp(DeviceObject, Irp, FALSE);
-	KeReleaseSpinLock(&DeviceExtension->SpinLock, OldIrql);
-	return Status;
+    if (DeviceExtension->IsClassDO)
+    {
+        ReadData = ((PCLASS_DEVICE_EXTENSION)DeviceExtension)->ReadData;
+    }
+    else
+    {
+        PPORT_DEVICE_EXTENSION Port = (PPORT_DEVICE_EXTENSION)DeviceExtension;
+        PCLASS_DEVICE_EXTENSION Class = (PCLASS_DEVICE_EXTENSION)Port->ClassDO->DeviceExtension;
+        ReadData = Class->ReadData;
+    }
+
+    return HandleReadIrp(DeviceObject, ReadData, Irp);
 }
 
 static NTSTATUS NTAPI
@@ -123,15 +127,9 @@ ClassDeviceControl(
 	IN PDEVICE_OBJECT DeviceObject,
 	IN PIRP Irp)
 {
-	//PCLASS_DEVICE_EXTENSION DeviceExtension;
 	NTSTATUS Status = STATUS_NOT_SUPPORTED;
 
 	TRACE_(CLASS_NAME, "IRP_MJ_DEVICE_CONTROL\n");
-
-	if (!((PCOMMON_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->IsClassDO)
-		return ForwardIrpAndForget(DeviceObject, Irp);
-
-	//DeviceExtension = (PCLASS_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
 	switch (IoGetCurrentIrpStackLocation(Irp)->Parameters.DeviceIoControl.IoControlCode)
 	{
@@ -140,6 +138,8 @@ ClassDeviceControl(
 		case IOCTL_KEYBOARD_QUERY_INDICATORS:
 		case IOCTL_KEYBOARD_QUERY_TYPEMATIC:
 		{
+            if (((PCOMMON_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->IsClassDO)
+            {
 			/* FIXME: We hope that all devices will return the same result.
 			 * Ask only the first one */
 			PLIST_ENTRY Head = &((PCLASS_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->ListHead;
@@ -147,9 +147,16 @@ ClassDeviceControl(
 			{
 				/* We have at least one device */
 				PPORT_DEVICE_EXTENSION DevExt = CONTAINING_RECORD(Head->Flink, PORT_DEVICE_EXTENSION, ListEntry);
-				IoGetCurrentIrpStackLocation(Irp)->MajorFunction = IRP_MJ_INTERNAL_DEVICE_CONTROL;
-				IoSkipCurrentIrpStackLocation(Irp);
-				return IoCallDriver(DevExt->DeviceObject, Irp);
+                    DeviceObject = DevExt->DeviceObject;
+                }
+                else
+                    DeviceObject = NULL;
+            }
+            if (DeviceObject)
+            {
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+                IoGetNextIrpStackLocation(Irp)->MajorFunction = IRP_MJ_INTERNAL_DEVICE_CONTROL;
+                return IoCallDriver(DeviceObject, Irp);
 			}
 			break;
 		}
@@ -182,6 +189,37 @@ ClassDeviceControl(
 			}
 			break;
 		}
+        /* Every IOCTL HID, except IOCTL_HID_GET_INPUT_REPORT/IOCTL_HID_SET_OUTPUT_REPORT */
+        case IOCTL_GET_PHYSICAL_DESCRIPTOR:
+        case IOCTL_HID_FLUSH_QUEUE:
+        case IOCTL_HID_GET_COLLECTION_DESCRIPTOR:
+        case IOCTL_HID_GET_COLLECTION_INFORMATION:
+        case IOCTL_HID_GET_FEATURE:
+        case IOCTL_HID_GET_HARDWARE_ID:
+        case IOCTL_HID_GET_INDEXED_STRING:
+        case IOCTL_HID_GET_MANUFACTURER_STRING:
+        case IOCTL_GET_NUM_DEVICE_INPUT_BUFFERS:
+        case IOCTL_HID_GET_POLL_FREQUENCY_MSEC:
+        case IOCTL_HID_GET_PRODUCT_STRING:
+        case IOCTL_HID_GET_SERIALNUMBER_STRING:
+        case IOCTL_HID_SET_FEATURE:
+        case IOCTL_SET_NUM_DEVICE_INPUT_BUFFERS:
+        case IOCTL_HID_SET_POLL_FREQUENCY_MSEC:
+        case IOCTL_HID_GET_DRIVER_CONFIG:
+        case IOCTL_HID_SET_DRIVER_CONFIG:
+        case IOCTL_HID_GET_MS_GENRE_DESCRIPTOR:
+        /* IOCTL used by Power Manager */
+        case IOCTL_GET_SYS_BUTTON_CAPS:
+        case IOCTL_GET_SYS_BUTTON_EVENT:
+        {
+            PPORT_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
+            if (!DeviceExtension->Common.IsClassDO)
+            {
+                IoSkipCurrentIrpStackLocation(Irp);
+                return IoCallDriver(DeviceExtension->LowerDevice, Irp);
+            }
+            break;
+        }
 		default:
 			WARN_(CLASS_NAME, "IRP_MJ_DEVICE_CONTROL / unknown I/O control code 0x%lx\n",
 				IoGetCurrentIrpStackLocation(Irp)->Parameters.DeviceIoControl.IoControlCode);
@@ -432,14 +470,20 @@ cleanup:
 	DeviceExtension->DriverExtension = DriverExtension;
 	InitializeListHead(&DeviceExtension->ListHead);
 	KeInitializeSpinLock(&DeviceExtension->ListSpinLock);
-	KeInitializeSpinLock(&DeviceExtension->SpinLock);
-	DeviceExtension->InputCount = 0;
-	DeviceExtension->PortData = ExAllocatePoolWithTag(NonPagedPool, DeviceExtension->DriverExtension->DataQueueSize * sizeof(KEYBOARD_INPUT_DATA), CLASS_TAG);
-	if (!DeviceExtension->PortData)
+    DeviceExtension->ReadData = ExAllocatePoolZero(NonPagedPool, sizeof(READ_DATA), CLASS_TAG);
+    if (!DeviceExtension->ReadData)
 	{
 		ExFreePoolWithTag(DeviceNameU.Buffer, CLASS_TAG);
 		return STATUS_NO_MEMORY;
 	}
+    KeInitializeSpinLock(&DeviceExtension->ReadData->SpinLock);
+    DeviceExtension->ReadData->PortData = ExAllocatePoolWithTag(NonPagedPool, DeviceExtension->DriverExtension->DataQueueSize * sizeof(KEYBOARD_INPUT_DATA), CLASS_TAG);
+    if (!DeviceExtension->ReadData->PortData)
+    {
+        ExFreePoolWithTag(DeviceNameU.Buffer, CLASS_TAG);
+        ExFreePoolWithTag(DeviceExtension->ReadData, CLASS_TAG);
+        return STATUS_NO_MEMORY;
+    }
 	DeviceExtension->DeviceName = DeviceNameU.Buffer;
 	Fdo->Flags |= DO_POWER_PAGABLE;
 	Fdo->Flags |= DO_BUFFERED_IO; /* FIXME: Why is it needed for 1st stage setup? */
@@ -463,39 +507,29 @@ cleanup:
 static NTSTATUS
 FillEntries(
 	IN PDEVICE_OBJECT ClassDeviceObject,
-	IN PIRP Irp,
-	IN PKEYBOARD_INPUT_DATA DataStart,
+    IN PKEYBOARD_INPUT_DATA Source,
+    OUT PKEYBOARD_INPUT_DATA Destination,
 	IN SIZE_T NumberOfEntries)
 {
 	NTSTATUS Status = STATUS_SUCCESS;
 
-	if (ClassDeviceObject->Flags & DO_BUFFERED_IO)
+    if (!Destination)
+        return STATUS_UNSUCCESSFUL;
+
+    if (ClassDeviceObject->Flags & (DO_BUFFERED_IO | DO_DIRECT_IO))
 	{
 		RtlCopyMemory(
-			Irp->AssociatedIrp.SystemBuffer,
-			DataStart,
+            Destination,
+            Source,
 			NumberOfEntries * sizeof(KEYBOARD_INPUT_DATA));
-	}
-	else if (ClassDeviceObject->Flags & DO_DIRECT_IO)
-	{
-		PVOID DestAddress = MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
-		if (DestAddress)
-		{
-			RtlCopyMemory(
-				DestAddress,
-				DataStart,
-				NumberOfEntries * sizeof(KEYBOARD_INPUT_DATA));
-		}
-		else
-			Status = STATUS_UNSUCCESSFUL;
 	}
 	else
 	{
 		_SEH2_TRY
 		{
 			RtlCopyMemory(
-				Irp->UserBuffer,
-				DataStart,
+                Destination,
+                Source,
 				NumberOfEntries * sizeof(KEYBOARD_INPUT_DATA));
 		}
 		_SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
@@ -524,16 +558,16 @@ ClassCallback(
 
 	ASSERT(ClassDeviceExtension->Common.IsClassDO);
 
-	KeAcquireSpinLock(&ClassDeviceExtension->SpinLock, &OldIrql);
 	if (InputCount > 0)
 	{
-		if (ClassDeviceExtension->InputCount + InputCount > ClassDeviceExtension->DriverExtension->DataQueueSize)
+        KeAcquireSpinLock(&ClassDeviceExtension->ReadData->SpinLock, &OldIrql);
+        if (ClassDeviceExtension->ReadData->InputCount + InputCount > ClassDeviceExtension->DriverExtension->DataQueueSize)
 		{
 			/*
 			 * We're exceeding the buffer, and data will be thrown away...
 			 * FIXME: What could we do, as we are at DISPATCH_LEVEL?
 			 */
-			ReadSize = ClassDeviceExtension->DriverExtension->DataQueueSize - ClassDeviceExtension->InputCount;
+            ReadSize = ClassDeviceExtension->DriverExtension->DataQueueSize - ClassDeviceExtension->ReadData->InputCount;
 		}
 		else
 			ReadSize = InputCount;
@@ -543,20 +577,20 @@ ClassCallback(
 		 * queue.
 		 */
 		RtlCopyMemory(
-			&ClassDeviceExtension->PortData[ClassDeviceExtension->InputCount],
+            &ClassDeviceExtension->ReadData->PortData[ClassDeviceExtension->ReadData->InputCount],
 			(PCHAR)DataStart,
 			sizeof(KEYBOARD_INPUT_DATA) * ReadSize);
 
 		/* Move the counter up */
-		ClassDeviceExtension->InputCount += ReadSize;
+        ClassDeviceExtension->ReadData->InputCount += ReadSize;
 
 		(*ConsumedCount) += (ULONG)ReadSize;
 
-		/* Complete pending IRP (if any) */
-		if (ClassDeviceExtension->PendingIrp)
-			HandleReadIrp(ClassDeviceObject, ClassDeviceExtension->PendingIrp, FALSE);
-	}
-	KeReleaseSpinLock(&ClassDeviceExtension->SpinLock, OldIrql);
+    KeReleaseSpinLock(&ClassDeviceExtension->ReadData->SpinLock, OldIrql);
+
+        /* Complete pending IRP (if any) */
+        HandleReadIrp(ClassDeviceObject, ClassDeviceExtension->ReadData, NULL);
+    }
 
 	TRACE_(CLASS_NAME, "Leaving ClassCallback()\n");
 	return TRUE;
@@ -668,7 +702,8 @@ DestroyPortDriver(
 
 	if (!DriverExtension->ConnectMultiplePorts && DeviceExtension->ClassDO)
 	{
-		ExFreePoolWithTag(ClassDeviceExtension->PortData, CLASS_TAG);
+        ExFreePoolWithTag(ClassDeviceExtension->ReadData->PortData, CLASS_TAG);
+        ExFreePoolWithTag(ClassDeviceExtension->ReadData, CLASS_TAG);
 		ExFreePoolWithTag((PVOID)ClassDeviceExtension->DeviceName, CLASS_TAG);
 		IoDeleteDevice(DeviceExtension->ClassDO);
 	}
@@ -775,24 +810,34 @@ ClassCancelRoutine(
 	IN PDEVICE_OBJECT DeviceObject,
 	IN PIRP Irp)
 {
-	PCLASS_DEVICE_EXTENSION ClassDeviceExtension = DeviceObject->DeviceExtension;
+    PCOMMON_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
+    PREAD_DATA ReadData;
 	KIRQL OldIrql;
 	BOOLEAN wasQueued = FALSE;
 
 	TRACE_(CLASS_NAME, "ClassCancelRoutine(DeviceObject %p, Irp %p)\n", DeviceObject, Irp);
 
-	ASSERT(ClassDeviceExtension->Common.IsClassDO);
+    if (DeviceExtension->IsClassDO)
+    {
+        ReadData = ((PCLASS_DEVICE_EXTENSION)DeviceExtension)->ReadData;
+    }
+    else
+    {
+        PPORT_DEVICE_EXTENSION Port = (PPORT_DEVICE_EXTENSION)DeviceExtension;
+        PCLASS_DEVICE_EXTENSION Class = (PCLASS_DEVICE_EXTENSION)Port->ClassDO->DeviceExtension;
+        ReadData = Class->ReadData;
+    }
 
 	IoReleaseCancelSpinLock(Irp->CancelIrql);
 
-	KeAcquireSpinLock(&ClassDeviceExtension->SpinLock, &OldIrql);
+    KeAcquireSpinLock(&ReadData->SpinLock, &OldIrql);
 
-	if (ClassDeviceExtension->PendingIrp == Irp)
+    if (ReadData->PendingIrp == Irp)
 	{
-		ClassDeviceExtension->PendingIrp = NULL;
+        ReadData->PendingIrp = NULL;
 		wasQueued = TRUE;
 	}
-	KeReleaseSpinLock(&ClassDeviceExtension->SpinLock, OldIrql);
+    KeReleaseSpinLock(&ReadData->SpinLock, OldIrql);
 
 	if (wasQueued)
 	{
@@ -809,42 +854,65 @@ ClassCancelRoutine(
 static NTSTATUS
 HandleReadIrp(
 	IN PDEVICE_OBJECT DeviceObject,
-	IN PIRP Irp,
-	BOOLEAN IsInStartIo)
+    IN PREAD_DATA ReadData,
+    IN PIRP Irp OPTIONAL)
 {
-	PCLASS_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
 	NTSTATUS Status;
-	KIRQL OldIrql;
+	KIRQL OldIrql, CancelIrql;
+    BOOLEAN FromPending = (Irp == NULL);
 
-	TRACE_(CLASS_NAME, "HandleReadIrp(DeviceObject %p, Irp %p)\n", DeviceObject, Irp);
+    TRACE_(CLASS_NAME, "HandleReadIrp(DeviceObject %p, ReadData %p, Irp %p)\n", DeviceObject, ReadData, Irp);
 
-	ASSERT(DeviceExtension->Common.IsClassDO);
+    /*
+     * Checking for queued input, taking the pending request and queueing a new one are one step
+     * under the read lock: the port callback adds input and wakes the pending request from
+     * another processor, and a request queued after its check would wait for the next key.
+     */
+    KeAcquireSpinLock(&ReadData->SpinLock, &OldIrql);
 
-	if (DeviceExtension->InputCount > 0)
+    if (FromPending)
+    {
+        Irp = ReadData->PendingIrp;
+        if (!Irp || ReadData->InputCount == 0)
+        {
+            KeReleaseSpinLock(&ReadData->SpinLock, OldIrql);
+            return STATUS_SUCCESS;
+        }
+    }
+
+    if (ReadData->InputCount > 0)
 	{
 		SIZE_T NumberOfEntries;
+        PKEYBOARD_INPUT_DATA Destination;
+
+        if (DeviceObject->Flags & DO_BUFFERED_IO)
+            Destination = Irp->AssociatedIrp.SystemBuffer;
+        else if (DeviceObject->Flags & DO_DIRECT_IO)
+            Destination = MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
+        else
+            Destination = Irp->UserBuffer;
 
 		NumberOfEntries = MIN(
-			DeviceExtension->InputCount,
+            ReadData->InputCount,
 			IoGetCurrentIrpStackLocation(Irp)->Parameters.Read.Length / sizeof(KEYBOARD_INPUT_DATA));
 
 		Status = FillEntries(
 			DeviceObject,
-			Irp,
-			DeviceExtension->PortData,
+            ReadData->PortData,
+            Destination,
 			NumberOfEntries);
 
 		if (NT_SUCCESS(Status))
 		{
-			if (DeviceExtension->InputCount > NumberOfEntries)
+            if (ReadData->InputCount > NumberOfEntries)
 			{
 				RtlMoveMemory(
-					&DeviceExtension->PortData[0],
-					&DeviceExtension->PortData[NumberOfEntries],
-					(DeviceExtension->InputCount - NumberOfEntries) * sizeof(KEYBOARD_INPUT_DATA));
+                    &ReadData->PortData[0],
+                    &ReadData->PortData[NumberOfEntries],
+                    (ReadData->InputCount - NumberOfEntries) * sizeof(KEYBOARD_INPUT_DATA));
 			}
 
-			DeviceExtension->InputCount -= NumberOfEntries;
+            ReadData->InputCount -= NumberOfEntries;
 
 			Irp->IoStatus.Information = NumberOfEntries * sizeof(KEYBOARD_INPUT_DATA);
 		}
@@ -853,26 +921,30 @@ HandleReadIrp(
 		Irp->IoStatus.Status = Status;
 
 		(VOID)IoSetCancelRoutine(Irp, NULL);
+        if (ReadData->PendingIrp == Irp)
+            ReadData->PendingIrp = NULL;
+        KeReleaseSpinLock(&ReadData->SpinLock, OldIrql);
+
 		IoCompleteRequest(Irp, IO_KEYBOARD_INCREMENT);
-		DeviceExtension->PendingIrp = NULL;
+        return Status;
 	}
-	else
-	{
-		IoAcquireCancelSpinLock(&OldIrql);
-		if (Irp->Cancel)
-		{
-			DeviceExtension->PendingIrp = NULL;
-			Status = STATUS_CANCELLED;
-		}
-		else
-		{
-			IoMarkIrpPending(Irp);
-			DeviceExtension->PendingIrp = Irp;
-			(VOID)IoSetCancelRoutine(Irp, ClassCancelRoutine);
-			Status = STATUS_PENDING;
-		}
-		IoReleaseCancelSpinLock(OldIrql);
-	}
+
+    /* No input yet: queue the request under the read lock, the cancel lock nests inside it */
+    IoAcquireCancelSpinLock(&CancelIrql);
+    if (Irp->Cancel)
+    {
+        ReadData->PendingIrp = NULL;
+        Status = STATUS_CANCELLED;
+    }
+    else
+    {
+        IoMarkIrpPending(Irp);
+        ReadData->PendingIrp = Irp;
+        (VOID)IoSetCancelRoutine(Irp, ClassCancelRoutine);
+        Status = STATUS_PENDING;
+    }
+    IoReleaseCancelSpinLock(CancelIrql);
+    KeReleaseSpinLock(&ReadData->SpinLock, OldIrql);
 	return Status;
 }
 
@@ -1108,15 +1180,12 @@ ClassStartIo(
 	IN PIRP Irp)
 {
 	PCLASS_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
-	KIRQL OldIrql;
 
 	TRACE_(CLASS_NAME, "ClassStartIo(DeviceObject %p, Irp %p)\n", DeviceObject, Irp);
 
 	ASSERT(DeviceExtension->Common.IsClassDO);
 
-	KeAcquireSpinLock(&DeviceExtension->SpinLock, &OldIrql);
-	HandleReadIrp(DeviceObject, Irp, TRUE);
-	KeReleaseSpinLock(&DeviceExtension->SpinLock, OldIrql);
+    HandleReadIrp(DeviceObject, DeviceExtension->ReadData, Irp);
 }
 
 static VOID NTAPI

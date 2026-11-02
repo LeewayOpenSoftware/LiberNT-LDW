@@ -284,9 +284,16 @@ BOOL WINAPI QueryIdleProcessorCycleTimeEx( USHORT group_id, ULONG *size, ULONG64
 
 static HANDLE normalize_std_handle( HANDLE handle )
 {
+#ifdef __REACTOS__
+    /* STD_*_HANDLE are DWORDs: widen them through ULONG_PTR, same value, no C4312 on 64-bit MSVC */
+    if ((handle == ULongToHandle(STD_INPUT_HANDLE)) ||
+        (handle == ULongToHandle(STD_OUTPUT_HANDLE)) ||
+        (handle == ULongToHandle(STD_ERROR_HANDLE)))
+#else
     if ((handle == (HANDLE)STD_INPUT_HANDLE) ||
         (handle == (HANDLE)STD_OUTPUT_HANDLE) ||
         (handle == (HANDLE)STD_ERROR_HANDLE))
+#endif
         return GetStdHandle( HandleToULong(handle) );
 
     return handle;

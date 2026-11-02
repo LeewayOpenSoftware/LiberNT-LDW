@@ -86,8 +86,9 @@ UserProcessMouseInput(PMOUSE_INPUT_DATA mid)
     mi.time = 0;
     mi.dwExtraInfo = mid->ExtraInformation;
 
-    /* Mouse position */
-    if (mi.dx != 0 || mi.dy != 0)
+    /* Mouse position. For an absolute device (0, 0) is a real position, the top-left corner,
+       not "no movement": only a relative report with a zero delta is skipped. */
+    if (mi.dx != 0 || mi.dy != 0 || (mid->Flags & MOUSE_MOVE_ABSOLUTE))
         mi.dwFlags |= MOUSEEVENTF_MOVE;
 
     /* Flags for absolute move */

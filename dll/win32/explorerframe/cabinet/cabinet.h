@@ -137,6 +137,7 @@ private:
     void LoadText(UINT id, LPWSTR buffer, int length);
     void CreateBands();
     void CreateNavigationPane();
+    void SetNavigationBackground(COLORREF color);
     void SyncNavigationPane();
     void WatchFolder();
     void UpdateDetails();
@@ -166,6 +167,7 @@ private:
     void FitCommandBar(int width);
     void UpdateViewToggles();
     int CaptionButtonsWidth();
+    BOOL SystemCaptionButtons(RECT *bounds);
     BOOL GetCaptionButton(int ht, RECT *rc);
     int CaptionButtonAt(POINT clientPt);
     void PaintCaptionButtons(HDC dc);
@@ -209,6 +211,7 @@ private:
     UINT m_PinnedCount;
     HICON m_PinIcon;
     HWND m_FocusSave;
+    RECT m_PanelRect;
     RECT m_ViewRect;
     RECT m_PaneRect;
     BOOL m_DetailsPane;
