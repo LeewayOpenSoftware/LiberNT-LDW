@@ -30,6 +30,12 @@
 #include <atlsimpcoll.h>
 #include <shdocvw_undoc.h>
 
+// GUID_DEVINTERFACE_VOLUME (ntddstor.h): the class every mounted volume registers, so a
+// device-backed volume announces itself here even when no broadcast reaches this session.
+static const GUID GUID_DEVINTERFACE_VOLUME_SHELL =
+    { 0x53F5630D, 0xB6BF, 0x11D0, { 0x94, 0xF2, 0x00, 0xA0, 0xC9, 0x1E, 0xFB, 0x8B } };
+#define IDT_DRIVE_RECHECK 0x1D01
+
 static const GUID GUID_DEVINTERFACE_WPD_SHELL =
     { 0x6ac27878, 0xa6fa, 0x4155, { 0xba, 0x85, 0xf9, 0x8f, 0x49, 0x1d, 0x4f, 0x33 } };
 
@@ -66,6 +72,7 @@ private:
     HWND                       m_hwndChangeNotifyServer;
     DWORD m_dwDrives;
     HDEVNOTIFY m_hPortableDeviceNotify;
+    HDEVNOTIFY m_hVolumeNotify;
     LONG m_lShellWindowsCookie;
     CComObject<CDesktopAutomation> *m_pAutomation;
     CSimpleArray<CComBSTR> m_PropertyNames;
@@ -203,6 +210,8 @@ public:
     LRESULT OnSetFocus(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
     LRESULT OnGetChangeNotifyServer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
     LRESULT OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+    LRESULT OnTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+    void RefreshDriveMap();
     LRESULT OnShowOptionsDlg(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
     LRESULT OnSaveState(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
     LRESULT OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
@@ -220,6 +229,7 @@ BEGIN_MSG_MAP(CBaseBar)
     MESSAGE_HANDLER(WM_SETFOCUS, OnSetFocus)
     MESSAGE_HANDLER(WM_DESKTOP_GET_CNOTIFY_SERVER, OnGetChangeNotifyServer)
     MESSAGE_HANDLER(WM_DEVICECHANGE, OnDeviceChange)
+    MESSAGE_HANDLER(WM_TIMER, OnTimer)
     MESSAGE_HANDLER(WM_PROGMAN_OPENSHELLSETTINGS, OnShowOptionsDlg)
     MESSAGE_HANDLER(WM_PROGMAN_SAVESTATE, OnSaveState)
     MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
@@ -338,6 +348,7 @@ CDesktopBrowser::CDesktopBrowser():
     m_hwndChangeNotifyServer(NULL),
     m_dwDrives(::GetLogicalDrives()),
     m_hPortableDeviceNotify(NULL),
+    m_hVolumeNotify(NULL),
     m_lShellWindowsCookie(0),
     m_pAutomation(NULL)
 {
@@ -447,6 +458,11 @@ HRESULT CDesktopBrowser::Initialize(IShellDesktopTray *ShellDesk)
     DEV_BROADCAST_DEVICEINTERFACE_W Filter = { sizeof(Filter), DBT_DEVTYP_DEVICEINTERFACE };
     Filter.dbcc_classguid = GUID_DEVINTERFACE_WPD_SHELL;
     m_hPortableDeviceNotify = RegisterDeviceNotificationW(m_hWnd, &Filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+
+    // Volume arrivals and removals are delivered to this window by the PnP
+    // manager itself, so they reach the desktop in every session.
+    Filter.dbcc_classguid = GUID_DEVINTERFACE_VOLUME_SHELL;
+    m_hVolumeNotify = RegisterDeviceNotificationW(m_hWnd, &Filter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
     hRet = psfDesktop->CreateViewObject(m_hWnd, IID_PPV_ARG(IShellView, &m_ShellView));
     if (FAILED_UNEXPECTEDLY(hRet))
@@ -1282,6 +1298,12 @@ LRESULT CDesktopBrowser::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL
         UnregisterDeviceNotification(m_hPortableDeviceNotify);
         m_hPortableDeviceNotify = NULL;
     }
+    if (m_hVolumeNotify)
+    {
+        UnregisterDeviceNotification(m_hVolumeNotify);
+        m_hVolumeNotify = NULL;
+    }
+    KillTimer(IDT_DRIVE_RECHECK);
     bHandled = FALSE;
     return 0;
 }
@@ -1324,7 +1346,8 @@ LRESULT CDesktopBrowser::OnGetChangeNotifyServer(UINT uMsg, WPARAM wParam, LPARA
     return (LRESULT)m_hwndChangeNotifyServer;
 }
 
-// Detect DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE and DBT_DEVNODES_CHANGED
+// Detect DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE and DBT_DEVNODES_CHANGED,
+// including the volume device-interface notifications this window registers for
 LRESULT CDesktopBrowser::OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
 {
     // A volume that comes and goes with its device (a USB stick) is only
@@ -1345,6 +1368,34 @@ LRESULT CDesktopBrowser::OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam,
         return 0;
     }
 
+    if (pHeader && pHeader->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE &&
+        IsEqualGUID(((PDEV_BROADCAST_DEVICEINTERFACE_W)pHeader)->dbcc_classguid, GUID_DEVINTERFACE_VOLUME_SHELL))
+    {
+        // The drive letter can follow the volume interface by a moment in
+        // both directions, so look again shortly after this notification.
+        SetTimer(IDT_DRIVE_RECHECK, 1000, NULL);
+    }
+
+    RefreshDriveMap();
+    return 0;
+}
+
+LRESULT CDesktopBrowser::OnTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+{
+    if (wParam != IDT_DRIVE_RECHECK)
+    {
+        bHandled = FALSE;
+        return 0;
+    }
+    KillTimer(IDT_DRIVE_RECHECK);
+    RefreshDriveMap();
+    return 0;
+}
+
+// Compare the drive map with the last one seen, tell the change notification
+// server which drives went away and arrived, and announce them to the shell.
+void CDesktopBrowser::RefreshDriveMap()
+{
     DWORD dwDrives = ::GetLogicalDrives();
     DWORD dwRemoved = m_dwDrives & ~dwDrives;
     DWORD dwAdded = dwDrives & ~m_dwDrives;
@@ -1372,7 +1423,6 @@ LRESULT CDesktopBrowser::OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam,
     }
 
     m_dwDrives = dwDrives;
-    return 0;
 }
 
 extern VOID WINAPI ShowFolderOptionsDialog(UINT Page, BOOL Async);
