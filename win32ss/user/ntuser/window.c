@@ -2898,6 +2898,8 @@ ProbeAndCaptureLargeString(
     return STATUS_SUCCESS;
 }
 
+VOID FASTCALL IntGeckoWindowMilestone(PCSTR What);
+
 /**
  * \todo Allow passing plstrClassName as ANSI.
  */
@@ -2930,6 +2932,7 @@ NtUserCreateWindowEx(
     HWND hwnd = NULL;
     PWND pwnd;
 
+    IntGeckoWindowMilestone("first NtUserCreateWindowEx");
     lstrWindowName.Buffer = NULL;
     lstrClassName.Buffer = NULL;
     lstrClsVersion.Buffer = NULL;

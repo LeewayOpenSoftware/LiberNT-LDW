@@ -101,6 +101,239 @@ LdrpFreeUnicodeString(IN PUNICODE_STRING StringIn)
     RtlInitEmptyUnicodeString(StringIn, NULL, 0);
 }
 
+/*
+ * Gecko startup investigation: buffered loader phase trace. Every traced call site takes a start time with
+ * PHASE_BEGIN() and ends with PHASE_END(); the record (kind, nesting depth, thread, start, duration, exclusive
+ * duration, module name) goes into a fixed array. Summaries are printed by LdrpPhaseDump(): per-kind totals and
+ * the 20 records with the largest exclusive time. Nothing here changes loader behaviour.
+ */
+BOOLEAN LdrpPhaseTrace;
+
+#define PHASE_MAX_RECORDS 4096
+#define PHASE_MAX_DEPTH 64
+#define PHASE_NAME_CHARS 24
+#define PHASE_SLOW_US 300000ULL
+#define PHASE_KINDS 13
+
+typedef struct _PHASE_RECORD
+{
+    ULONG Kind;
+    ULONG Depth;
+    ULONG Count;
+    ULONG Tid;
+    ULONG64 Start;
+    ULONG64 Duration;
+    ULONG64 Exclusive;
+    WCHAR Name[PHASE_NAME_CHARS];
+} PHASE_RECORD;
+
+static PHASE_RECORD LdrpPhaseRecords[PHASE_MAX_RECORDS];
+static BOOLEAN LdrpPhaseUsed[PHASE_MAX_RECORDS];
+static ULONG LdrpPhaseCount;
+static ULONG LdrpPhaseDropped;
+static ULONG LdrpPhaseDepth;
+static ULONG64 LdrpPhaseChild[PHASE_MAX_DEPTH + 2];
+static LARGE_INTEGER LdrpPhaseFreq;
+static LONGLONG LdrpPhaseCounter0;
+static ULONG64 LdrpPhaseAge0;      /* microseconds between process creation and the first counter read */
+
+static const char *const LdrpPhaseKindNames[PHASE_KINDS] =
+{
+    "?", "LdrLoadDll", "LdrpMapDll", "NtCreateSection", "NtOpenFile", "NtMapViewOfSection",
+    "reloc(user)", "WalkImports", "LoadImport", "SnapIAT", "RunInit", "TLS", "DllMain"
+};
+
+VOID
+NTAPI
+LdrpPhaseInit(VOID)
+{
+    LARGE_INTEGER Counter, Now;
+    KERNEL_USER_TIMES Times;
+    NTSTATUS Status;
+
+    NtQueryPerformanceCounter(&Counter, &LdrpPhaseFreq);
+    if (LdrpPhaseFreq.QuadPart == 0)
+    {
+        LdrpPhaseTrace = FALSE;
+        return;
+    }
+    LdrpPhaseCounter0 = Counter.QuadPart;
+    LdrpPhaseAge0 = 0;
+    Status = NtQueryInformationProcess(NtCurrentProcess(), ProcessTimes, &Times, sizeof(Times), NULL);
+    if (NT_SUCCESS(Status))
+    {
+        NtQuerySystemTime(&Now);
+        if (Now.QuadPart > Times.CreateTime.QuadPart)
+            LdrpPhaseAge0 = (ULONG64)(Now.QuadPart - Times.CreateTime.QuadPart) / 10;
+    }
+}
+
+static
+ULONG64
+LdrpPhaseNowUs(VOID)
+{
+    LARGE_INTEGER Counter;
+
+    NtQueryPerformanceCounter(&Counter, NULL);
+    return LdrpPhaseAge0 + (ULONG64)((Counter.QuadPart - LdrpPhaseCounter0) * 1000000LL / LdrpPhaseFreq.QuadPart);
+}
+
+ULONG64
+NTAPI
+LdrpPhaseBegin(VOID)
+{
+    if (LdrpPhaseDepth < PHASE_MAX_DEPTH)
+        LdrpPhaseChild[LdrpPhaseDepth + 1] = 0;
+    LdrpPhaseDepth++;
+    return LdrpPhaseNowUs();
+}
+
+VOID
+NTAPI
+LdrpPhaseEnd(ULONG Kind, PCWSTR Name, USHORT NameBytes, ULONG64 Start, ULONG Count)
+{
+    ULONG64 End = LdrpPhaseNowUs();
+    ULONG64 Duration = End > Start ? End - Start : 0;
+    ULONG64 Children = 0;
+    ULONG Depth = LdrpPhaseDepth, Chars, Skip = 0, i;
+    PHASE_RECORD *Record;
+
+    if (Depth == 0)
+        return;
+    if (Depth <= PHASE_MAX_DEPTH)
+        Children = LdrpPhaseChild[Depth];
+    LdrpPhaseDepth = Depth - 1;
+    if (Depth - 1 <= PHASE_MAX_DEPTH)
+        LdrpPhaseChild[Depth - 1] += Duration;
+
+    if (LdrpPhaseCount >= PHASE_MAX_RECORDS)
+    {
+        LdrpPhaseDropped++;
+        return;
+    }
+    Record = &LdrpPhaseRecords[LdrpPhaseCount++];
+    Record->Kind = Kind;
+    Record->Depth = Depth;
+    Record->Count = Count;
+    Record->Tid = HandleToUlong(NtCurrentTeb()->ClientId.UniqueThread);
+    Record->Start = Start;
+    Record->Duration = Duration;
+    Record->Exclusive = Duration > Children ? Duration - Children : 0;
+    Record->Name[0] = 0;
+    if (Name)
+    {
+        Chars = NameBytes / sizeof(WCHAR);
+        for (i = 0; i < Chars; i++)
+            if (Name[i] == L'\\') Skip = i + 1;
+        for (i = 0; Skip + i < Chars && i < PHASE_NAME_CHARS - 1; i++)
+            Record->Name[i] = Name[Skip + i];
+        Record->Name[i] = 0;
+    }
+}
+
+ULONG
+NTAPI
+LdrpPhaseMark(VOID)
+{
+    return LdrpPhaseCount;
+}
+
+VOID
+NTAPI
+LdrpPhaseMilestone(PCSTR What)
+{
+    DbgPrint("PHASE MILE pid=%p %s at %I64u us after process creation\n", NtCurrentTeb()->ClientId.UniqueProcess,
+             What, LdrpPhaseNowUs());
+}
+
+VOID
+NTAPI
+LdrpPhaseDump(PCSTR Why, ULONG First)
+{
+    ULONG64 KindTotal[PHASE_KINDS] = {0};
+    ULONG KindCount[PHASE_KINDS] = {0};
+    ULONG Last = LdrpPhaseCount, i, n, Best;
+
+    if (First > Last)
+        First = 0;
+    DbgPrint("PHASE DUMP pid=%p reason=%s records=%lu..%lu dropped=%lu\n", NtCurrentTeb()->ClientId.UniqueProcess,
+             Why, First, Last, LdrpPhaseDropped);
+    for (i = First; i < Last; i++)
+    {
+        if (LdrpPhaseRecords[i].Kind < PHASE_KINDS)
+        {
+            KindTotal[LdrpPhaseRecords[i].Kind] += LdrpPhaseRecords[i].Exclusive;
+            KindCount[LdrpPhaseRecords[i].Kind]++;
+        }
+        LdrpPhaseUsed[i] = FALSE;
+    }
+    for (i = 1; i < PHASE_KINDS; i++)
+    {
+        if (KindCount[i])
+            DbgPrint("PHASE   total %-18s n=%-4lu exclusive=%I64u us\n", LdrpPhaseKindNames[i], KindCount[i], KindTotal[i]);
+    }
+    for (n = 0; n < 20; n++)
+    {
+        Best = (ULONG)-1;
+        for (i = First; i < Last; i++)
+        {
+            if (!LdrpPhaseUsed[i] && (Best == (ULONG)-1 || LdrpPhaseRecords[i].Exclusive > LdrpPhaseRecords[Best].Exclusive))
+                Best = i;
+        }
+        if (Best == (ULONG)-1 || LdrpPhaseRecords[Best].Exclusive == 0)
+            break;
+        LdrpPhaseUsed[Best] = TRUE;
+        DbgPrint("PHASE   top%-2lu %-18s %-24ws tid=%lu depth=%lu start=%I64u dur=%I64u excl=%I64u us\n", n + 1,
+                 LdrpPhaseKindNames[LdrpPhaseRecords[Best].Kind < PHASE_KINDS ? LdrpPhaseRecords[Best].Kind : 0],
+                 LdrpPhaseRecords[Best].Name, LdrpPhaseRecords[Best].Tid, LdrpPhaseRecords[Best].Depth,
+                 LdrpPhaseRecords[Best].Start, LdrpPhaseRecords[Best].Duration, LdrpPhaseRecords[Best].Exclusive);
+    }
+}
+
+/* Called after every LdrLoadDll: milestone lines for the DLLs Gecko brings in, and a summary after a slow top-level load */
+VOID
+NTAPI
+LdrpPhaseAfterLoad(PCWSTR Name, USHORT NameBytes, BOOLEAN TopLevel, ULONG64 Start, ULONG First)
+{
+    static const WCHAR *const Watched[] = { L"user32", L"gdi32", L"ole32", L"combase", L"clbcatq", L"mozglue", L"xul", L"nss3" };
+    static ULONG Seen;
+    ULONG64 Now = LdrpPhaseNowUs();
+    ULONG Chars = NameBytes / sizeof(WCHAR), Skip = 0, i, j;
+    CHAR Text[64];
+
+    if (Name)
+    {
+        for (i = 0; i < Chars; i++)
+            if (Name[i] == L'\\') Skip = i + 1;
+        for (j = 0; j < RTL_NUMBER_OF(Watched); j++)
+        {
+            ULONG Len = (ULONG)wcslen(Watched[j]);
+
+            if ((Seen & (1u << j)) || Chars - Skip < Len)
+                continue;
+            for (i = 0; i < Len; i++)
+                if (RtlUpcaseUnicodeChar(Name[Skip + i]) != RtlUpcaseUnicodeChar(Watched[j][i])) break;
+            if (i == Len)
+            {
+                Seen |= 1u << j;
+                for (i = 0; i < Len && i < 40; i++)
+                    Text[i] = (CHAR)Watched[j][i];
+                Text[i] = 0;
+                {
+                    static const CHAR Suffix[] = " loaded";
+                    ULONG k;
+
+                    for (k = 0; k < sizeof(Suffix); k++)
+                        Text[i + k] = Suffix[k];
+                }
+                LdrpPhaseMilestone(Text);
+            }
+        }
+    }
+    if (TopLevel && Now > Start && Now - Start >= PHASE_SLOW_US)
+        LdrpPhaseDump("slow top-level load", First);
+}
+
 BOOLEAN
 NTAPI
 LdrpCallInitRoutine(IN PDLL_INIT_ROUTINE EntryPoint,
@@ -601,12 +834,14 @@ LdrpCreateDllSection(IN PUNICODE_STRING FullName,
                                    NULL);
 
         /* Open the DLL */
+        { ULONG64 PhaseStart = PHASE_BEGIN();
         Status = NtOpenFile(&FileHandle,
                             SYNCHRONIZE | FILE_EXECUTE | FILE_READ_DATA,
                             &ObjectAttributes,
                             &IoStatusBlock,
                             FILE_SHARE_READ | FILE_SHARE_DELETE,
                             FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+          PHASE_END(PH_OPEN, FullName, PhaseStart, NT_SUCCESS(Status)); }
 
         /* Check if we failed */
         if (!NT_SUCCESS(Status))
@@ -649,6 +884,7 @@ LdrpCreateDllSection(IN PUNICODE_STRING FullName,
     }
 
     /* Create a section for the DLL */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = NtCreateSection(SectionHandle,
                              SECTION_MAP_READ | SECTION_MAP_EXECUTE |
                              SECTION_MAP_WRITE | SECTION_QUERY,
@@ -657,6 +893,7 @@ LdrpCreateDllSection(IN PUNICODE_STRING FullName,
                              PAGE_EXECUTE,
                              SEC_IMAGE,
                              FileHandle);
+      PHASE_END(PH_SECTION, FullName, PhaseStart, NT_SUCCESS(Status)); }
 
     /* If mapping failed, raise a hard error */
     if (!NT_SUCCESS(Status))
@@ -1460,6 +1697,7 @@ SkipCheck:
     /* Map the DLL */
     ViewBase = NULL;
     ViewSize = 0;
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = NtMapViewOfSection(SectionHandle,
                                 NtCurrentProcess(),
                                 &ViewBase,
@@ -1470,6 +1708,7 @@ SkipCheck:
                                 ViewShare,
                                 0,
                                 PAGE_EXECUTE_WRITECOPY);
+      PHASE_END(PH_VIEW, &FullDllName, PhaseStart, NT_SUCCESS(Status)); }
 #if defined(_M_ARM64)
     if (Status == STATUS_IMAGE_NOT_AT_BASE &&
         RtlEqualUnicodeString(&BaseDllName, &LdrpChpeBridgeName, TRUE) &&
@@ -1789,8 +2028,10 @@ SkipCheck:
             if (NT_SUCCESS(Status))
             {
                 /* Do the relocation */
+                { ULONG64 PhaseStart = PHASE_BEGIN();
                 Status = LdrRelocateImageWithBias(ViewBase, 0LL, NULL, STATUS_SUCCESS,
                     STATUS_CONFLICTING_ADDRESSES, STATUS_INVALID_IMAGE_FORMAT);
+                  PHASE_END(PH_RELOC, &FullDllName, PhaseStart, NT_SUCCESS(Status)); }
 
                 if (NT_SUCCESS(Status))
                 {
@@ -2949,6 +3190,7 @@ LdrpLoadDllWithPath(IN BOOLEAN Redirected,
                                    &LdrEntry))
         {
             /* Map it */
+            { ULONG64 PhaseStart = PHASE_BEGIN();
             Status = LdrpMapDll(DllPath,
                                 DllPath,
                                 NameBuffer,
@@ -2956,6 +3198,7 @@ LdrpLoadDllWithPath(IN BOOLEAN Redirected,
                                 FALSE,
                                 Redirected,
                                 &LdrEntry);
+              PHASE_END(PH_MAP, NT_SUCCESS(Status) ? &LdrEntry->BaseDllName : NULL, PhaseStart, NT_SUCCESS(Status)); }
             if (!NT_SUCCESS(Status))
                 _SEH2_LEAVE;
 
@@ -2978,7 +3221,9 @@ LdrpLoadDllWithPath(IN BOOLEAN Redirected,
                 if (!(LdrEntry->Flags & LDRP_COR_IMAGE))
                 {
                     /* Walk the Import Descriptor */
+                    { ULONG64 PhaseStart = PHASE_BEGIN();
                     Status = LdrpWalkImportDescriptor(DllPath, LdrEntry);
+                      PHASE_END(PH_WALK, &LdrEntry->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
                 }
 
                 /* Update load count, unless it's locked */
@@ -3037,7 +3282,9 @@ LdrpLoadDllWithPath(IN BOOLEAN Redirected,
                 }
 
                 /* Run the init routine */
+                { ULONG64 PhaseStart = PHASE_BEGIN();
                 Status = LdrpRunInitializeRoutines(NULL);
+                  PHASE_END(PH_INIT, &LdrEntry->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
                 if (!NT_SUCCESS(Status))
                 {
                     /* Failed, unload the DLL */

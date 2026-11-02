@@ -142,6 +142,41 @@ LdrpIsGeckoTraceImage(IN PUNICODE_STRING ImagePath)
     return FALSE;
 }
 
+/*
+ * Gecko startup investigation: which trace a Gecko process gets. Chosen per run by marker files on C: so one
+ * image serves the comparison runs: C:\gecko-r0.flag = no trace at all (baseline), C:\gecko-r2.flag = buffered
+ * phase trace only (the loader's verbose snaps stay at the registry setting), neither = the loader snaps
+ * of the earlier trace commit (R1).
+ */
+static
+BOOLEAN
+LdrpGeckoFlagExists(IN PCWSTR NtPath)
+{
+    UNICODE_STRING Name;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    FILE_BASIC_INFORMATION Information;
+
+    RtlInitUnicodeString(&Name, NtPath);
+    InitializeObjectAttributes(&ObjectAttributes, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    return NT_SUCCESS(NtQueryAttributesFile(&ObjectAttributes, &Information));
+}
+
+static
+VOID
+LdrpGeckoSelectMode(VOID)
+{
+    if (LdrpGeckoFlagExists(L"\\??\\C:\\gecko-r0.flag"))
+        return;
+    if (LdrpGeckoFlagExists(L"\\??\\C:\\gecko-r2.flag"))
+    {
+        LdrpPhaseTrace = TRUE;
+        LdrpPhaseInit();
+        LdrpPhaseMilestone("LdrpInitializeProcess started");
+        return;
+    }
+    ShowSnaps = TRUE;
+}
+
 ULONG LdrpFatalHardErrorCount;
 ULONG LdrpActiveUnloadCount;
 
@@ -941,7 +976,9 @@ LdrpRunInitializeRoutines(IN PCONTEXT Context OPTIONAL)
         if (LdrpLdrDatabaseIsSetup &&
             !(LdrEntry->Flags & LDRP_ENTRY_PROCESSED) && (LdrEntry->Flags & LDRP_IMAGE_DLL))
         {
+            { ULONG64 PhaseStart = PHASE_BEGIN();
             Status = LdrpHandleTlsData(LdrEntry);
+              PHASE_END(PH_TLS, &LdrEntry->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
             if (!NT_SUCCESS(Status))
             {
                 DPRINT1("LDR: Failed to initialize TLS for %wZ; status 0x%08lx\n",
@@ -1091,10 +1128,12 @@ LdrpRunInitializeRoutines(IN PCONTEXT Context OPTIONAL)
                     DPRINT1("%wZ - Calling entry point at %p for DLL_PROCESS_ATTACH\n",
                             &LdrEntry->BaseDllName, EntryPoint);
                 }
+                { ULONG64 PhaseStart = PHASE_BEGIN();
                 DllStatus = LdrpCallInitRoutine(EntryPoint,
                                                 LdrEntry->DllBase,
                                                 DLL_PROCESS_ATTACH,
                                                 Context);
+                  PHASE_END(PH_DLLMAIN, &LdrEntry->BaseDllName, PhaseStart, 1); }
                 DllInitCompleted = TRUE;
             }
             _SEH2_EXCEPT(LdrpDebugExceptionFilter(_SEH2_GetExceptionInformation()))
@@ -1200,6 +1239,7 @@ LdrShutdownProcess(VOID)
 
     DPRINT("LdrShutdownProcess() called for %wZ\n", &LdrpImageEntry->BaseDllName);
     if (LdrpShutdownInProgress) return STATUS_SUCCESS;
+    if (LdrpPhaseTrace) LdrpPhaseDump("process shutdown", 0);
 
     /* Tell the Shim Engine */
     if (g_ShimsEnabled)
@@ -1931,7 +1971,9 @@ LdrpInitializeTls(VOID)
         LdrEntry = CONTAINING_RECORD(NextEntry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
         NextEntry = NextEntry->Flink;
 
+        { ULONG64 PhaseStart = PHASE_BEGIN();
         Status = LdrpHandleTlsData(LdrEntry);
+          PHASE_END(PH_TLS, &LdrEntry->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
         if (!NT_SUCCESS(Status)) return Status;
     }
 
@@ -2868,7 +2910,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
 
     /* Gecko startup investigation: trace the loader of these processes without a registry flag */
     if (LdrpIsGeckoTraceImage(&Peb->ProcessParameters->ImagePathName))
-        ShowSnaps = TRUE;
+        LdrpGeckoSelectMode();
 
     /* Start verbose debugging messages right now if they were requested */
     if (ShowSnaps)
@@ -3339,7 +3381,10 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     LdrpInitializeActiveCodePage();
 
     /* Walk the IAT and load all the DLLs */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     ImportStatus = IsCorILOnlyImage ? STATUS_SUCCESS : LdrpWalkImportDescriptor(LdrpDefaultPath.Buffer, LdrpImageEntry);
+      PHASE_END(PH_WALK, &LdrpImageEntry->BaseDllName, PhaseStart, NT_SUCCESS(ImportStatus)); }
+    if (LdrpPhaseTrace) LdrpPhaseMilestone("process imports walked");
 
     if (NT_SUCCESS(ImportStatus) && IsCorILOnlyImage)
     {
@@ -3430,6 +3475,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
 #endif
 
     /* Initialize TLS */
+    if (LdrpPhaseTrace) LdrpPhaseMilestone("process TLS next");
     Status = LdrpInitializeTls();
     if (!NT_SUCCESS(Status))
     {
@@ -3544,7 +3590,14 @@ LdrpInitializeProcess(IN PCONTEXT Context,
      */
 
     /* Now call the Init Routines */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpRunInitializeRoutines(Context);
+      PHASE_END(PH_INIT, &LdrpImageEntry->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
+    if (LdrpPhaseTrace)
+    {
+        LdrpPhaseMilestone("process init routines done");
+        LdrpPhaseDump("process initialization", 0);
+    }
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("LDR: LdrpProcessInitialization failed running initialization routines; status %x\n",

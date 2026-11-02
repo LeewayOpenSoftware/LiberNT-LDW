@@ -497,6 +497,8 @@ LdrLoadDll(
     ULONG_PTR Cookie;
     PUNICODE_STRING OldTldDll;
     PTEB Teb = NtCurrentTeb();
+    ULONG64 PhaseStart = 0;
+    ULONG PhaseFirst = 0;
 
     /* Initialize the strings */
     RtlInitEmptyUnicodeString(&StaticString, StringBuffer, sizeof(StringBuffer));
@@ -553,6 +555,8 @@ LdrLoadDll(
 
         /* Set this one as the TLD DLL being loaded*/
         LdrpTopLevelDllBeingLoaded = DllName;
+        PhaseStart = PHASE_BEGIN();
+        PhaseFirst = LdrpPhaseTrace ? LdrpPhaseMark() : 0;
 
         /* Load the DLL */
         Status = LdrpLoadDll(RedirectedDll && !ApiSetRedirected,
@@ -561,6 +565,11 @@ LdrLoadDll(
                              DllName,
                              BaseAddress,
                              TRUE);
+        if (LdrpPhaseTrace)
+        {
+            PHASE_END(PH_LOADDLL, DllName, PhaseStart, NT_SUCCESS(Status));
+            LdrpPhaseAfterLoad(DllName->Buffer, DllName->Length, OldTldDll == NULL, PhaseStart, PhaseFirst);
+        }
         if (ShowSnaps)
         {
             DPRINT1("[%p, %p] LDRTRACE LdrLoadDll(\"%wZ\") -> %08lx\n",

@@ -78,6 +78,37 @@ extern BOOLEAN LdrpInLdrInit;
 extern PVOID LdrpHeap;
 extern LIST_ENTRY LdrpHashTable[LDR_HASH_TABLE_ENTRIES];
 extern BOOLEAN ShowSnaps;
+
+/*
+ * Gecko startup investigation: buffered loader phase trace (implemented in ldr/ldrutils.c).
+ * Diagnostic only: it is off unless the image is one of the traced Gecko programs, and records are kept in
+ * memory and printed in summaries, never one line per event.
+ */
+extern BOOLEAN LdrpPhaseTrace;
+#define PH_LOADDLL  1
+#define PH_MAP      2
+#define PH_SECTION  3
+#define PH_OPEN     4
+#define PH_VIEW     5
+#define PH_RELOC    6
+#define PH_WALK     7
+#define PH_IMPORT   8
+#define PH_SNAP     9
+#define PH_INIT     10
+#define PH_TLS      11
+#define PH_DLLMAIN  12
+VOID NTAPI LdrpPhaseInit(VOID);
+ULONG64 NTAPI LdrpPhaseBegin(VOID);
+VOID NTAPI LdrpPhaseEnd(ULONG Kind, PCWSTR Name, USHORT NameBytes, ULONG64 Start, ULONG Count);
+ULONG NTAPI LdrpPhaseMark(VOID);
+VOID NTAPI LdrpPhaseAfterLoad(PCWSTR Name, USHORT NameBytes, BOOLEAN TopLevel, ULONG64 Start, ULONG First);
+VOID NTAPI LdrpPhaseDump(PCSTR Why, ULONG First);
+VOID NTAPI LdrpPhaseMilestone(PCSTR What);
+#define PHASE_BEGIN() (LdrpPhaseTrace ? LdrpPhaseBegin() : 0)
+#define PHASE_END(k, us, t, c) \
+    do { if (LdrpPhaseTrace) { \
+        PCUNICODE_STRING _n = (us); \
+        LdrpPhaseEnd((k), _n ? _n->Buffer : NULL, _n ? _n->Length : 0, (t), (c)); } } while (0)
 extern UNICODE_STRING LdrpDefaultPath;
 extern HANDLE LdrpKnownDllObjectDirectory;
 extern ULONG LdrpNumberOfProcessors;

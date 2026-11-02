@@ -355,11 +355,13 @@ LdrpHandleOneNewFormatImportDescriptor(IN LPWSTR DllPath OPTIONAL,
     }
 
     /* Load the module for this entry */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpLoadImportModule(DllPath,
                                   LdrEntry->DllBase,
                                   BoundImportName,
                                   &DllLdrEntry,
                                   &AlreadyLoaded);
+      PHASE_END(PH_IMPORT, NT_SUCCESS(Status) ? &DllLdrEntry->BaseDllName : NULL, PhaseStart, 0); }
     if (!NT_SUCCESS(Status))
     {
         /* Show debug message */
@@ -429,11 +431,13 @@ LdrpHandleOneNewFormatImportDescriptor(IN LPWSTR DllPath OPTIONAL,
         }
 
         /* Load the module */
+        { ULONG64 PhaseStart = PHASE_BEGIN();
         Status = LdrpLoadImportModule(DllPath,
                                       LdrEntry->DllBase,
                                       ForwarderName,
                                       &ForwarderLdrEntry,
                                       &AlreadyLoaded);
+          PHASE_END(PH_IMPORT, NT_SUCCESS(Status) ? &ForwarderLdrEntry->BaseDllName : NULL, PhaseStart, 0); }
         if (NT_SUCCESS(Status))
         {
             /* Loaded it, was it already loaded? */
@@ -529,12 +533,14 @@ LdrpHandleOneNewFormatImportDescriptor(IN LPWSTR DllPath OPTIONAL,
         }
 
         /* Snap the IAT Entry*/
+        { ULONG64 PhaseStart = PHASE_BEGIN();
         Status = LdrpSnapIAT(DllLdrEntry,
                              LdrEntry,
                              ImportEntry,
                              FALSE,
                              NULL,
                              DllPath);
+          PHASE_END(PH_SNAP, &DllLdrEntry->BaseDllName, PhaseStart, 0); }
 
         /* Make sure we didn't fail */
         if (!NT_SUCCESS(Status))
@@ -619,11 +625,13 @@ LdrpHandleOneOldFormatImportDescriptor(IN LPWSTR DllPath OPTIONAL,
     }
 
     /* Load the module associated to it */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpLoadImportModule(DllPath,
                                   LdrEntry->DllBase,
                                   ImportName,
                                   &DllLdrEntry,
                                   &AlreadyLoaded);
+      PHASE_END(PH_IMPORT, NT_SUCCESS(Status) ? &DllLdrEntry->BaseDllName : NULL, PhaseStart, 0); }
     if (!NT_SUCCESS(Status))
     {
         /* Fail */
@@ -657,7 +665,9 @@ LdrpHandleOneOldFormatImportDescriptor(IN LPWSTR DllPath OPTIONAL,
     }
 
     /* Now snap the IAT Entry */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpSnapIAT(DllLdrEntry, LdrEntry, *ImportEntry, FALSE, ProtectionContext, DllPath);
+      PHASE_END(PH_SNAP, &DllLdrEntry->BaseDllName, PhaseStart, 0); }
     if (!NT_SUCCESS(Status))
     {
         /* Fail */
@@ -1044,6 +1054,7 @@ LdrpLoadImportModule(IN PWSTR DllPath OPTIONAL,
     *Existing = FALSE;
 
     /* Map it */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpMapDll(DllPath,
                         NULL,
                         ImpDescName->Buffer,
@@ -1051,6 +1062,7 @@ LdrpLoadImportModule(IN PWSTR DllPath OPTIONAL,
                         TRUE,
                         RedirectedDll && !ApiSetRedirected,
                         DataTableEntry);
+      PHASE_END(PH_MAP, NT_SUCCESS(Status) ? &(*DataTableEntry)->BaseDllName : NULL, PhaseStart, NT_SUCCESS(Status)); }
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("LDR: LdrpMapDll failed  with status %x for dll %wZ\n", Status, ImpDescName);
@@ -1074,8 +1086,10 @@ LdrpLoadImportModule(IN PWSTR DllPath OPTIONAL,
 #endif
 
     /* Walk its import descriptor table */
+    { ULONG64 PhaseStart = PHASE_BEGIN();
     Status = LdrpWalkImportDescriptor(DllPath,
                                       *DataTableEntry);
+      PHASE_END(PH_WALK, &(*DataTableEntry)->BaseDllName, PhaseStart, NT_SUCCESS(Status)); }
     if (!NT_SUCCESS(Status))
     {
         /* Add it to the in-init-order list in case of failure */

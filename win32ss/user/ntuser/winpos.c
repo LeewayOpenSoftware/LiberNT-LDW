@@ -3248,6 +3248,37 @@ void IntForceMinimizeWindow(PWND pWnd)
 /*
    ShowWindow does not set SWP_FRAMECHANGED!!! Fix wine msg test_SetParent:WmSetParentSeq_2:23 wParam bits!
  */
+/*
+ * Gecko startup investigation: one line per process and event (first window creation, first top-level window
+ * shown) with the time since the process was created. Diagnostic only; other processes print nothing.
+ */
+VOID FASTCALL IntGeckoWindowMilestone(PCSTR What)
+{
+    static struct { HANDLE Pid; ULONG Done; } Seen[16];
+    PEPROCESS Process = PsGetCurrentProcess();
+    const CHAR *Image = PsGetProcessImageFileName(Process);
+    HANDLE Pid = PsGetCurrentProcessId();
+    ULONG Bit = What[6] == 'N' ? 1 : 2, i, Slot = (ULONG)-1;
+    LARGE_INTEGER Now;
+
+    if (!Image || (_strnicmp(Image, "firefox", 7) && _strnicmp(Image, "basilisk", 8) && _strnicmp(Image, "plugin-conta", 12)))
+        return;
+    for (i = 0; i < RTL_NUMBER_OF(Seen); i++)
+    {
+        if (Seen[i].Pid == Pid) { Slot = i; break; }
+        if (Slot == (ULONG)-1 && !Seen[i].Pid) Slot = i;
+    }
+    if (Slot == (ULONG)-1)
+        return;
+    Seen[Slot].Pid = Pid;
+    if (Seen[Slot].Done & Bit)
+        return;
+    Seen[Slot].Done |= Bit;
+    KeQuerySystemTime(&Now);
+    DbgPrint("PHASE MILE pid=%p %s %s at %I64u us after process creation (win32k)\n", Pid, Image, What,
+             (ULONG64)(Now.QuadPart - PsGetProcessCreateTimeQuadPart(Process)) / 10);
+}
+
 BOOLEAN FASTCALL
 co_WinPosShowWindow(PWND Wnd, INT Cmd)
 {
@@ -3266,6 +3297,8 @@ co_WinPosShowWindow(PWND Wnd, INT Cmd)
    pti = PsGetCurrentThreadWin32Thread();
    WasVisible = (Wnd->style & WS_VISIBLE) != 0;
    style = Wnd->style;
+   if (Cmd != SW_HIDE && !(Wnd->style & WS_CHILD))
+      IntGeckoWindowMilestone("first top-level window shown");
    if (WasVisible)
       Wnd->state &= ~WNDS_SENDSIZEMOVEMSGS;
 
