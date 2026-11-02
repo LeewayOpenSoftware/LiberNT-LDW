@@ -842,21 +842,101 @@ S1JournalWriterAppend(
  * target, the add path re-deletes nothing), so a repeated rollback or a
  * rollback that reaches an op never applied converges to the same state. */
 #ifndef S1_HOST_APPLIER
+/* Append one line to <ServicingRoot>\logs\boot.log with the journal's write
+ * sequence. Best effort: a refused open loses the line; never calls S1Log. */
+#define S1_BOOTLOG_OPEN_ATTEMPTS 3
+
+static VOID
+S1BootLogAppend(
+    _In_reads_(Len) const CHAR *Line,
+    _In_ SIZE_T Len)
+{
+    WCHAR Path[MAX_PATH * 2];
+    HANDLE Handle;
+    NTSTATUS Status;
+    IO_STATUS_BLOCK IoStatus;
+    FILE_STANDARD_INFORMATION StdInfo;
+    FILE_POSITION_INFORMATION PosInfo;
+    ULONG Try;
+
+    if (!g_ServicingRoot[0])
+        return; /* before the servicing root is known: debugger only */
+    if (swprintf(Path, RTL_NUMBER_OF(Path), L"%ls\\logs", g_ServicingRoot) <= 0)
+        return;
+    {
+        UNICODE_STRING Name;
+        OBJECT_ATTRIBUTES Attr;
+        HANDLE Dir;
+
+        RtlInitUnicodeString(&Name, Path);
+        InitializeObjectAttributes(&Attr, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        Status = NtCreateFile(&Dir, FILE_LIST_DIRECTORY | SYNCHRONIZE, &Attr, &IoStatus, NULL,
+                              FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              FILE_OPEN_IF, FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                              NULL, 0);
+        if (NT_SUCCESS(Status))
+            NtClose(Dir);
+    }
+    if (swprintf(Path, RTL_NUMBER_OF(Path), L"%ls\\logs\\boot.log", g_ServicingRoot) <= 0)
+        return;
+    for (Try = 0; ; Try++)
+    {
+        Status = S1NtOpen(Path, FILE_WRITE_DATA, FILE_OPEN_IF, &Handle);
+        if (NT_SUCCESS(Status))
+            break;
+        if ((Status != STATUS_SHARING_VIOLATION && Status != STATUS_LOCK_NOT_GRANTED) ||
+            Try + 1 >= S1_BOOTLOG_OPEN_ATTEMPTS)
+            return;
+        {
+            LARGE_INTEGER Delay;
+
+            Delay.QuadPart = -1000000; /* 100 ms */
+            NtDelayExecution(FALSE, &Delay);
+        }
+    }
+    Status = NtQueryInformationFile(Handle, &IoStatus, &StdInfo, sizeof(StdInfo),
+                                    FileStandardInformation);
+    if (NT_SUCCESS(Status))
+    {
+        PosInfo.CurrentByteOffset = StdInfo.EndOfFile;
+        NtSetInformationFile(Handle, &IoStatus, &PosInfo, sizeof(PosInfo),
+                             FilePositionInformation);
+        Status = NtWriteFile(Handle, NULL, NULL, NULL, &IoStatus, (PVOID)Line, (ULONG)Len,
+                             NULL, NULL);
+        if (NT_SUCCESS(Status))
+            NtFlushBuffersFile(Handle, &IoStatus);
+    }
+    NtClose(Handle);
+}
+
 /* BootExecute processes have no console and NtDisplayString only reaches
  * the boot video (invisible under the graphical splash and absent from
  * the KD serial); DbgPrint lands in the kernel debugger on debug builds,
- * which is the reliable channel for a native applier (Dwight's diag run). */
+ * which is the reliable channel for a native applier (Dwight's diag run).
+ * The same line also goes to logs\boot.log for machines without a debugger. */
 static VOID
 S1Log(
     _In_ PCWSTR Msg)
 {
     CHAR Narrow[512];
+    CHAR Stamped[512 + 32];
+    LARGE_INTEGER Now;
+    TIME_FIELDS Tf;
     SIZE_T i;
+    int Len;
 
     for (i = 0; Msg[i] && i < RTL_NUMBER_OF(Narrow) - 1; i++)
         Narrow[i] = (CHAR)Msg[i];
     Narrow[i] = 0;
     DbgPrint("%s\r\n", Narrow);
+
+    if (!NT_SUCCESS(NtQuerySystemTime(&Now)))
+        Now.QuadPart = 0;
+    RtlTimeToTimeFields(&Now, &Tf);
+    Len = snprintf(Stamped, sizeof(Stamped), "%04d-%02d-%02dT%02d:%02d:%02dZ %s\r\n",
+                   Tf.Year, Tf.Month, Tf.Day, Tf.Hour, Tf.Minute, Tf.Second, Narrow);
+    if (Len > 0 && (size_t)Len < sizeof(Stamped))
+        S1BootLogAppend(Stamped, (SIZE_T)Len);
 }
 #else
 static VOID
