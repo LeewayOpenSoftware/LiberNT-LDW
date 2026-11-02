@@ -783,11 +783,11 @@ Return Value:
 
         VcbDeleted = FatCheckForDismount( IrpContext, Vcb, TRUE );
         if (!VcbDeleted) {
-            DPRINT1("PNPDIAG fatvol vcb %p NOT dismounted vpbref %lu residual %lu openfiles %lu cond %u\n",
+            DbgPrint("PNPDIAG fatvol vcb %p NOT dismounted vpbref %lu residual %lu openfiles %lu cond %u\n",
                     Vcb, (ULONG)(Vcb->Vpb ? Vcb->Vpb->ReferenceCount : 0),
                     (ULONG)Vcb->ResidualOpenCount, (ULONG)Vcb->OpenFileCount, (ULONG)Vcb->VcbCondition);
         } else {
-            DPRINT1("PNPDIAG fatvol vcb dismounted (safe removal path clear)\n");
+            DbgPrint("PNPDIAG fatvol vcb dismounted (safe removal path clear)\n");
         }
 
     } _SEH2_FINALLY {

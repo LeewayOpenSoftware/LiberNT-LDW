@@ -604,7 +604,7 @@ Return Value:
         if ( !FlagOn(Vcb->VcbState, VCB_STATE_FLAG_DELETED_FCB) ) {
 
             if (Fcb->Vcb->VcbCondition == VcbBad) {
-                DPRINT1("PNPDIAG fatfcb fcb %p datasec %p image %p unclean %lu open %lu\n",
+                DbgPrint("PNPDIAG fatfcb fcb %p datasec %p image %p unclean %lu open %lu\n",
                         Fcb, Fcb->NonPaged->SectionObjectPointers.DataSectionObject,
                         Fcb->NonPaged->SectionObjectPointers.ImageSectionObject,
                         (ULONG)Fcb->UncleanCount, (ULONG)Fcb->OpenCount);
