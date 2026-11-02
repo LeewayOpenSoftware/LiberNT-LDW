@@ -386,6 +386,15 @@ VOID LanReceiveWorker( PVOID Context ) {
 
     /* Update interface stats */
     Interface->Stats.InBytes += IPPacket.TotalSize + Adapter->HeaderSize;
+    /* ARP is delivered as broadcast; IP frames we receive are unicast to us. */
+    if (PacketType == ETYPE_ARP)
+    {
+        Interface->Stats.InNUnicast++;
+    }
+    else
+    {
+        Interface->Stats.InUnicast++;
+    }
 
     /* NDIS packet is freed in all of these cases */
     switch (PacketType) {
@@ -1170,6 +1179,15 @@ VOID LANTransmit(
 
     /* Update interface stats */
     Interface->Stats.OutBytes += Size;
+    /* Group/broadcast MACs have the low bit of the first octet set. */
+    if (LinkAddress && (((PUCHAR)LinkAddress)[0] & 0x01))
+    {
+        Interface->Stats.OutNUnicast++;
+    }
+    else
+    {
+        Interface->Stats.OutUnicast++;
+    }
 
 	TI_DbgPrint(MID_TRACE, ("NdisSend\n"));
 	NdisSendNetBufferLists(Adapter->NdisHandle,

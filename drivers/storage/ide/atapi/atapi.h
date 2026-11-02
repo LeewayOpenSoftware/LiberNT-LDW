@@ -337,6 +337,8 @@ typedef struct _ATAPORT_PORT_DATA
 #define PORT_FLAG_PIO_VIA_DMA                     0x00000002
 #define PORT_FLAG_IS_EXTERNAL                     0x00000004
 #define PORT_FLAG_NCQ                             0x00000008
+#define ATA_MAX_SCSI_PORT_LINKS                   256
+
 #define PORT_FLAG_IS_AHCI                         0x00000010
 #define PORT_FLAG_SYMLINK_CREATED                 0x00000020
 #define PORT_FLAG_IO_TIMER_ACTIVE                 0x00000040

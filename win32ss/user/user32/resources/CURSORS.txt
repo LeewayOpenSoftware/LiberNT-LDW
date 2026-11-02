@@ -1,0 +1,6 @@
+The default system cursors (ocr_normal, ocr_ibeam, ocr_cross, ocr_sizenwse, ocr_sizenesw,
+ocr_sizewe, ocr_sizens, ocr_sizeall, ocr_no, ocr_help, ocr_hand and the animated ocr_wait and
+ocr_appstarting) are original artwork by the LiberNT project owner, licensed under the GPL like
+the Aureline icon set. Frames are 32, 48 and 64 pixels, 32-bit with alpha.
+The other cursors in this directory (ocr_up, ocr_size, ocr_icon, ocr_pen, ocr_cdautostart,
+ocr_dragobject) are unchanged.

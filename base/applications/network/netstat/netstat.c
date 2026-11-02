@@ -372,20 +372,40 @@ VOID ShowEthernetStatistics(VOID)
 
         if ((dwRetVal = GetIfTable(pIfTable, &dwSize, 0)) == NO_ERROR)
         {
+            DWORD i;
+            ULONG inOctets = 0, outOctets = 0, inUcast = 0, outUcast = 0;
+            ULONG inNUcast = 0, outNUcast = 0, inDiscards = 0, outDiscards = 0;
+            ULONG inErrors = 0, outErrors = 0, inUnknown = 0;
+
+            /* Aggregate the non-loopback interfaces, as Windows netstat -e does;
+             * the loopback entry carries no real traffic and must not be the
+             * only one reported (it is typically table[0]). */
+            for (i = 0; i < pIfTable->dwNumEntries; i++)
+            {
+                MIB_IFROW *row = &pIfTable->table[i];
+                if (row->dwType == MIB_IF_TYPE_LOOPBACK)
+                    continue;
+                inOctets    += row->dwInOctets;
+                outOctets   += row->dwOutOctets;
+                inUcast     += row->dwInUcastPkts;
+                outUcast    += row->dwOutUcastPkts;
+                inNUcast    += row->dwInNUcastPkts;
+                outNUcast   += row->dwOutNUcastPkts;
+                inDiscards  += row->dwInDiscards;
+                outDiscards += row->dwOutDiscards;
+                inErrors    += row->dwInErrors;
+                outErrors   += row->dwOutErrors;
+                inUnknown   += row->dwInUnknownProtos;
+            }
+
             ConResPuts(StdOut, IDS_ETHERNET_INTERFACE_STAT);
             ConResPuts(StdOut, IDS_ETHERNET_THEADER);
-            ConResPrintf(StdOut, IDS_ETHERNET_BYTES,
-                pIfTable->table[0].dwInOctets, pIfTable->table[0].dwOutOctets);
-            ConResPrintf(StdOut, IDS_ETHERNET_UNICAST_PACKET,
-                pIfTable->table[0].dwInUcastPkts, pIfTable->table[0].dwOutUcastPkts);
-            ConResPrintf(StdOut, IDS_ETHERNET_NON_UNICAST_PACKET,
-                pIfTable->table[0].dwInNUcastPkts, pIfTable->table[0].dwOutNUcastPkts);
-            ConResPrintf(StdOut, IDS_ETHERNET_DISCARD,
-                pIfTable->table[0].dwInDiscards, pIfTable->table[0].dwOutDiscards);
-            ConResPrintf(StdOut, IDS_ETHERNET_ERROR,
-                pIfTable->table[0].dwInErrors, pIfTable->table[0].dwOutErrors);
-            ConResPrintf(StdOut, IDS_ETHERNET_UNKNOWN,
-                pIfTable->table[0].dwInUnknownProtos);
+            ConResPrintf(StdOut, IDS_ETHERNET_BYTES, inOctets, outOctets);
+            ConResPrintf(StdOut, IDS_ETHERNET_UNICAST_PACKET, inUcast, outUcast);
+            ConResPrintf(StdOut, IDS_ETHERNET_NON_UNICAST_PACKET, inNUcast, outNUcast);
+            ConResPrintf(StdOut, IDS_ETHERNET_DISCARD, inDiscards, outDiscards);
+            ConResPrintf(StdOut, IDS_ETHERNET_ERROR, inErrors, outErrors);
+            ConResPrintf(StdOut, IDS_ETHERNET_UNKNOWN, inUnknown);
         }
         else
         {

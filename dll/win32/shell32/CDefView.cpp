@@ -3318,6 +3318,7 @@ HRESULT CDefView::OpenSelectedItems(PCSTR pszVerb)
     UINT uCommand;
     HRESULT hResult;
 
+    ERR("OpenSelectedItems: %u selected, focused item %d\n", m_ListView.GetSelectedCount(), m_ListView.GetNextItem(-1, LVNI_FOCUSED));
     if (m_ListView.GetSelectedCount() == 0)
         return S_OK;
 
@@ -3348,6 +3349,7 @@ HRESULT CDefView::OpenSelectedItems(PCSTR pszVerb)
     }
     if (!pszVerb)
         pszVerb = MAKEINTRESOURCEA(uCommand);
+    ERR("OpenSelectedItems: default command id %u (%d items in the menu, verb %p)\n", uCommand, GetMenuItemCount(hMenu), pszVerb);
 
     InvokeContextMenuCommand(pCM, pszVerb, NULL);
 
@@ -3360,7 +3362,7 @@ LRESULT CDefView::OnContextMenu(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &b
     UINT    uCommand;
     HRESULT hResult;
 
-    TRACE("(%p)\n", this);
+    ERR("OnContextMenu %p at %d,%d (%u selected)\n", this, pt.x, pt.y, m_ListView.GetSelectedCount());
 
     if (m_hContextMenu != NULL)
     {
@@ -3907,7 +3909,7 @@ LRESULT CDefView::OnNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandl
             }
             break;
         case NM_DBLCLK:
-            TRACE("-- NM_DBLCLK %p\n", this);
+            ERR("NM_DBLCLK %p (item %d)\n", this, ((NMITEMACTIVATE *)lpnmh)->iItem);
             if (lpnmh->hwndFrom == m_ListView && IsComputerTileView())
             {
                 NMITEMACTIVATE *activate = (NMITEMACTIVATE *)lpnmh;
@@ -3920,7 +3922,7 @@ LRESULT CDefView::OnNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandl
             }
             break;
         case NM_RETURN:
-            TRACE("-- NM_RETURN %p\n", this);
+            ERR("NM_RETURN %p\n", this);
             break;
         case HDN_ENDTRACKW:
             TRACE("-- HDN_ENDTRACKW %p\n", this);
@@ -3939,7 +3941,7 @@ LRESULT CDefView::OnNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandl
             TRACE("-- LVN_INSERTITEM (STUB)%p\n", this);
             break;
         case LVN_ITEMACTIVATE:
-            TRACE("-- LVN_ITEMACTIVATE %p\n", this);
+            ERR("LVN_ITEMACTIVATE %p (item %d)\n", this, ((NMITEMACTIVATE *)lpnmh)->iItem);
             OpenSelectedItems(((NMITEMACTIVATE *)lpnmh)->uKeyFlags & LVKF_ALT ? "properties" : NULL);
             break;
         case LVN_COLUMNCLICK:

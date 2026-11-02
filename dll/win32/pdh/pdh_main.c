@@ -25,6 +25,7 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "winreg.h"
 #include "winternl.h"
 
 #include "pdh.h"
@@ -1213,6 +1214,57 @@ PDH_STATUS WINAPI PdhLookupPerfNameByIndexA( LPCSTR machine, DWORD index, LPSTR 
     return ret;
 }
 
+/* Names of counters and objects registered with the performance library (Perflib\Text009 "Counter"):
+ * REG_MULTI_SZ of index, name pairs, served through HKEY_PERFORMANCE_DATA ("Counter 009"). */
+static PDH_STATUS pdh_lookup_registry_name( DWORD index, WCHAR *buffer, DWORD *size )
+{
+    DWORD cb = 8192, type;
+    WCHAR *text = NULL, *p;
+    LONG err;
+
+    for (;;)
+    {
+        WCHAR *bigger = realloc( text, cb );
+
+        if (!bigger)
+        {
+            free( text );
+            return PDH_MEMORY_ALLOCATION_FAILURE;
+        }
+        text = bigger;
+        DWORD got = cb;
+        err = RegQueryValueExW( HKEY_PERFORMANCE_DATA, L"Counter 009", NULL, &type, (BYTE *)text, &got );
+        if (err != ERROR_MORE_DATA || cb >= 4 * 1024 * 1024) { cb = got; break; }
+        cb *= 2;
+    }
+    if (err != ERROR_SUCCESS || type != REG_MULTI_SZ)
+    {
+        free( text );
+        return PDH_INVALID_ARGUMENT;
+    }
+    for (p = text; cb >= sizeof(WCHAR) && *p; )
+    {
+        WCHAR *name = p + lstrlenW( p ) + 1;
+        unsigned int required;
+
+        if (!*name && !name[1]) break;
+        if (wcstoul( p, NULL, 10 ) == index && *name)
+        {
+            PDH_STATUS ret = ERROR_SUCCESS;
+
+            required = lstrlenW( name ) + 1;
+            if (*size < required) ret = PDH_MORE_DATA;
+            else lstrcpyW( buffer, name );
+            *size = required;
+            free( text );
+            return ret;
+        }
+        p = name + lstrlenW( name ) + 1;
+    }
+    free( text );
+    return PDH_INVALID_ARGUMENT;
+}
+
 /***********************************************************************
  *              PdhLookupPerfNameByIndexW   (PDH.@)
  */
@@ -1249,7 +1301,7 @@ PDH_STATUS WINAPI PdhLookupPerfNameByIndexW( LPCWSTR machine, DWORD index, LPWST
             return ret;
         }
     }
-    return PDH_INVALID_ARGUMENT;
+    return pdh_lookup_registry_name( index, buffer, size );
 }
 
 /***********************************************************************

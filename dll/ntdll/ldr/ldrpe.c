@@ -1235,6 +1235,7 @@ LdrpSnapThunk(IN PVOID ExportBase,
     PLDR_DATA_TABLE_ENTRY ForwarderLdrEntry;
     BOOLEAN ForwarderReferenced = FALSE;
     ULONG ForwardOrdinal;
+    PWSTR ForwarderPath = DllPath;
 #if LDRP_CHPE_IMPORT_REDIRECTION
     ULONG_PTR NativeFunction;
     USHORT ImportMachine;
@@ -1295,8 +1296,13 @@ FailurePath:
             LdrUnloadDll(ForwarderHandle);
         }
 
-        /* Is this a static snap? */
-        if (Static)
+        /*
+         * Is this a static snap? Only the imports resolved while the process starts are critical
+         * and get a hard-error box. A DLL loaded at run time whose import is missing fails with
+         * STATUS_ENTRYPOINT_NOT_FOUND / STATUS_ORDINAL_NOT_FOUND and LoadLibrary returns
+         * ERROR_PROC_NOT_FOUND, as Windows does, without any box.
+         */
+        if (Static && LdrpInLdrInit)
         {
             UNICODE_STRING SnapTarget;
             PLDR_DATA_TABLE_ENTRY LdrEntry;
@@ -1399,6 +1405,9 @@ FailurePath:
             /* Get the Import and Forwarder Names */
             ImportName = (LPSTR)Thunk->u1.Function;
 
+            if (!ForwarderPath && !Static)
+                ForwarderPath = LdrpGetModuleLoadPath(ExportBase);
+
             DotPosition = strchr(ImportName, '.');
             ASSERT(DotPosition != NULL);
             if (!DotPosition)
@@ -1465,14 +1474,14 @@ FailurePath:
                 /* Load the forwarder */
                 if (NT_SUCCESS(Status))
                 {
-                    if (LdrpFindLoadedForwarder(DllPath, RedirectedImportName, Redirected, &ForwarderLdrEntry) &&
+                    if (LdrpFindLoadedForwarder(ForwarderPath, RedirectedImportName, Redirected, &ForwarderLdrEntry) &&
                         LdrpIsForwarderReferenced(ForwarderOwner, ForwarderLdrEntry->DllBase))
                     {
                         ForwarderHandle = ForwarderLdrEntry->DllBase;
                     }
                     else
                     {
-                        Status = LdrpLoadDll(Redirected && !ApiSetRedirected, DllPath, NULL, RedirectedImportName, &ForwarderHandle, FALSE);
+                        Status = LdrpLoadDll(Redirected && !ApiSetRedirected, ForwarderPath, NULL, RedirectedImportName, &ForwarderHandle, FALSE);
                         ForwarderReferenced = NT_SUCCESS(Status);
                     }
                 }

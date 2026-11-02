@@ -40,6 +40,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(user32);
 
 #define MSGBOX_IDICON   (1088)
 #define MSGBOX_IDTEXT   (0xffff)
+#define WM_MSGBOX_FOREGROUND (WM_APP + 1)
 
 #define IDI_HANDW          MAKEINTRESOURCEW(32513)
 #define IDI_QUESTIONW      MAKEINTRESOURCEW(32514)
@@ -310,11 +311,29 @@ static INT_PTR CALLBACK MessageBoxProc(
                 SetFocus(GetDlgItem(hwnd, mbd->pidButton[mbd->uDefButton]));
             }
 
+            /*
+             * MB_SETFOREGROUND: the message box becomes the foreground window. The window is
+             * not shown yet, so ask for it once the dialog is running.
+             */
+            if (mbd->mbp.dwStyle & MB_SETFOREGROUND)
+                PostMessageW(hwnd, WM_MSGBOX_FOREGROUND, 0, 0);
+
             /* Set up the window timer */
             if (mbd->dwTimeout && (mbd->dwTimeout != (UINT)-1))
                 SetTimer(hwnd, 0, mbd->dwTimeout, NULL);
         }
         return FALSE;
+    }
+
+    case WM_MSGBOX_FOREGROUND:
+    {
+        mbd = (PMSGBOXDATA)GetPropW(hwnd, L"ROS_MSGBOX");
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        /* The window is active now, give the keyboard to the default button through the dialog manager */
+        if (mbd && mbd->dwButtons > 0 && mbd->uDefButton < mbd->dwButtons)
+            SendMessageW(hwnd, WM_NEXTDLGCTL, (WPARAM)GetDlgItem(hwnd, mbd->pidButton[mbd->uDefButton]), TRUE);
+        return TRUE;
     }
 
     case WM_COMMAND:

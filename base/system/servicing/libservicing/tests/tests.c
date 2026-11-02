@@ -1401,8 +1401,8 @@ static void
 TestAttemptOwnership(void)
 {
     LN_TARGET t;
-    WCHAR *p, *target, *attempt;
-    char txA[65], txB[65], *plan;
+    WCHAR *p, *target;
+    char txA[65], txB[65];
     BOOL reboot;
     LN_ATTEMPT rec;
 
@@ -1564,7 +1564,15 @@ static LONG WINAPI CrashReport(EXCEPTION_POINTERS *ep)
     }
     {
         /* frame-pointer walk (the debug build keeps rbp): offsets from the image base for llvm-symbolizer */
+#if defined(_M_AMD64)
         ULONG_PTR *fp = (ULONG_PTR *)ep->ContextRecord->Rbp;
+#elif defined(_M_IX86)
+        ULONG_PTR *fp = (ULONG_PTR *)ep->ContextRecord->Ebp;
+#elif defined(_M_ARM64)
+        ULONG_PTR *fp = (ULONG_PTR *)ep->ContextRecord->Fp;
+#else
+        ULONG_PTR *fp = NULL;
+#endif
         char *base = (char *)GetModuleHandleW(NULL);
         int depth;
 

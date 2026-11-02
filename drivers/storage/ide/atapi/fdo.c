@@ -24,6 +24,7 @@ AtaFdoCreateSymLinks(
 {
     UNICODE_STRING ChannelName;
     ULONG ScsiAdapter;
+    ULONG Collisions = 0;
     WCHAR ChannelNameBuffer[sizeof("\\Device\\Ide\\IdePort99999")];
     NTSTATUS Status;
     DECLARE_PAGED_WSTRING(FdoFormat, L"\\Device\\Ide\\IdePort%lu");
@@ -40,8 +41,13 @@ AtaFdoCreateSymLinks(
     ASSERT(NT_SUCCESS(Status));
     RtlInitUnicodeString(&ChannelName, ChannelNameBuffer);
 
-    /* Search for a free SCSI port adapter in the system */
-    for (ScsiAdapter = 0; ScsiAdapter <= IoGetConfigurationInformation()->ScsiPortCount; ++ScsiAdapter)
+    /*
+     * Search for a free SCSI port adapter in the system. ScsiPortCount is incremented only after
+     * the links are created, so another port starting at the same time may own a name the count
+     * does not cover yet: keep trying the next number while the name is taken.
+     */
+    Status = STATUS_OBJECT_NAME_COLLISION;
+    for (ScsiAdapter = 0; ScsiAdapter < ATA_MAX_SCSI_PORT_LINKS; ++ScsiAdapter)
     {
         WCHAR SymLinkNameBuffer[sizeof("\\DosDevices\\Scsi99999:")];
         UNICODE_STRING SymLinkName;
@@ -55,8 +61,23 @@ AtaFdoCreateSymLinks(
 
         /* Create a symbolic link '\Device\ScsiPortX' -> '\Device\Ide\IdePortN' */
         Status = IoCreateSymbolicLink(&SymLinkName, &ChannelName);
-        if (!NT_SUCCESS(Status))
+        if (Status == STATUS_OBJECT_NAME_COLLISION)
+        {
+            /* Expected on every boot (the first channel's link already exists): not worth a line */
+            INFO("ATAPI: CH %lu: ScsiPort%lu is taken, trying the next number\n",
+                 ChanExt->PortData.PortNumber, ScsiAdapter);
+            ++Collisions;
             continue;
+        }
+        if (!NT_SUCCESS(Status))
+            break;
+
+        if (Collisions != 0)
+        {
+            INFO("ATAPI: CH %lu: tried %lu taken name(s), chosen ScsiPort%lu (ScsiPortCount %lu)\n",
+                 ChanExt->PortData.PortNumber, Collisions, ScsiAdapter,
+                 IoGetConfigurationInformation()->ScsiPortCount);
+        }
 
         INFO("Symlink created '%wZ' -> '%wZ'\n", &SymLinkName, &ChannelName);
 
@@ -68,10 +89,17 @@ AtaFdoCreateSymLinks(
         RtlInitUnicodeString(&SymLinkName, SymLinkNameBuffer);
 
         /* Create a symbolic link '\DosDevices\ScsiX:' -> '\Device\Ide\IdePortN' */
+        /* The DOS name is optional: its failure must not fail the start of the channel */
         Status = IoCreateSymbolicLink(&SymLinkName, &ChannelName);
         if (NT_SUCCESS(Status))
         {
             INFO("Symlink created '%wZ' -> '%wZ'\n", &SymLinkName, &ChannelName);
+        }
+        else
+        {
+            DbgPrint("ATAPI: CH %lu: DOS link '%wZ' failed 0x%lx (not fatal)\n",
+                     ChanExt->PortData.PortNumber, &SymLinkName, Status);
+            Status = STATUS_SUCCESS;
         }
 
         /* Register ourselves (ATA channel) as a SCSI port adapter */

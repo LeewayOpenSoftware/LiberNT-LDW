@@ -39,7 +39,24 @@ typedef struct _LOGFILE
     RTL_RESOURCE Lock;
     BOOL Permanent;
     LIST_ENTRY ListEntry;
+
+    /* Write-rate limiter (token bucket), protected by Lock held exclusive */
+    ULONG RateTokens;       /* records that may still be written right now */
+    ULONGLONG RateLastTick; /* GetTickCount64() of the last refill */
+    ULONG RateDropped;      /* records dropped since the last summary record */
+    HANDLE RateTimer;       /* one-shot timer that reports the drops once the burst is over */
 } LOGFILE, *PLOGFILE;
+
+/*
+ * Bounds on what a client may ask the service to store in one record, and
+ * the write rate each log accepts. These are service hardening limits (a
+ * runaway or hostile client must not fault the service, allocate without
+ * bound or drive unbounded disk writes); they are not Windows constants.
+ */
+#define ELF_MAX_RECORD_SIZE     (256 * 1024)
+#define ELF_MAX_STRINGS         256
+#define ELF_RATE_BURST          200     /* records accepted in a burst */
+#define ELF_RATE_PER_SECOND     50      /* sustained records per second */
 
 typedef struct _EVENTSOURCE
 {

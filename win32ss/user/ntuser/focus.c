@@ -806,11 +806,27 @@ ToggleFGActivate(PTHREADINFO pti)
    return Ret;
 }
 
+/*
+ * A message box of another process (a hard-error box is one) that holds the foreground keeps it: an implicit
+ * activation, such as showing or moving a window, must not take the keyboard away from a box the user has
+ * to answer. Explicit requests (SetForegroundWindow, a click) are not affected.
+ */
+static BOOL FASTCALL
+IsForegroundForeignMsgBox(PTHREADINFO pti)
+{
+   PWND pwndActive = gpqForeground ? gpqForeground->spwndActive : NULL;
+
+   return pwndActive &&
+          (pwndActive->state & WNDS_MSGBOX) &&
+          pwndActive->head.pti->ppi != pti->ppi;
+}
+
 BOOL FASTCALL
 IsAllowedFGActive(PTHREADINFO pti, PWND Wnd)
 {
    // Not allowed if one or more,,
    if (!ToggleFGActivate(pti) ||              // bits not set,
+        IsForegroundForeignMsgBox(pti) ||     // a message box of another process holds it,
         pti->rpdesk != gpdeskInputDesktop ||  // not current Desktop,
         pti->MessageQueue == gpqForeground || // if already the queue foreground,
         IsFGLocked() ||                       // foreground is locked,
@@ -844,6 +860,10 @@ BOOL FASTCALL
 CanActivateForeground(PTHREADINFO pti)
 {
    PPROCESSINFO ppi = pti->ppi;
+
+   /* A message box of another process holds the foreground: showing or moving a window does not take it */
+   if (IsForegroundForeignMsgBox(pti))
+      return FALSE;
 
    return pti->MessageQueue == gpqForeground ||
           (ptiLastInput && ptiLastInput->ppi == ppi) ||

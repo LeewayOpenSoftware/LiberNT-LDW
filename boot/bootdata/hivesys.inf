@@ -2588,6 +2588,28 @@ HKLM,"SYSTEM\CurrentControlSet\Control\FontAssoc\Associated Charset","SYMBOL(02)
 HKLM,"SYSTEM\CurrentControlSet\Control\FontAssoc\Associated DefaultFonts","AssocSystemFont",0x00000000,"NotoSansJP-Regular.otf"
 HKLM,"SYSTEM\CurrentControlSet\Control\FontAssoc\Associated DefaultFonts","FontPackage",0x00000000,"Noto Sans JP"
 
+; Performance Providers (perflib)
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Collect",0x00000000,"CollectPerfOSData"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Close",0x00000000,"ClosePerfOS"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Library",0x00000000,"perfos.dll"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Object List",0x00000000,"2 4 238"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Open",0x00000000,"OpenPerfOS"
+
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Collect",0x00000000,"CollectPerfProcData"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Close",0x00000000,"ClosePerfProc"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Library",0x00000000,"perfproc.dll"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Object List",0x00000000,"230 232"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Open",0x00000000,"OpenPerfProc"
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","First Counter",0x00010001,2
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Last Counter",0x00010001,6492
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","First Help",0x00010001,3
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfOS\Performance","Last Help",0x00010001,6493
+
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","First Counter",0x00010001,230
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Last Counter",0x00010001,250
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","First Help",0x00010001,231
+HKLM,"SYSTEM\CurrentControlSet\Services\ServicesPerfProc\Performance","Last Help",0x00010001,251
+
 [AddReg.NTarm]
 ; RAM Disk class driver
 HKLM,"SYSTEM\CurrentControlSet\Services\Disk","ErrorControl",0x00010001,0x00000000

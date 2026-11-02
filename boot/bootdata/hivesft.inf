@@ -982,6 +982,11 @@ HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion","SoftwareType",2,"System"
 HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib",,0x00000012
 HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\009",,0x00000012
 HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\CurrentLanguage",,0x00000012
+HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib","Last Counter",0x00010001,6494
+HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib","Last Help",0x00010001,6495
+HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\Text009",,0x00000012
+HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\Text009","Counter",0x00010000,"1","6495","2","System","4","Memory","6","% Processor Time","230","Process","232","Thread","238","Processor","248","Processes","250","Threads","674","System Up Time","6490","Available MBytes","6492","Committed Bytes","6494","End Marker"
+HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\Text009","Help",0x00010000,"3","System counters apply to all processors collectively.","5","Memory counters describe physical and virtual memory use.","7","Share of elapsed time the processor was busy, computed from its idle time.","231","Process counters describe the processes running on the computer.","233","Thread counters describe the threads running on the computer.","239","Processor counters describe the processor activity of the computer.","249","Number of processes running on the computer.","251","Number of threads running on the computer.","675","Elapsed time since the computer was started.","6491","Physical memory available to processes, in megabytes.","6493","Virtual memory committed to the system, in bytes.","6495","End Marker"
 
 ; Auto-Execute (AE) Debugger
 HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug","UserDebuggerHotKey",0x00010001,0x00000000

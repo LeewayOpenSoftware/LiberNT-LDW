@@ -626,6 +626,28 @@ ElfrIntReportEventW(
     if (Flags)
         return STATUS_INVALID_PARAMETER;
 
+    /*
+     * Validate what the client sent before touching it: bounded counts and
+     * sizes, and no NULL pointers where the code dereferences them.
+     */
+    if (NumStrings > ELF_MAX_STRINGS || DataSize > ELF_MAX_RECORD_SIZE ||
+        (DataSize != 0 && Data == NULL) || ComputerName == NULL ||
+        (NumStrings != 0 && Strings == NULL))
+        return STATUS_INVALID_PARAMETER;
+
+    {
+        ULONG Total = DataSize;
+
+        for (i = 0; i < NumStrings; i++)
+        {
+            if (Strings[i] == NULL || (Strings[i]->Length != 0 && Strings[i]->Buffer == NULL))
+                return STATUS_INVALID_PARAMETER;
+            Total += Strings[i]->Length + sizeof(UNICODE_NULL);
+            if (Total > ELF_MAX_RECORD_SIZE)
+                return STATUS_INVALID_PARAMETER;
+        }
+    }
+
     for (i = 0; i < NumStrings; i++)
     {
         switch (EventType)

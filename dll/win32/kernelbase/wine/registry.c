@@ -1580,23 +1580,69 @@ LONG WINAPI RegSetKeyValueA( HKEY hkey, LPCSTR subkey, LPCSTR name, DWORD type, 
 
 /* FIXME: we should read data from system32/perf009c.dat (or perf###c depending
  * on locale) instead */
+/* Counter and help text come from the registry (Perflib\Text009 "Counter" / "Help", a REG_MULTI_SZ of
+ * index, text pairs ending with an "End Marker" entry); the built-in list below is only the fallback when the
+ * registry has none. Reading Perflib\009 itself is redirected to HKEY_PERFORMANCE_TEXT and ends up here. */
+static DWORD query_perf_text( const WCHAR *value, const WCHAR *fallback, DWORD fallback_size, DWORD *type, void *data,
+                              DWORD *ret_size, BOOL unicode )
+{
+    DWORD size = *ret_size, reg_size = 0, reg_type = 0, bytes = fallback_size;
+    const WCHAR *names = fallback;
+    WCHAR *reg_data = NULL;
+    HKEY key;
+
+    if (!RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Perflib\\Text009", 0,
+                        KEY_QUERY_VALUE, &key ))
+    {
+        if (!RegQueryValueExW( key, value, NULL, &reg_type, NULL, &reg_size ) && reg_type == REG_MULTI_SZ &&
+            reg_size >= sizeof(WCHAR) * 2 && (reg_data = RtlAllocateHeap( GetProcessHeap(), 0, reg_size + sizeof(WCHAR) )))
+        {
+            if (!RegQueryValueExW( key, value, NULL, &reg_type, (BYTE *)reg_data, &reg_size ) && reg_type == REG_MULTI_SZ)
+            {
+                reg_data[reg_size / sizeof(WCHAR)] = 0;
+                names = reg_data;
+                bytes = reg_size;
+                /* make sure the list ends with the empty string that terminates a REG_MULTI_SZ */
+                if (bytes < sizeof(WCHAR) * 2 || reg_data[bytes / sizeof(WCHAR) - 1] || reg_data[bytes / sizeof(WCHAR) - 2])
+                    bytes += sizeof(WCHAR);
+            }
+            else
+            {
+                RtlFreeHeap( GetProcessHeap(), 0, reg_data );
+                reg_data = NULL;
+            }
+        }
+        RegCloseKey( key );
+    }
+
+    if (type) *type = REG_MULTI_SZ;
+    *ret_size = bytes;
+    if (!unicode) *ret_size /= sizeof(WCHAR);
+
+    if (!data)
+    {
+        RtlFreeHeap( GetProcessHeap(), 0, reg_data );
+        return ERROR_SUCCESS;
+    }
+    if (size < *ret_size)
+    {
+        RtlFreeHeap( GetProcessHeap(), 0, reg_data );
+        return ERROR_MORE_DATA;
+    }
+
+    if (unicode)
+        memcpy( data, names, bytes );
+    else
+        RtlUnicodeToMultiByteN( data, size, NULL, names, bytes );
+    RtlFreeHeap( GetProcessHeap(), 0, reg_data );
+    return ERROR_SUCCESS;
+}
+
 static DWORD query_perf_names( DWORD *type, void *data, DWORD *ret_size, BOOL unicode )
 {
     static const WCHAR names[] = L"1\0" "1847\0" "1846\0End Marker\0";
-    DWORD size = *ret_size;
 
-    if (type) *type = REG_MULTI_SZ;
-    *ret_size = sizeof(names);
-    if (!unicode) *ret_size /= sizeof(WCHAR);
-
-    if (!data) return ERROR_SUCCESS;
-    if (size < *ret_size) return ERROR_MORE_DATA;
-
-    if (unicode)
-        memcpy( data, names, sizeof(names) );
-    else
-        RtlUnicodeToMultiByteN( data, size, NULL, names, sizeof(names) );
-    return ERROR_SUCCESS;
+    return query_perf_text( L"Counter", names, sizeof(names), type, data, ret_size, unicode );
 }
 
 /* FIXME: we should read data from system32/perf009h.dat (or perf###h depending
@@ -1604,20 +1650,8 @@ static DWORD query_perf_names( DWORD *type, void *data, DWORD *ret_size, BOOL un
 static DWORD query_perf_help( DWORD *type, void *data, DWORD *ret_size, BOOL unicode )
 {
     static const WCHAR names[] = L"1847\0End Marker\0";
-    DWORD size = *ret_size;
 
-    if (type) *type = REG_MULTI_SZ;
-    *ret_size = sizeof(names);
-    if (!unicode) *ret_size /= sizeof(WCHAR);
-
-    if (!data) return ERROR_SUCCESS;
-    if (size < *ret_size) return ERROR_MORE_DATA;
-
-    if (unicode)
-        memcpy( data, names, sizeof(names) );
-    else
-        RtlUnicodeToMultiByteN( data, size, NULL, names, sizeof(names) );
-    return ERROR_SUCCESS;
+    return query_perf_text( L"Help", names, sizeof(names), type, data, ret_size, unicode );
 }
 
 struct perf_provider
@@ -1816,7 +1850,7 @@ static DWORD query_perf_data( const WCHAR *query, DWORD *type, void *data, DWORD
     pdb->TotalByteLength = pdb->HeaderLength;
 
     data_size -= pdb->HeaderLength;
-    data = (char *)data + pdb->HeaderLength;
+    data = (char *)pdb + pdb->HeaderLength;
 
     err = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Services", 0, KEY_READ, &root);
     if (err != ERROR_SUCCESS)

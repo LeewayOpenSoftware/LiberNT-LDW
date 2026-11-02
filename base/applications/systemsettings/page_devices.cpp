@@ -14,6 +14,7 @@
 #include <devguid.h>
 #include <winspool.h>
 #include <map>
+#include <umpnpmgr/drvinst.h>
 
 typedef INT_PTR (WINAPI *PFN_DEVICEPROPERTIES)(HWND, LPCWSTR, LPCWSTR, BOOL);
 typedef BOOL (WINAPI *PFN_INSTALLDEVINST)(HWND, LPCWSTR, BOOL, LPDWORD);
@@ -476,37 +477,6 @@ AddDeviceList(PageBuilder &page)
     SetupDiDestroyDeviceInfoList(set);
 }
 
-typedef ULONG64 DRVINST_JOB_ID;
-
-typedef struct _DRVINST_RESULT
-{
-    ULONG Size;
-    ULONG Win32;
-    ULONG Cr;
-    ULONG DevStatus;
-    ULONG Problem;
-    ULONG Flags;
-} DRVINST_RESULT;
-
-typedef struct _DRVINST_JOB_INFO
-{
-    ULONG Size;
-    DRVINST_JOB_ID JobId;
-    ULONG State;
-    ULONG Source;
-    ULONG Flags;
-    ULONG SubmitTick;
-    ULONG EndTick;
-    DRVINST_RESULT Result;
-    WCHAR DeviceInstanceId[200];
-} DRVINST_JOB_INFO;
-
-#define DRVINST_F_SILENT          0x00000001
-#define DRVINST_RF_STARTED        0x00000001
-#define DRVINST_RF_NEEDREBOOT     0x00000002
-#define DRVINST_RF_ROLLEDBACK     0x00000004
-#define DRVINST_JOB_STATE_ROLLED_BACK 6
-
 typedef DWORD (WINAPI *PFN_DRVINST_SUBMIT)(PCWSTR, DWORD, DRVINST_JOB_ID *);
 typedef DWORD (WINAPI *PFN_DRVINST_GETJOB)(DRVINST_JOB_ID, DRVINST_JOB_INFO *);
 typedef DWORD (WINAPI *PFN_DRVINST_ENUMJOBS)(DRVINST_JOB_ID *, DWORD *);
@@ -663,7 +633,7 @@ JobStatusText(const DrvJobEntry &entry)
             break;
         case 4: text = Str(IDS_DRIVER_STATUS_TIMED_OUT); break;
         case 5: text = Str(IDS_DRIVER_STATUS_CANCELED); break;
-        case DRVINST_JOB_STATE_ROLLED_BACK:
+        case DrvInstJobRolledBack:
             text = Printf(Str(IDS_DRIVER_STATUS_ROLLED_BACK).c_str(), entry.Win32);
             break;
         default: text = Str(IDS_DRIVER_STATUS_UNKNOWN); break;

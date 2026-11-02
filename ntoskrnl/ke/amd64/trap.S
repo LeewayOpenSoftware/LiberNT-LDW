@@ -1100,9 +1100,14 @@ PUBLIC KiSystemCallEntry64
     mov word ptr [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_SegSs], (KGDT64_R3_DATA OR RPL_MASK)
 
     /* Set sane segments */
-    mov ax, (KGDT64_R3_DATA OR RPL_MASK)
-    mov ds, ax
-    mov es, ax
+    mov ax, ds
+    cmp ax, (KGDT64_R3_DATA OR RPL_MASK)
+    jne SystemServiceLoadSegments
+    mov ax, es
+    cmp ax, (KGDT64_R3_DATA OR RPL_MASK)
+    jne SystemServiceLoadSegments
+
+SystemServiceSegmentsLoaded:
 
     /* Save MCXSR and set kernel value */
     stmxcsr [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_MxCsr]
@@ -1118,6 +1123,9 @@ PUBLIC KiSystemCallEntry64
     lea rdx, [rsp + MAX_SYSCALL_PARAM_SIZE]
     mov [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_TrapFrame], rcx
     mov [rax + ThTrapFrame], rdx
+
+    test byte ptr [rax + ThDebugActive], DEBUG_ACTIVE_MINIMAL_THREAD
+    jnz KiPicoSystemCallEntry
 
 #if DBG
     /* Check IRQL */
@@ -1206,10 +1214,6 @@ NoUserApcPending:
     mov rdx, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_TrapFrame]
     mov [rcx + KTHREAD_TrapFrame], rdx
 
-    /* Refresh the hidden FS base after a context switch changed the WoW64 TEB descriptor. */
-    mov dx, fs
-    mov fs, dx
-
     RESTORE_USER_DEBUG_REGISTERS rsp + MAX_SYSCALL_PARAM_SIZE
 
     /* Prepare user mode return address (rcx) and eflags (r11) for sysret */
@@ -1254,6 +1258,13 @@ SystemServiceInstrumented:
     mov rcx, rdx
     jmp SystemServiceInstrumentationDone
 
+SystemServiceLoadSegments:
+    /* FIXME: Windows 8.1 keeps user DS and ES across a system call; this resets them to the flat data selector */
+    mov ax, (KGDT64_R3_DATA OR RPL_MASK)
+    mov ds, ax
+    mov es, ax
+    jmp SystemServiceSegmentsLoaded
+
 SystemServiceIrqlMismatch:
     /* Preserve the leaked IRQL as bugcheck parameter 2. */
     mov r8, r10
@@ -1272,6 +1283,45 @@ SystemServiceInvariantBugCheck:
     cli
     call KeBugCheckEx
     int HEX(2C)
+
+KiPicoSystemCallEntry:
+    /* A Linux system call preserves every register except rax, rcx and r11. */
+    mov rcx, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rip]
+    mov [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rcx], rcx
+    mov [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R10], r10
+    mov [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R11], r11
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm0], xmm0
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm1], xmm1
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm2], xmm2
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm3], xmm3
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm4], xmm4
+    movaps [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm5], xmm5
+    lea rcx, [rsp + MAX_SYSCALL_PARAM_SIZE]
+    call KiPicoSystemCall
+
+    ldmxcsr [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_MxCsr]
+    mov rcx, gs:[PcCurrentThread]
+    mov rdx, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_TrapFrame]
+    mov [rcx + KTHREAD_TrapFrame], rdx
+    RESTORE_PICO_FS_BASE
+    RESTORE_USER_DEBUG_REGISTERS rsp + MAX_SYSCALL_PARAM_SIZE
+    movaps xmm0, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm0]
+    movaps xmm1, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm1]
+    movaps xmm2, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm2]
+    movaps xmm3, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm3]
+    movaps xmm4, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm4]
+    movaps xmm5, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Xmm5]
+    mov rax, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rax]
+    mov rcx, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rcx]
+    mov rdx, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rdx]
+    mov r8, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R8]
+    mov r9, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R9]
+    mov r10, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R10]
+    mov r11, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_R11]
+    mov rbp, [rsp + MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rbp]
+    add rsp, MAX_SYSCALL_PARAM_SIZE + KTRAP_FRAME_Rip
+    swapgs
+    iretq
 
 .ENDP
 
@@ -1531,6 +1581,16 @@ PUBLIC KiSetTrapContext
  *
  */
 EXTERN KiDeliverApc:PROC
+EXTERN KiPicoSystemCallHandler:PROC
+
+PUBLIC KiPicoSystemCall
+.PROC KiPicoSystemCall
+    GENERATE_EXCEPTION_FRAME
+    mov rdx, rsp
+    call KiPicoSystemCallHandler
+    RESTORE_EXCEPTION_STATE
+    ret
+.ENDP
 
 /*
  * VOID

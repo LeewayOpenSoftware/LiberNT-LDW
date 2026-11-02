@@ -7,6 +7,7 @@
 
 #include "shellframe.h"
 #include <uxtheme.h>
+#include <reactos/dwmframe.h>
 
 namespace ShellFrame
 {
@@ -18,12 +19,102 @@ FrameWindow::FrameWindow() :
     m_Active(TRUE),
     m_TrackingLeave(FALSE),
     m_GlassWidth(-1),
-    m_GlassTop(-1)
+    m_GlassTop(-1),
+    m_GlassFonts()
 {
 }
 
 FrameWindow::~FrameWindow()
 {
+    for (HFONT &font : m_GlassFonts)
+    {
+        if (font)
+            DeleteObject(font);
+        font = NULL;
+    }
+}
+
+static COLORREF
+GlassColor(const Theme &theme, GlassTone tone)
+{
+    static const COLORREF Tones[] =
+    {
+        RGB(255, 255, 255), RGB(0xC8, 0xC8, 0xC8), RGB(0x80, 0x80, 0x80), RGB(0x1C, 0x1C, 0x1C),
+        RGB(0x30, 0x30, 0x30), RGB(0x60, 0x60, 0x60), RGB(0, 0, 0),
+    };
+    const Palette &c = theme.Colors();
+
+    if (!theme.IsHighContrast() && IsAppThemed())
+        return Tones[(int)tone];
+    switch (tone)
+    {
+        case GlassTone::Text:
+        case GlassTone::TextSecondary:
+        case GlassTone::Stroke:
+            return c.Text;
+        case GlassTone::TextDisabled:
+            return c.TextDisabled;
+        default:
+            return c.Window;
+    }
+}
+
+COLORREF
+FrameWindow::Glass(GlassTone tone) const
+{
+    ULONG_PTR key = (ULONG_PTR)GetPropW(m_hwnd, DWM_PROP_BACKDROP_COLOR);
+    COLORREF clear;
+
+    if (!key || m_Theme.IsHighContrast() || !IsAppThemed())
+        return GlassColor(m_Theme, tone);
+    clear = (COLORREF)(key - 1);
+    if (tone == GlassTone::Clear)
+        return clear;
+    if (GetRValue(clear) * 299 + GetGValue(clear) * 587 + GetBValue(clear) * 114 < 128000)
+        return GlassColor(m_Theme, tone);
+    switch (tone)
+    {
+        case GlassTone::TextSecondary:
+            return RGB(0x5D, 0x5D, 0x5D);
+        case GlassTone::TextDisabled:
+            return RGB(0xA0, 0xA0, 0xA0);
+        default:
+            return RGB(0x1B, 0x1B, 0x1B);
+    }
+}
+
+COLORREF
+FrameWindow::GlassTint(BYTE opacity) const
+{
+    COLORREF back = Glass(GlassTone::Clear), ink = Glass(GlassTone::Text);
+
+    return RGB((GetRValue(ink) * opacity + GetRValue(back) * (255 - opacity)) / 255,
+               (GetGValue(ink) * opacity + GetGValue(back) * (255 - opacity)) / 255,
+               (GetBValue(ink) * opacity + GetBValue(back) * (255 - opacity)) / 255);
+}
+
+HFONT
+FrameWindow::GlassFont(TextStyle style) const
+{
+    return m_GlassFonts[(int)style] ? m_GlassFonts[(int)style] : m_Theme.Font(style);
+}
+
+void
+FrameWindow::UpdateGlassFonts()
+{
+    for (int i = 0; i < (int)TextStyle::Count; i++)
+    {
+        LOGFONTW lf;
+
+        if (m_GlassFonts[i])
+            DeleteObject(m_GlassFonts[i]);
+        m_GlassFonts[i] = NULL;
+        if (GetObjectW(m_Theme.Font((TextStyle)i), sizeof(lf), &lf))
+        {
+            lf.lfQuality = ANTIALIASED_QUALITY;
+            m_GlassFonts[i] = CreateFontIndirectW(&lf);
+        }
+    }
 }
 
 HWND
@@ -115,14 +206,16 @@ FrameWindow::ClientCaption() const
 {
     BOOL composed = FALSE;
 
-    return IsAppThemed() && SUCCEEDED(DwmIsCompositionEnabled(&composed)) && composed;
+    if (UseSystemCaption())
+        return FALSE;
+    return UsesClientCaption() && IsAppThemed() && SUCCEEDED(DwmIsCompositionEnabled(&composed)) && composed;
 }
 
 int
 FrameWindow::CaptionButtonsWidth() const
 {
 #if SHELLFRAME_CUSTOM_CAPTION_BUTTONS
-    return m_Theme.Scale(46) * 3;
+    return ClientCaption() ? CaptionStripWidth(m_Theme.Dpi()) : 0;
 #else
     RECT bounds;
 
@@ -155,16 +248,10 @@ FrameWindow::ClearCaptionButtons(Canvas &canvas)
 RECT
 FrameWindow::CaptionButtonRect(CaptionButton button) const
 {
-    RECT client, rc;
-    int width = m_Theme.Scale(46), index;
+    RECT client;
 
     GetClientRect(m_hwnd, &client);
-    index = button == CaptionButton::Close ? 0 : button == CaptionButton::Maximize ? 1 : 2;
-    rc.right = client.right - index * width;
-    rc.left = rc.right - width;
-    rc.top = 0;
-    rc.bottom = CaptionButtonHeight();
-    return rc;
+    return CaptionButtonBounds(client, button, m_Theme.Dpi());
 }
 
 CaptionButton
@@ -189,7 +276,7 @@ FrameWindow::SetHotButton(CaptionButton button)
     m_HotButton = button;
     GetClientRect(m_hwnd, &rc);
     rc.left = rc.right - CaptionButtonsWidth();
-    rc.bottom = CaptionButtonHeight();
+    rc.bottom = CaptionButtonRect(CaptionButton::Close).bottom + m_Theme.Scale(4);
     Invalidate(&rc);
 }
 #endif
@@ -209,7 +296,7 @@ FrameWindow::HitTest(POINT screen)
     ScreenToClient(m_hwnd, &pt);
     GetClientRect(m_hwnd, &client);
 #if SHELLFRAME_CUSTOM_CAPTION_BUTTONS
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; ClientCaption() && i < 3; i++)
     {
         RECT rc = CaptionButtonRect(Buttons[i]);
         if (PtInRect(&rc, pt))
@@ -233,40 +320,19 @@ FrameWindow::HitTest(POINT screen)
 void
 FrameWindow::PaintCaptionButtons(Canvas &canvas, const RECT &client, COLORREF background)
 {
-    const Palette &c = m_Theme.Colors();
     static const CaptionButton Buttons[] = { CaptionButton::Minimize, CaptionButton::Maximize, CaptionButton::Close };
 
     UNREFERENCED_PARAMETER(client);
+    UNREFERENCED_PARAMETER(background);
+    if (!ClientCaption())
+        return;
     for (int i = 0; i < 3; i++)
     {
         CaptionButton button = Buttons[i];
-        RECT rc = CaptionButtonRect(button), glyph;
-        COLORREF fill = background, ink = m_Active ? c.Text : c.TextDisabled;
-        LPCWSTR icon;
-        int size = m_Theme.Scale(16);
+        RECT rc = CaptionButtonRect(button);
 
-        if (button == m_HotButton || button == m_PressedButton)
-        {
-            if (button == CaptionButton::Close)
-            {
-                fill = c.CloseHover;
-                ink = c.CloseText;
-            }
-            else
-            {
-                fill = button == m_PressedButton ? c.SubtlePressed : c.SubtleHover;
-                ink = c.Text;
-            }
-        }
-        canvas.Fill(rc, fill);
-        icon = button == CaptionButton::Close ? L"dismiss_16_regular" :
-               button == CaptionButton::Minimize ? L"subtract_16_regular" :
-               IsZoomed(m_hwnd) ? L"square_multiple_16_regular" : L"square_16_regular";
-        glyph.left = rc.left + (rc.right - rc.left - size) / 2;
-        glyph.top = rc.top + (rc.bottom - rc.top - size) / 2;
-        glyph.right = glyph.left + size;
-        glyph.bottom = glyph.top + size;
-        canvas.Icon(icon, glyph, ink);
+        DrawCaptionButton(m_hwnd, canvas.Dc(), rc, button, button == m_HotButton, button == m_PressedButton, m_Active,
+                          IsZoomed(m_hwnd) != FALSE, m_Theme.IsDark() != FALSE);
     }
 }
 #endif
@@ -307,8 +373,14 @@ FrameWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_NCHITTEST:
         {
-            LRESULT hit = DefaultProc(msg, wParam, lParam);
             POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+#if SHELLFRAME_CUSTOM_CAPTION_BUTTONS
+            /* The buttons are painted and laid out by the frame itself, so their rectangles win over
+             * whatever the default procedure derives from the system caption layout. */
+            if (ClientCaption() && ButtonFromHit(HitTest(pt)) != CaptionButton::None)
+                return HitTest(pt);
+#endif
+            LRESULT hit = DefaultProc(msg, wParam, lParam);
             if (hit != HTCLIENT && hit != HTCAPTION)
                 return hit;
             return HitTest(pt);

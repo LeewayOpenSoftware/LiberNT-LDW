@@ -814,14 +814,20 @@ SetSystemFileCacheSize(IN SIZE_T MinimumFileCacheSize,
 }
 
 /*
- * @unimplemented
+ * @implemented
+ *
+ * A LiberNT process never runs with a package identity (there is no package
+ * activation), so the answer Windows gives to an unpackaged process is the
+ * right one, and it needs no debug output: callers such as the Gecko startup
+ * probe this on every launch.
  */
 LONG
 WINAPI
 GetCurrentPackageId(UINT32 *BufferLength,
                     BYTE *Buffer)
 {
-    STUB;
+    UNREFERENCED_PARAMETER(BufferLength);
+    UNREFERENCED_PARAMETER(Buffer);
     return APPMODEL_ERROR_NO_PACKAGE;
 }
 

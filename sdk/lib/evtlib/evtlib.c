@@ -393,7 +393,7 @@ static NTSTATUS
 ElfpInitExistingFile(
     IN PEVTLOGFILE LogFile,
     IN ULONG FileSize,
-    // IN ULONG MaxSize,
+    IN ULONG MaxSize,
     IN ULONG Retention)
 {
     NTSTATUS Status;
@@ -869,6 +869,34 @@ Continue:
     if (LogFile->Header.CurrentRecordNumber == 0)
         LogFile->Header.CurrentRecordNumber = 1;
 
+    /*
+     * Apply the MaxSize configured in the registry (the one stored in the
+     * file header is only what the log had when it was written).
+     * Existing records are never truncated: a log that wraps (its records are
+     * split around the end of the file) or that does not fit in the new size
+     * keeps its current size until it is cleared; clearing creates the file
+     * again with the configured size.
+     */
+    if (!LogFile->ReadOnly && MaxSize != 0)
+    {
+        ULONG NewMax = ROUND_UP(MaxSize, EVENTLOG_FILE_GRANULARITY);
+        ULONG MinMax = ROUND_UP(sizeof(EVENTLOGHEADER) + sizeof(EVENTLOGEOF), EVENTLOG_FILE_GRANULARITY);
+        BOOLEAN Wrapped = (LogFile->Header.StartOffset > LogFile->Header.EndOffset);
+
+        NewMax = max(NewMax, MinMax);
+        if (NewMax != LogFile->Header.MaxSize && !Wrapped)
+        {
+            if (NewMax > LogFile->Header.MaxSize ||
+                (NewMax >= LogFile->CurrentSize &&
+                 LogFile->Header.EndOffset + sizeof(EVENTLOGEOF) <= NewMax))
+            {
+                EVTLTRACE1("Log `%wZ': MaxSize %lu -> %lu (registry)\n", &LogFile->FileName,
+                           LogFile->Header.MaxSize, NewMax);
+                LogFile->Header.MaxSize = NewMax;
+            }
+        }
+    }
+
     /* Flush the log if it is not read-only */
     if (!LogFile->ReadOnly)
     {
@@ -947,9 +975,6 @@ ElfCreateFile(
     LogFile->OffsetInfoSize = OFFSET_INFO_INCREMENT;
     LogFile->OffsetInfoNext = 0;
 
-    // FIXME: Always use the regitry values for MaxSize,
-    // even for existing logs!
-
     // FIXME: On Windows, EventLog uses the MaxSize setting
     // from the registry itself; the MaxSize from the header
     // is just for information purposes.
@@ -961,7 +986,7 @@ ElfCreateFile(
     if (CreateNew)
         Status = ElfpInitNewFile(LogFile, FileSize, MaxSize, Retention, 1);
     else
-        Status = ElfpInitExistingFile(LogFile, FileSize, /* MaxSize, */ Retention);
+        Status = ElfpInitExistingFile(LogFile, FileSize, MaxSize, Retention);
 
 Quit:
     if (!NT_SUCCESS(Status))

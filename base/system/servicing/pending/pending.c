@@ -190,6 +190,77 @@ S1ReadWholeFile(
  * file, which the protected servicing DACL always grants the writer; a
  * crash mid-write leaves the file torn but recoverable (the plan stays
  * pending and the two-attempt rule reverts from the backup). */
+static VOID S1Log(_In_ PCWSTR Msg);
+
+/* Name the failing step of a whole-file rewrite on the debug channel: the
+ * caller only sees the last status, and a boot-time failure on a real
+ * volume has otherwise no trace of which call refused. */
+static VOID
+S1LogWriteStep(
+    _In_ PCWSTR Step,
+    _In_ NTSTATUS Status)
+{
+    WCHAR Line[96];
+
+    swprintf(Line, RTL_NUMBER_OF(Line), L"S1: file rewrite step '%ls' failed 0x%08lx",
+             Step, (unsigned long)Status);
+    S1Log(Line);
+}
+
+/* Write Data at offset 0 of an open handle, trim the file to Size only if it
+ * was longer, and flush. The old order set the end of file to 0 first and
+ * wrote afterwards. On the dx2400 the second write of a file (every journal
+ * anchor after the first) failed with STATUS_INFO_LENGTH_MISMATCH
+ * (0xC0000004) while the first, on an empty file, worked; the trace did not
+ * say which call refused. This order never truncates to 0 and never shrinks
+ * a file unless the new content is shorter, and every step now logs its own
+ * status so a repeat on the box names the call. */
+static NTSTATUS
+S1WriteHandleFrom0(
+    _In_ HANDLE Handle,
+    _In_ PVOID Data,
+    _In_ ULONG Size,
+    _Out_ PBOOLEAN TrimFailed)
+{
+    NTSTATUS Status;
+    IO_STATUS_BLOCK IoStatus;
+    LARGE_INTEGER Offset;
+    FILE_STANDARD_INFORMATION Info;
+    FILE_END_OF_FILE_INFORMATION Eof;
+
+    *TrimFailed = FALSE;
+    Offset.QuadPart = 0;
+    Status = NtWriteFile(Handle, NULL, NULL, NULL, &IoStatus, Data, Size, &Offset, NULL);
+    if (!NT_SUCCESS(Status))
+    {
+        S1LogWriteStep(L"write", Status);
+        return Status;
+    }
+    Status = NtQueryInformationFile(Handle, &IoStatus, &Info, sizeof(Info),
+                                    FileStandardInformation);
+    if (NT_SUCCESS(Status) && Info.EndOfFile.QuadPart > (LONGLONG)Size)
+    {
+        Eof.EndOfFile.QuadPart = (LONGLONG)Size;
+        Status = NtSetInformationFile(Handle, &IoStatus, &Eof, sizeof(Eof),
+                                      FileEndOfFileInformation);
+        if (!NT_SUCCESS(Status))
+        {
+            S1LogWriteStep(L"trim", Status);
+            *TrimFailed = TRUE;
+            return Status;
+        }
+    }
+    else if (!NT_SUCCESS(Status))
+    {
+        S1LogWriteStep(L"query-size", Status);
+        return Status;
+    }
+    Status = NtFlushBuffersFile(Handle, &IoStatus);
+    if (!NT_SUCCESS(Status))
+        S1LogWriteStep(L"flush", Status);
+    return Status;
+}
+
 static NTSTATUS
 S1WriteFileDirect(
     _In_ PCWSTR Path,
@@ -199,8 +270,7 @@ S1WriteFileDirect(
     HANDLE Handle;
     NTSTATUS Status;
     IO_STATUS_BLOCK IoStatus;
-    FILE_POSITION_INFORMATION Pos;
-    FILE_END_OF_FILE_INFORMATION Eof;
+    BOOLEAN TrimFailed;
     ULONG Try;
 
     for (Try = 0; ; Try++)
@@ -210,7 +280,10 @@ S1WriteFileDirect(
             break;
         if ((Status != STATUS_SHARING_VIOLATION && Status != STATUS_LOCK_NOT_GRANTED) ||
             Try + 1 >= S1_JOURNAL_APPEND_ATTEMPTS)
+        {
+            S1LogWriteStep(L"open", Status);
             return Status;
+        }
         {
             LARGE_INTEGER Delay;
 
@@ -218,15 +291,35 @@ S1WriteFileDirect(
             NtDelayExecution(FALSE, &Delay);
         }
     }
-    Pos.CurrentByteOffset.QuadPart = 0;
-    NtSetInformationFile(Handle, &IoStatus, &Pos, sizeof(Pos), FilePositionInformation);
-    Eof.EndOfFile.QuadPart = 0;
-    Status = NtSetInformationFile(Handle, &IoStatus, &Eof, sizeof(Eof),
-                                  FileEndOfFileInformation);
+    Status = S1WriteHandleFrom0(Handle, Data, Size, &TrimFailed);
+    NtClose(Handle);
+    if (!TrimFailed)
+        return Status;
+
+    /* The file could not be shortened in place: replace it. Deleting needs
+     * only DELETE on the file, as the plan removal already relies on. */
+    Status = S1NtOpen(Path, DELETE, FILE_OPEN, &Handle);
     if (NT_SUCCESS(Status))
-        Status = NtWriteFile(Handle, NULL, NULL, NULL, &IoStatus, Data, Size, NULL, NULL);
-    if (NT_SUCCESS(Status))
-        Status = NtFlushBuffersFile(Handle, &IoStatus);
+    {
+        FILE_DISPOSITION_INFORMATION DeleteInfo;
+
+        DeleteInfo.DeleteFile = TRUE;
+        Status = NtSetInformationFile(Handle, &IoStatus, &DeleteInfo, sizeof(DeleteInfo),
+                                      FileDispositionInformation);
+        NtClose(Handle);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        S1LogWriteStep(L"delete", Status);
+        return Status;
+    }
+    Status = S1NtOpen(Path, FILE_WRITE_DATA, FILE_CREATE, &Handle);
+    if (!NT_SUCCESS(Status))
+    {
+        S1LogWriteStep(L"recreate", Status);
+        return Status;
+    }
+    Status = S1WriteHandleFrom0(Handle, Data, Size, &TrimFailed);
     NtClose(Handle);
     return Status;
 }

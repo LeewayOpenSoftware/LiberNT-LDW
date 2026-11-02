@@ -21,6 +21,7 @@
 
 #include <precomp.h>
 #include <propkey.h>
+#include "CCplCategoryView.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
@@ -448,8 +449,12 @@ HRESULT WINAPI CControlPanelFolder::CreateViewObject(HWND hwndOwner, REFIID riid
             hr = ShellObjectCreator(sfviewcb);
             if (SUCCEEDED(hr))
             {
+                CComPtr<IShellView> pInner;
                 SFV_CREATE sfvparams = { sizeof(SFV_CREATE), this , NULL, sfviewcb };
-                hr = SHCreateShellFolderView(&sfvparams, (IShellView**)ppvOut);
+                hr = SHCreateShellFolderView(&sfvparams, &pInner);
+                /* The category view wraps the list view, which stays the Large icons / Small icons view */
+                if (SUCCEEDED(hr))
+                    hr = CplCreateCategoryView(this, pInner, (IShellView**)ppvOut);
             }
         }
     }
@@ -1295,6 +1300,6 @@ HRESULT WINAPI COpenControlPanel::GetPath(LPCWSTR pszName, LPWSTR pszPath, UINT 
 
 HRESULT WINAPI COpenControlPanel::GetCurrentView(CPVIEW *pView)
 {
-    *pView = CPVIEW_CLASSIC;
+    *pView = CplGetStartupPage() == CPL_STARTUP_CATEGORY ? CPVIEW_CATEGORY : CPVIEW_CLASSIC;
     return S_OK;
 }

@@ -32,6 +32,7 @@
 #include "netioapi.h"
 #include "tlhelp32.h"
 #include "winternl.h"
+#include "psapi.h"
 #include "winioctl.h"
 #include "winsvc.h"
 #include "winver.h"
@@ -77,21 +78,21 @@ static const struct column col_baseboard[] =
 static const struct column col_bios[] =
 {
     { L"CurrentLanguage",                CIM_STRING },
-    { L"Description",                    CIM_STRING },
+    { L"Description",                    CIM_STRING|COL_FLAG_DYNAMIC },
     { L"EmbeddedControllerMajorVersion", CIM_UINT8 },
     { L"EmbeddedControllerMinorVersion", CIM_UINT8 },
     { L"IdentificationCode",             CIM_STRING },
     { L"Manufacturer",                   CIM_STRING|COL_FLAG_DYNAMIC },
-    { L"Name",                           CIM_STRING },
+    { L"Name",                           CIM_STRING|COL_FLAG_DYNAMIC },
     { L"ReleaseDate",                    CIM_DATETIME|COL_FLAG_DYNAMIC },
-    { L"SerialNumber",                   CIM_STRING },
+    { L"SerialNumber",                   CIM_STRING|COL_FLAG_DYNAMIC },
     { L"SMBIOSBIOSVersion",              CIM_STRING|COL_FLAG_DYNAMIC },
     { L"SMBIOSMajorVersion",             CIM_UINT16 },
     { L"SMBIOSMinorVersion",             CIM_UINT16 },
     { L"Status",                         CIM_STRING },
     { L"SystemBiosMajorVersion",         CIM_UINT8 },
     { L"SystemBiosMinorVersion",         CIM_UINT8 },
-    { L"Version",                        CIM_STRING|COL_FLAG_KEY },
+    { L"Version",                        CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
 };
 static const struct column col_cache_memory[] =
 {
@@ -136,8 +137,8 @@ static const struct column col_compsys[] =
     { L"Domain",                    CIM_STRING },
     { L"DomainRole",                CIM_UINT16 },
     { L"HypervisorPresent",         CIM_BOOLEAN },
-    { L"Manufacturer",              CIM_STRING },
-    { L"Model",                     CIM_STRING },
+    { L"Manufacturer",              CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"Model",                     CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Name",                      CIM_STRING|COL_FLAG_DYNAMIC },
     { L"NumberOfLogicalProcessors", CIM_UINT32 },
     { L"NumberOfProcessors",        CIM_UINT32 },
@@ -469,16 +470,16 @@ static const struct column col_physicalmedia[] =
 };
 static const struct column col_physicalmemory[] =
 {
-    { L"BankLabel",            CIM_STRING },
+    { L"BankLabel",            CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Capacity",             CIM_UINT64 },
     { L"Caption",              CIM_STRING },
     { L"ConfiguredClockSpeed", CIM_UINT32 },
-    { L"DeviceLocator",        CIM_STRING },
+    { L"DeviceLocator",        CIM_STRING|COL_FLAG_DYNAMIC },
     { L"FormFactor",           CIM_UINT16 },
-    { L"Manufacturer",         CIM_STRING },
+    { L"Manufacturer",         CIM_STRING|COL_FLAG_DYNAMIC },
     { L"MemoryType",           CIM_UINT16 },
-    { L"PartNumber",           CIM_STRING },
-    { L"SerialNumber",         CIM_STRING },
+    { L"PartNumber",           CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"SerialNumber",         CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Speed",                CIM_UINT32 },
 };
 static const struct column col_physicalmemoryarray[] =
@@ -560,6 +561,7 @@ static const struct column col_processor[] =
 #endif
     { L"Family",                    CIM_UINT16 },
     { L"Level",                     CIM_UINT16 },
+    { L"LoadPercentage",            CIM_UINT16 },
     { L"Manufacturer",              CIM_STRING|COL_FLAG_DYNAMIC },
     { L"MaxClockSpeed",             CIM_UINT32 },
     { L"Name",                      CIM_STRING|COL_FLAG_DYNAMIC },
@@ -1351,6 +1353,7 @@ struct record_processor
     const WCHAR *device_id;
     UINT16       family;
     UINT16       level;
+    UINT16       loadpercentage;
     const WCHAR *manufacturer;
     UINT32       maxclockspeed;
     const WCHAR *name;
@@ -1886,6 +1889,7 @@ enum smbios_type
     SMBIOS_TYPE_BASEBOARD = 2,
     SMBIOS_TYPE_CHASSIS = 3,
     SMBIOS_TYPE_PROCESSOR = 4,
+    SMBIOS_TYPE_MEMDEVICE = 17,
     SMBIOS_TYPE_BOOTINFO = 32,
     SMBIOS_TYPE_END = 127
 };
@@ -1971,6 +1975,32 @@ struct smbios_processor
     WORD                 core_count2;
     WORD                 core_enabled2;
     WORD                 thread_count2;
+};
+
+/* SMBIOS type 17, Memory Device (fields up to the SMBIOS 3.x "configured memory speed"); only fields inside the
+ * structure's declared length are valid, see smbios_memdevice_has() */
+struct smbios_memdevice
+{
+    struct smbios_header hdr;
+    WORD                 array_handle;
+    WORD                 error_handle;
+    WORD                 total_width;
+    WORD                 data_width;
+    WORD                 size;            /* 0 = not installed, 0xFFFF = unknown, 0x7FFF = see ext_size, bit 15 = KB */
+    BYTE                 form_factor;
+    BYTE                 device_set;
+    BYTE                 device_locator;  /* string index */
+    BYTE                 bank_locator;    /* string index */
+    BYTE                 memory_type;
+    WORD                 type_detail;
+    WORD                 speed;           /* MT/s, 0 = unknown, 0xFFFF = see ext_speed */
+    BYTE                 manufacturer;    /* string index */
+    BYTE                 serial;          /* string index */
+    BYTE                 asset_tag;       /* string index */
+    BYTE                 part_number;     /* string index */
+    BYTE                 attributes;
+    DWORD                ext_size;        /* MB, valid when size == 0x7FFF */
+    WORD                 config_speed;    /* MT/s, SMBIOS 2.7+ */
 };
 #pragma pack(pop)
 
@@ -2122,6 +2152,14 @@ static enum fill_status fill_baseboard( struct table *table, const struct expr *
     return status;
 }
 
+/* Key properties stay non-NULL: an unknown value reads as an empty string */
+static WCHAR *empty_if_null( WCHAR *str )
+{
+    return str ? str : wcsdup( L"" );
+}
+
+static WCHAR *get_compsysproduct_identifyingnumber( const char *buf, UINT len );
+
 static UINT16 get_bios_smbiosmajorversion( const char *buf, UINT len )
 {
     const struct smbios_prologue *prologue = (const struct smbios_prologue *)buf;
@@ -2137,9 +2175,7 @@ static UINT16 get_bios_smbiosminorversion( const char *buf, UINT len )
 }
 static WCHAR *get_bios_manufacturer( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, vendor), buf, len );
-    if (!ret) return wcsdup( L"The Wine Project" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, vendor), buf, len );
 }
 
 static WCHAR *convert_bios_date( const WCHAR *str )
@@ -2176,16 +2212,14 @@ static WCHAR *convert_bios_date( const WCHAR *str )
 static WCHAR *get_bios_releasedate( const char *buf, UINT len )
 {
     WCHAR *ret, *date = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, date), buf, len );
-    if (!date || !(ret = convert_bios_date( date ))) ret = wcsdup( L"20120608000000.000000+000" );
+    ret = date ? convert_bios_date( date ) : NULL;   /* unknown date: no value, not a made-up one */
     free( date );
     return ret;
 }
 
 static WCHAR *get_bios_smbiosbiosversion( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, version), buf, len );
-    if (!ret) return wcsdup( L"Wine" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, version), buf, len );
 }
 
 static BYTE get_bios_ec_firmware_major_release( const char *buf, UINT len )
@@ -2250,20 +2284,20 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond 
     GetSystemFirmwareTable( RSMB, 0, buf, len );
 
     rec = (struct record_bios *)table->data;
-    rec->description            = L"Default System BIOS";
+    rec->description            = get_bios_smbiosbiosversion( buf, len );
     rec->ecmajorversion         = get_bios_ec_firmware_major_release( buf, len );
     rec->ecminorversion         = get_bios_ec_firmware_minor_release( buf, len );
     rec->manufacturer           = get_bios_manufacturer( buf, len );
-    rec->name                   = L"Default System BIOS";
+    rec->name                   = get_bios_smbiosbiosversion( buf, len );
     rec->releasedate            = get_bios_releasedate( buf, len );
-    rec->serialnumber           = L"Serial number";
+    rec->serialnumber           = get_compsysproduct_identifyingnumber( buf, len );
     rec->smbiosbiosversion      = get_bios_smbiosbiosversion( buf, len );
     rec->smbiosmajorversion     = get_bios_smbiosmajorversion( buf, len );
     rec->smbiosminorversion     = get_bios_smbiosminorversion( buf, len );
     rec->status                 = L"OK";
     rec->systembiosmajorversion = get_bios_system_bios_major_release( buf, len );
     rec->systembiosminorversion = get_bios_system_bios_minor_release( buf, len );
-    rec->version                = L"WINE   - 1";
+    rec->version                = empty_if_null( get_bios_smbiosbiosversion( buf, len ) );
     if (!match_row( table, row, cond, &status )) free_row_values( table, row );
     else row++;
 
@@ -2485,16 +2519,12 @@ static WCHAR *get_username(void)
 
 static WCHAR *get_compsysproduct_name( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, product), buf, len );
-    if (!ret) return wcsdup( L"Wine" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, product), buf, len );
 }
 
 static WCHAR *get_compsysproduct_vendor( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, vendor), buf, len );
-    if (!ret) return wcsdup( L"The Wine Project" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, vendor), buf, len );
 }
 
 static enum fill_status fill_compsys( struct table *table, const struct expr *cond )
@@ -2532,9 +2562,7 @@ static enum fill_status fill_compsys( struct table *table, const struct expr *co
 
 static WCHAR *get_compsysproduct_identifyingnumber( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, serial), buf, len );
-    if (!ret) return wcsdup( L"0" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, serial), buf, len );
 }
 
 static WCHAR *get_compsysproduct_uuid( const char *buf, UINT len )
@@ -2554,15 +2582,12 @@ static WCHAR *get_compsysproduct_uuid( const char *buf, UINT len )
               ptr[2], ptr[3], ptr[4], ptr[5], ptr[6], ptr[7], ptr[8], ptr[9], ptr[10], ptr[11], ptr[12], ptr[13],
               ptr[14], ptr[15] );
 done:
-    if (!ret) ret = wcsdup( L"deaddead-dead-dead-dead-deaddeaddead" );
-    return ret;
+    return ret;   /* NULL when the firmware gives no (or an all-ones) UUID */
 }
 
 static WCHAR *get_compsysproduct_version( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, version), buf, len );
-    if (!ret) return wcsdup( L"1.0" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, version), buf, len );
 }
 
 static enum fill_status fill_compsysproduct( struct table *table, const struct expr *cond )
@@ -2579,11 +2604,11 @@ static enum fill_status fill_compsysproduct( struct table *table, const struct e
     GetSystemFirmwareTable( RSMB, 0, buf, len );
 
     rec = (struct record_computersystemproduct *)table->data;
-    rec->identifyingnumber = get_compsysproduct_identifyingnumber( buf, len );
-    rec->name              = get_compsysproduct_name( buf, len );
+    rec->identifyingnumber = empty_if_null( get_compsysproduct_identifyingnumber( buf, len ) );
+    rec->name              = empty_if_null( get_compsysproduct_name( buf, len ) );
     rec->uuid              = get_compsysproduct_uuid( buf, len );
     rec->vendor            = get_compsysproduct_vendor( buf, len );
-    rec->version           = get_compsysproduct_version( buf, len );
+    rec->version           = empty_if_null( get_compsysproduct_version( buf, len ) );
     if (!match_row( table, row, cond, &status )) free_row_values( table, row );
     else row++;
 
@@ -5439,28 +5464,81 @@ static enum fill_status fill_networkadapterconfig( struct table *table, const st
     return status;
 }
 
+/* A type-17 field is valid only if it lies inside the structure's declared length */
+#define SMBIOS_HAS(d, field) ((d)->hdr.length >= offsetof(struct smbios_memdevice, field) + sizeof((d)->field))
+
+static UINT64 get_memdevice_capacity( const struct smbios_memdevice *dev )
+{
+    if (!SMBIOS_HAS(dev, size) || !dev->size || dev->size == 0xffff) return 0;
+    if (dev->size == 0x7fff)
+        return SMBIOS_HAS(dev, ext_size) ? (UINT64)(dev->ext_size & 0x7fffffff) * 1024 * 1024 : 0;
+    return (dev->size & 0x8000) ? (UINT64)(dev->size & 0x7fff) * 1024 : (UINT64)dev->size * 1024 * 1024;
+}
+
+static WCHAR *get_memdevice_string( const struct smbios_memdevice *dev, size_t field_offset, const char *buf, UINT len )
+{
+    UINT offset = (const char *)dev - buf + dev->hdr.length;
+
+    if (field_offset + sizeof(BYTE) > dev->hdr.length) return NULL;
+    return get_smbios_string_by_id( ((const BYTE *)dev)[field_offset], buf, offset, len );
+}
+
+/* One row per installed memory device (SMBIOS type 17 with a non-zero size). Without such structures the table is
+ * empty: nothing is invented. Fields the firmware does not provide read 0 or NULL. */
 static enum fill_status fill_physicalmemory( struct table *table, const struct expr *cond )
 {
     struct record_physicalmemory *rec;
     enum fill_status status = FILL_STATUS_UNFILTERED;
-    UINT row = 0;
+    UINT row = 0, len, index, count = 0, offset = 0;
+    const struct smbios_header *hdr;
+    char *buf;
 
-    if (!resize_table( table, 1, sizeof(*rec) )) return FILL_STATUS_FAILED;
+    len = GetSystemFirmwareTable( RSMB, 0, NULL, 0 );
+    if (!len || !(buf = malloc( len ))) { table->num_rows = 0; return FILL_STATUS_UNFILTERED; }
+    if (GetSystemFirmwareTable( RSMB, 0, buf, len ) != len) { free( buf ); table->num_rows = 0; return FILL_STATUS_UNFILTERED; }
 
-    rec = (struct record_physicalmemory *)table->data;
-    rec->banklabel            = L"BANK 0";
-    rec->capacity             = get_total_physical_memory();
-    rec->caption              = L"Physical Memory";
-    rec->configuredclockspeed = 1600;
-    rec->devicelocator        = L"DIMM 0";
-    rec->formfactor           = 8; /* DIMM */
-    rec->memorytype           = 9; /* RAM */
-    rec->manufacturer         = L"Wine";
-    rec->partnumber           = L"";
-    rec->serial               = L"";
-    rec->speed                = 3200;
-    if (!match_row( table, row, cond, &status )) free_row_values( table, row );
-    else row++;
+    for (index = 0; (hdr = find_smbios_entry( SMBIOS_TYPE_MEMDEVICE, index, buf, len )); index++)
+    {
+        if (hdr->length >= offsetof(struct smbios_memdevice, form_factor) &&
+            get_memdevice_capacity( (const struct smbios_memdevice *)hdr )) count++;
+    }
+    if (!resize_table( table, count ? count : 1, sizeof(*rec) ))
+    {
+        free( buf );
+        return FILL_STATUS_FAILED;
+    }
+
+    for (index = 0; (hdr = find_smbios_entry( SMBIOS_TYPE_MEMDEVICE, index, buf, len )); index++)
+    {
+        const struct smbios_memdevice *dev = (const struct smbios_memdevice *)hdr;
+        UINT32 speed = 0, configured = 0;
+
+        if (hdr->length < offsetof(struct smbios_memdevice, form_factor) || !get_memdevice_capacity( dev )) continue;
+        rec = (struct record_physicalmemory *)(table->data + offset);
+        if (SMBIOS_HAS(dev, speed)) speed = dev->speed;
+        if (SMBIOS_HAS(dev, config_speed)) configured = dev->config_speed;
+        if (speed == 0xffff) speed = 0;
+        if (configured == 0xffff) configured = 0;
+        rec->banklabel            = get_memdevice_string( dev, offsetof(struct smbios_memdevice, bank_locator), buf, len );
+        rec->capacity             = get_memdevice_capacity( dev );
+        rec->caption              = L"Physical Memory";
+        rec->configuredclockspeed = configured;
+        rec->devicelocator        = get_memdevice_string( dev, offsetof(struct smbios_memdevice, device_locator), buf, len );
+        rec->formfactor           = SMBIOS_HAS(dev, form_factor) ? dev->form_factor : 0;
+        rec->manufacturer         = get_memdevice_string( dev, offsetof(struct smbios_memdevice, manufacturer), buf, len );
+        rec->memorytype           = SMBIOS_HAS(dev, memory_type) ? dev->memory_type : 0;
+        rec->partnumber           = get_memdevice_string( dev, offsetof(struct smbios_memdevice, part_number), buf, len );
+        rec->serial               = get_memdevice_string( dev, offsetof(struct smbios_memdevice, serial), buf, len );
+        rec->speed                = speed;
+        if (!match_row( table, row, cond, &status ))
+        {
+            free_row_values( table, row );
+            continue;
+        }
+        offset += sizeof(*rec);
+        row++;
+    }
+    free( buf );
 
     TRACE("created %u rows\n", row);
     table->num_rows = row;
@@ -5735,6 +5813,63 @@ static WCHAR *get_executablepath( DWORD process_id )
     return executable_path;
 }
 
+/* Win32_Process.WorkingSetSize: read the real working set of each process.
+ * PROCESSENTRY32 does not carry it, so query it per-pid.  Processes we are not
+ * allowed to open (System, protected) simply report 0 -- we never invent a value. */
+static UINT64 get_process_workingsetsize( DWORD pid )
+{
+    PROCESS_MEMORY_COUNTERS pmc;
+    HANDLE proc;
+    UINT64 ret = 0;
+
+    proc = OpenProcess( PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid );
+    if (!proc) proc = OpenProcess( PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid );
+    if (proc)
+    {
+        if (GetProcessMemoryInfo( proc, &pmc, sizeof(pmc) )) ret = pmc.WorkingSetSize;
+        CloseHandle( proc );
+    }
+    return ret;
+}
+
+/* Win32_Processor.LoadPercentage: real instantaneous CPU load, sampled from two
+ * SystemProcessorPerformanceInformation snapshots.  On NT KernelTime includes
+ * IdleTime, so busy = (Kernel+User) - Idle.  Never fabricated. */
+static UINT16 get_processor_loadpercentage( void )
+{
+    SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION *info0, *info1;
+    ULONG num = NtCurrentTeb()->Peb->NumberOfProcessors, size, i;
+    ULONGLONG idle = 0, total = 0;
+    UINT16 ret = 0;
+
+    if (!num) return 0;
+    size = num * sizeof(*info0);
+    if (!(info0 = malloc( size ))) return 0;
+    if (!(info1 = malloc( size ))) { free( info0 ); return 0; }
+
+    if (NtQuerySystemInformation( SystemProcessorPerformanceInformation, info0, size, NULL )) goto done;
+    Sleep( 200 );
+    if (NtQuerySystemInformation( SystemProcessorPerformanceInformation, info1, size, NULL )) goto done;
+
+    for (i = 0; i < num; i++)
+    {
+        LONGLONG idle_delta  = info1[i].IdleTime.QuadPart - info0[i].IdleTime.QuadPart;
+        LONGLONG total_delta = (info1[i].KernelTime.QuadPart + info1[i].UserTime.QuadPart) -
+                               (info0[i].KernelTime.QuadPart + info0[i].UserTime.QuadPart);
+        if (total_delta <= 0) continue;
+        if (idle_delta < 0) idle_delta = 0;
+        if (idle_delta > total_delta) idle_delta = total_delta;
+        idle  += idle_delta;
+        total += total_delta;
+    }
+    if (total) ret = (UINT16)(((total - idle) * 100 + total / 2) / total);
+
+done:
+    free( info0 );
+    free( info1 );
+    return ret;
+}
+
 static enum fill_status fill_process( struct table *table, const struct expr *cond )
 {
     WCHAR handle[11];
@@ -5770,6 +5905,7 @@ static enum fill_status fill_process( struct table *table, const struct expr *co
         rec->process_id     = entry.th32ProcessID;
         rec->pprocess_id    = entry.th32ParentProcessID;
         rec->thread_count   = entry.cntThreads;
+        rec->workingsetsize = get_process_workingsetsize( entry.th32ProcessID );
         /* methods */
         rec->create         = process_create;
         rec->get_owner      = process_get_owner;
@@ -5978,6 +6114,7 @@ static enum fill_status fill_processor_without_smbios( struct table *table, cons
     rec->device_id              = wcsdup( L"CPU0" );
     rec->family                 = 2;
     rec->level                  = info->ProcessorLevel;
+    rec->loadpercentage         = get_processor_loadpercentage();
     rec->manufacturer           = get_processor_reg_str( L"VendorIdentifier", L"Unknown" );
     rec->maxclockspeed          = get_processor_maxclockspeed( 0 );
     rec->name                   = get_processor_reg_str( L"ProcessorNameString", L"Unknown CPU" );
@@ -6058,6 +6195,7 @@ static enum fill_status fill_processor( struct table *table, const struct expr *
         rec->device_id              = wcsdup( device_id );
         rec->family                 = proc->family;
         rec->level                  = info.ProcessorLevel;
+        rec->loadpercentage         = get_processor_loadpercentage();
         rec->manufacturer           = get_processor_manufacturer( i, buf, len );
         rec->maxclockspeed          = get_processor_maxclockspeed( i );
         rec->name                   = get_processor_name( i, buf, len );
@@ -6437,7 +6575,7 @@ static enum fill_status fill_service( struct table *table, const struct expr *co
     if (!(manager = OpenSCManagerW( NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE ))) return FILL_STATUS_FAILED;
     if (!(services = malloc( size ))) goto done;
 
-    ret = EnumServicesStatusExW( manager, SC_ENUM_PROCESS_INFO, SERVICE_TYPE_ALL,
+    ret = EnumServicesStatusExW( manager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32,
                                  SERVICE_STATE_ALL, (BYTE *)services, size, &needed,
                                  &count, NULL, NULL );
     if (!ret)
@@ -6450,7 +6588,7 @@ static enum fill_status fill_service( struct table *table, const struct expr *co
 #endif
         if (!(tmp = realloc( services, size ))) goto done;
         services = tmp;
-        ret = EnumServicesStatusExW( manager, SC_ENUM_PROCESS_INFO, SERVICE_TYPE_ALL,
+        ret = EnumServicesStatusExW( manager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32,
                                      SERVICE_STATE_ALL, (BYTE *)services, size, &needed,
                                      &count, NULL, NULL );
         if (!ret) goto done;
@@ -6600,9 +6738,7 @@ static enum fill_status fill_sid( struct table *table, const struct expr *cond )
 
 static WCHAR *get_systemenclosure_manufacturer( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, vendor), buf, len );
-    if (!ret) return wcsdup( L"Wine" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, vendor), buf, len );
 }
 
 static int get_systemenclosure_lockpresent( const char *buf, UINT len )
@@ -6660,9 +6796,7 @@ done:
 
 static WCHAR *get_systemenclosure_serialnumber( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, serial), buf, len );
-    if (!ret) return wcsdup( L"0" );
-    return ret;
+    return get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, serial), buf, len );
 }
 
 static enum fill_status fill_systemenclosure( struct table *table, const struct expr *cond )
