@@ -117,6 +117,16 @@ static const uint8_t S1DevPublicKey[S1_RSA2048_SIZE] = {
 #define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000
 #endif
 
+/* "0xC0000022": the journal's error field for a failed operation. */
+static const char *
+S1StatusText(
+    _In_ NTSTATUS Status,
+    _Out_writes_(16) char *Buffer)
+{
+    snprintf(Buffer, 16, "0x%08lX", (unsigned long)Status);
+    return Buffer;
+}
+
 /* ------------------------------------------------------------------ native IO */
 
 static NTSTATUS
@@ -1584,12 +1594,14 @@ NtProcessStartup(
             {
                 WCHAR Line[112];
 
+                char Err[16];
+
                 swprintf(Line, RTL_NUMBER_OF(Line),
                          L"S1: revert op %lu failed 0x%08lx, halting",
                          (unsigned long)FailedOp, (unsigned long)RevertErr);
                 S1Log(Line);
                 S1JournalOrHalt(&Journal, Plan.TransactionId, "failed", -1,
-                                "failed", "0xE0000001");
+                                "failed", S1StatusText(RevertErr, Err));
                 NtTerminateProcess(NtCurrentProcess(), 1);
             }
         }
@@ -1665,18 +1677,23 @@ NtProcessStartup(
                 if (!NT_SUCCESS(RevertErr))
                 {
                     WCHAR Line[112];
+                    char Err[16];
 
                     swprintf(Line, RTL_NUMBER_OF(Line),
                              L"S1: revert op %lu failed 0x%08lx during failure rollback",
                              (unsigned long)FailedOp, (unsigned long)RevertErr);
                     S1Log(Line);
                     S1JournalOrHalt(&Journal, Plan.TransactionId, "failed", -1,
-                                    "failed", "0xE0000001");
+                                    "failed", S1StatusText(RevertErr, Err));
                     NtTerminateProcess(NtCurrentProcess(), 1);
                 }
             }
-            S1JournalOrHalt(&Journal, Plan.TransactionId, "failed", -1,
-                            "failed", "0xE0000001");
+            {
+                char Err[16];
+
+                S1JournalOrHalt(&Journal, Plan.TransactionId, "failed", -1,
+                                "failed", S1StatusText(OpStatus, Err));
+            }
             Attempt.FailureRecorded = S1_TRUE;
             snprintf(Attempt.LastResult, sizeof(Attempt.LastResult), "%s", "failed");
             S1AttemptSave(&Attempt);
