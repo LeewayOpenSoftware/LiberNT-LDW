@@ -698,6 +698,7 @@
 @ stdcall KeQueryPriorityThread(ptr)
 @ stdcall KeQueryRuntimeThread(ptr ptr)
 @ stdcall -arch=win64 KeQueryPerformanceCounter(ptr) hal.KeQueryPerformanceCounter
+@ stdcall -arch=win64 KeGeckoW32TraceEvent(ptr long)
 @ stdcall -arch=win32,riscv64 KeQuerySystemTime(ptr)
 @ stdcall -version=0x602+ KeQuerySystemTimePrecise(ptr)
 @ stdcall -arch=win32,riscv64 KeQueryTickCount(ptr)

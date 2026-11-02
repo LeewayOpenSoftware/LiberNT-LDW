@@ -3252,6 +3252,9 @@ void IntForceMinimizeWindow(PWND pWnd)
  * Gecko startup investigation: one line per process and event (first window creation, first top-level window
  * shown) with the time since the process was created. Diagnostic only; other processes print nothing.
  */
+#ifdef _M_AMD64
+VOID NTAPI KeGeckoW32TraceEvent(PVOID Process, ULONG Reason);
+#endif
 VOID FASTCALL IntGeckoWindowMilestone(PCSTR What)
 {
     static struct { HANDLE Pid; ULONG Done; } Seen[16];
@@ -3274,6 +3277,10 @@ VOID FASTCALL IntGeckoWindowMilestone(PCSTR What)
     if (Seen[Slot].Done & Bit)
         return;
     Seen[Slot].Done |= Bit;
+#ifdef _M_AMD64
+    if (Bit == 2)
+        KeGeckoW32TraceEvent(Process, 1);   /* first top-level window: dump win32k syscall histogram */
+#endif
     KeQuerySystemTime(&Now);
     DbgPrint("PHASE MILE pid=%p %s %s at %I64u us after process creation (win32k)\n", Pid, Image, What,
              (ULONG64)(Now.QuadPart - PsGetProcessCreateTimeQuadPart(Process)) / 10);

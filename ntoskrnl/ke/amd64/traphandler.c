@@ -226,6 +226,84 @@ KiPicoSystemCallHandler(
     _disable();
 }
 
+/* ====================================================================
+ * Gecko win32k per-syscall timing diag (B2: inter-entry, no asm).
+ * DIAGNOSTIC ONLY (trace-loader-gecko2), never for main. Latches the first
+ * Gecko process that issues a win32k syscall and its first GUI thread (the
+ * UI/main thread). Per-syscall all-thread COUNT, plus main-thread inclusive
+ * TIME approximated as the span from a win32k entry to the next syscall entry
+ * of any kind on that thread (so OS waits are excluded). Dumped top-30 at the
+ * first top-level window (via win32k) and at process exit.
+ * ==================================================================== */
+#define KIW32_MAX 2048
+static PEPROCESS KiW32TraceProcess = NULL;
+static PKTHREAD  KiW32TraceThread  = NULL;
+static LONG64    KiW32Freq = 0;
+static LONG      KiW32PendId = -1;
+static LONG64    KiW32PendTsc = 0;
+static ULONG     KiW32Count[KIW32_MAX];
+static LONG64    KiW32Time[KIW32_MAX];
+static PVOID     KiW32Addr[KIW32_MAX];
+static LONG64    KiW32CallsAll = 0;
+static LONG64    KiW32CallsMain = 0;
+static LONG      KiW32DumpedWindow = 0;
+static LONG      KiW32DumpedExit = 0;
+
+static BOOLEAN
+KiW32IsGeckoImage(PEPROCESS Process)
+{
+    const CHAR *Image = PsGetProcessImageFileName(Process);
+    if (!Image) return FALSE;
+    return (!_strnicmp(Image, "firefox", 7) ||
+            !_strnicmp(Image, "basilisk", 8) ||
+            !_strnicmp(Image, "plugin-conta", 12)) ? TRUE : FALSE;
+}
+
+static VOID
+KiW32TraceDump(PCSTR Reason)
+{
+    ULONG i, k;
+    const CHAR *Image = KiW32TraceProcess ? PsGetProcessImageFileName(KiW32TraceProcess) : "?";
+    static UCHAR Printed[KIW32_MAX];
+
+    RtlZeroMemory(Printed, sizeof(Printed));
+    DbgPrint("W32DIAG dump reason=%s image=%s qpcfreq=%I64u callsAll=%I64u callsMain=%I64u\n",
+             Reason, Image, KiW32Freq, KiW32CallsAll, KiW32CallsMain);
+    for (k = 0; k < 30; k++)
+    {
+        LONG64 best = 0; LONG bi = -1;
+        for (i = 0; i < KIW32_MAX; i++)
+            if (!Printed[i] && KiW32Time[i] > best) { best = KiW32Time[i]; bi = (LONG)i; }
+        if (bi < 0) break;
+        Printed[bi] = 1;
+        {
+            ULONG64 us = KiW32Freq ? (ULONG64)(KiW32Time[bi] * 1000000 / KiW32Freq) : 0;
+            DbgPrint("W32DIAG #%-4ld addr=%p count=%lu time=%I64u us avg=%I64u us\n",
+                     bi, KiW32Addr[bi], KiW32Count[bi], us,
+                     KiW32Count[bi] ? us / KiW32Count[bi] : us);
+        }
+    }
+    DbgPrint("W32DIAG end reason=%s\n", Reason);
+}
+
+/* Called from win32k: Reason 1 = first top-level window, 2 = process exit. */
+VOID NTAPI
+KeGeckoW32TraceEvent(PVOID Process, ULONG Reason)
+{
+    if (KiW32TraceProcess == NULL || Process != (PVOID)KiW32TraceProcess)
+        return;
+    if (Reason == 1)
+    {
+        if (InterlockedCompareExchange(&KiW32DumpedWindow, 1, 0) == 0)
+            KiW32TraceDump("first-window");
+    }
+    else
+    {
+        if (InterlockedCompareExchange(&KiW32DumpedExit, 1, 0) == 0)
+            KiW32TraceDump("exit");
+    }
+}
+
 PVOID
 KiSystemCallHandler(
     PKTRAP_FRAME TrapFrame)
@@ -392,6 +470,45 @@ KiSystemCallHandler(
         return (PVOID)NtSyscallFailure;
     }
     _SEH2_END;
+
+    /* ---- Gecko win32k per-syscall timing diag (B2; diag build, no behaviour change) ---- */
+    if (KiW32TraceProcess == NULL)
+    {
+        if (TableIndex == WIN32K_SERVICE_INDEX && KiW32IsGeckoImage(PsGetCurrentProcess()))
+        {
+            LARGE_INTEGER Freq;
+            (VOID)KeQueryPerformanceCounter(&Freq);
+            KiW32Freq = Freq.QuadPart;
+            KiW32TraceThread = Thread;
+            KiW32PendId = -1;
+            KiW32TraceProcess = PsGetCurrentProcess();   /* publish last */
+        }
+    }
+    if (PsGetCurrentProcess() == KiW32TraceProcess)
+    {
+        if (TableIndex == WIN32K_SERVICE_INDEX && ServiceNumber < KIW32_MAX)
+        {
+            KiW32Count[ServiceNumber]++;
+            KiW32Addr[ServiceNumber] = (PVOID)DescriptorTable->Base[ServiceNumber];
+            KiW32CallsAll++;
+        }
+        if (Thread == KiW32TraceThread)
+        {
+            LARGE_INTEGER Now = KeQueryPerformanceCounter(NULL);
+            if (KiW32PendId >= 0)
+                KiW32Time[KiW32PendId] += Now.QuadPart - KiW32PendTsc;
+            if (TableIndex == WIN32K_SERVICE_INDEX && ServiceNumber < KIW32_MAX)
+            {
+                KiW32PendId = (LONG)ServiceNumber;
+                KiW32PendTsc = Now.QuadPart;
+                KiW32CallsMain++;
+            }
+            else
+            {
+                KiW32PendId = -1;   /* non-win32k syscall ends the timed span */
+            }
+        }
+    }
 
     return (PVOID)DescriptorTable->Base[ServiceNumber];
 }

@@ -19,6 +19,9 @@
 HANDLE hModuleWin;
 
 NTSTATUS ExitProcessCallback(PEPROCESS Process);
+#ifdef _M_AMD64
+VOID NTAPI KeGeckoW32TraceEvent(PVOID Process, ULONG Reason);
+#endif
 NTSTATUS NTAPI ExitThreadCallback(PETHREAD Thread);
 
 /* Undocumented but exported ntoskrnl function */
@@ -354,6 +357,9 @@ ExitProcessCallback(PEPROCESS Process)
 
     TRACE_CH(UserProcess, "Destroying ppi 0x%p\n", ppiCurrent);
     ppiCurrent->W32PF_flags |= W32PF_TERMINATED;
+#ifdef _M_AMD64
+    KeGeckoW32TraceEvent(Process, 2);   /* dump win32k syscall histogram at exit */
+#endif
 
     if (ppiCurrent->W32PF_flags & W32PF_STARTGLASS)
         IntCalcStartCursorHide(ppiCurrent, 0);
