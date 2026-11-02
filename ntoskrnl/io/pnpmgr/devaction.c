@@ -3209,9 +3209,15 @@ PiEnumerateDevice(
         {
             /* Mark it as enumerated */
             PiSetDevNodeFlag(ChildDeviceNode, DNF_ENUMERATED);
+            /* A node reported again is physically back: the surprise-removal
+             * marker from its previous disappearance is stale and is never
+             * cleared elsewhere. Clear it here, or the next eject of the
+             * re-plugged device is forced down the surprise-removal path
+             * (IopRemoveDevice) and the stack never tears down safely. */
+            PiClearDevNodeFlag(ChildDeviceNode, DNF_DEVICE_GONE);
             if (ChildDeviceNode->State == DeviceNodeRemoved &&
                 ChildDeviceNode->Problem == 0 &&
-                !(ChildDeviceNode->Flags & (DNF_HAS_PROBLEM | DNF_DEVICE_GONE)))
+                !(ChildDeviceNode->Flags & DNF_HAS_PROBLEM))
             {
                 PiResetRemovedDevNode(ChildDeviceNode);
                 PiSetDevNodeState(ChildDeviceNode, DeviceNodeUninitialized);
