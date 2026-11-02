@@ -442,7 +442,7 @@ S1HashFile(
     FILE_STANDARD_INFORMATION Info;
     LARGE_INTEGER Offset;
     ULONGLONG Size;
-    ULONG Reads = 0;
+    ULONG Reads = 0, ShortReads = 0;
     uint8_t Buffer[65536];
     S1_SHA256_CTX Ctx;
     WCHAR Line[200];
@@ -495,8 +495,9 @@ S1HashFile(
             Status = STATUS_S1_SHORT_READ;
             break;
         }
-        if (IoStatus.Information < Want)
+        if (IoStatus.Information < Want && ShortReads++ == 0)
         {
+            /* only the first one: a volume may answer every chunk short */
             swprintf(Line, RTL_NUMBER_OF(Line),
                      L"S1: hash: short read at %lu: %lu of %lu B, continuing ...%ls",
                      (unsigned long)Offset.QuadPart, (unsigned long)IoStatus.Information,
@@ -512,8 +513,9 @@ S1HashFile(
         return Status;
     S1Sha256Final(&Ctx, Digest);
     swprintf(Line, RTL_NUMBER_OF(Line),
-             L"S1: hashed %lu B in %lu reads: %02x%02x%02x%02x.. ...%ls",
-             (unsigned long)Size, (unsigned long)Reads, Digest[0], Digest[1], Digest[2], Digest[3], Tail);
+             L"S1: hashed %lu B in %lu reads (%lu short): %02x%02x%02x%02x.. ...%ls",
+             (unsigned long)Size, (unsigned long)Reads, (unsigned long)ShortReads,
+             Digest[0], Digest[1], Digest[2], Digest[3], Tail);
     S1Log(Line);
     return STATUS_SUCCESS;
 }
