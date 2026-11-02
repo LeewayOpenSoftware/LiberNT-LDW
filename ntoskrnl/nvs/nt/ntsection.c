@@ -626,8 +626,7 @@ MiRelocateImageControlArea(
     if (!Information->ImageDynamicallyRelocated)
         return STATUS_SUCCESS;
     /* Gecko startup investigation: a hung Firefox/Basilisk thread sits in NtCreateSection for minutes */
-    DbgPrint("NVS-TRACE: relocating image control=%p size=0x%I64x pages=%lu relocbytes=%lu oldbase=0x%I64x
-",
+    DbgPrint("NVS-TRACE: relocating image control=%p size=0x%I64x pages=%lu relocbytes=%lu oldbase=0x%I64x\n",
              Control, (ULONG64)Control->ImageSize, PageCount, Length, OldBase);
     if (!Control->Image64)
     {
@@ -767,8 +766,7 @@ MiRelocateImageControlArea(
 
                 if (Now - TraceLast >= 50000000ULL) /* every 5 s */
                 {
-                    DbgPrint("NVS-TRACE: relocating control=%p entries=%I64u position=%lu/%lu elapsed=%I64u ms
-",
+                    DbgPrint("NVS-TRACE: relocating control=%p entries=%I64u position=%lu/%lu elapsed=%I64u ms\n",
                              Control, TraceEntries, Position, Length, (Now - TraceStart) / 10000);
                     TraceLast = Now;
                 }
@@ -810,8 +808,7 @@ MiRelocateImageControlArea(
     }
 
 Done:
-    DbgPrint("NVS-TRACE: relocation done control=%p status=%08lx entries=%I64u applied=%u elapsed=%I64u ms
-",
+    DbgPrint("NVS-TRACE: relocation done control=%p status=%08lx entries=%I64u applied=%u elapsed=%I64u ms\n",
              Control, Status, TraceEntries, (ULONG)Applied, (KeQueryInterruptTime() - TraceStart) / 10000);
     if (Reserved && Applied)
     {
