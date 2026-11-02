@@ -281,6 +281,44 @@ PiNotifyHardwareProfileChange(
  * @param[in]  DeviceObject        The (target) device object
  * @param[in]  CustomNotification  Pointer to a custom notification for GUID_PNP_CUSTOM_NOTIFICATION
  */
+/* Diagnostic: name the target-device-change registrations still pinning a
+ * surprise-removed device node.  Each entry holds a reference on the PDO
+ * (released only by IoUnregisterPlugPlayNotification via PiDereferencePnpNotifyEntry),
+ * so a registrant that never unregisters defers the devnode/PDO reclaim to the
+ * next arrival (devaction.c instance-path publication gate).  Runs at PASSIVE
+ * under the guarded mutex (APC_LEVEL), so %wZ on the registrant name is safe. */
+CODE_SEG("PAGE")
+VOID
+PiDiagReportTargetNotify(
+    _In_ PDEVICE_NODE DeviceNode)
+{
+    PLIST_ENTRY entry;
+    ULONG count = 0;
+
+    PAGED_CODE();
+
+    KeAcquireGuardedMutex(&PiNotifyTargetDeviceLock);
+    for (entry = DeviceNode->TargetDeviceNotify.Flink;
+         entry != &DeviceNode->TargetDeviceNotify;
+         entry = entry->Flink)
+    {
+        PPNP_NOTIFY_ENTRY nEntry = CONTAINING_RECORD(entry, PNP_NOTIFY_ENTRY, PnpNotifyList);
+        count++;
+        /* A user-mode client registered through umpnpmgr shows up here as the
+         * PnP manager driver with a FileObject; a kernel driver shows its own name. */
+        DPRINT1("Removed device %wZ target-notify entry %p: driver %p (%wZ) "
+                "fileobj %p pdo %p refcount %lu deleted %u\n",
+                &DeviceNode->InstancePath, nEntry,
+                nEntry->DriverObject, &nEntry->DriverObject->DriverName,
+                nEntry->FileObject, nEntry->DeviceObject,
+                nEntry->RefCount, nEntry->Deleted);
+    }
+    KeReleaseGuardedMutex(&PiNotifyTargetDeviceLock);
+
+    DPRINT1("Removed device %wZ: %lu target-notify registration(s) still pinning the PDO\n",
+            &DeviceNode->InstancePath, count);
+}
+
 CODE_SEG("PAGE")
 VOID
 PiNotifyTargetDeviceChange(

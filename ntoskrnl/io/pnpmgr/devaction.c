@@ -2792,6 +2792,68 @@ PiDeviceObjectClosed(
     PiQueueDeviceAction(Base, PiActionCloseRemovedDevice, NULL, NULL);
 }
 
+VOID PiDiagReportTargetNotify(_In_ PDEVICE_NODE DeviceNode);
+
+/* Name what still keeps a surprise-removed stack open: the device object
+ * with references, its driver, and the VPB state of the storage device, so
+ * a stuck removal can be read off the debug log instead of guessed. */
+static
+VOID
+PiReportOpenRemovedStack(
+    _In_ PDEVICE_NODE DeviceNode)
+{
+    PDEVICE_OBJECT Device;
+    KIRQL OldIrql;
+    struct
+    {
+        PDEVICE_OBJECT Device;
+        PDRIVER_OBJECT Driver;
+        PVPB           Vpb;
+        ULONG          VpbFlags;
+        ULONG          VpbRefs;
+        LONG           Refs;
+        LONG_PTR       PointerCount;
+        PDEVICE_OBJECT Attached;
+    } Snap[8];
+    ULONG Count = 0, i;
+
+    /* Collect under the lock, but only pointer/scalar values - never a %wZ here.
+     * The database lock runs at DISPATCH_LEVEL and %wZ formatting pulls in pageable
+     * NLS code (assert). Snapshot now, release, then DPRINT at the restored IRQL. */
+    OldIrql = IopAcquireDatabaseLockShared();
+    for (Device = DeviceNode->PhysicalDeviceObject;
+         Device != NULL && Count < RTL_NUMBER_OF(Snap);
+         Device = Device->AttachedDevice)
+    {
+        if (Device->ReferenceCount == 0)
+            continue;
+        Snap[Count].Device   = Device;
+        Snap[Count].Driver   = Device->DriverObject;
+        Snap[Count].Vpb      = Device->Vpb;
+        Snap[Count].VpbFlags = Device->Vpb ? Device->Vpb->Flags : 0;
+        Snap[Count].VpbRefs  = Device->Vpb ? Device->Vpb->ReferenceCount : 0;
+        Snap[Count].Refs         = Device->ReferenceCount;
+        Snap[Count].PointerCount = OBJECT_TO_OBJECT_HEADER(Device)->PointerCount;
+        Snap[Count].Attached     = Device->AttachedDevice;
+        Count++;
+    }
+    IopReleaseDatabaseLockShared(OldIrql);
+
+    /* DeviceNode (and its InstancePath) is owned by the caller and stays valid;
+     * print the driver as %p rather than dereferencing a DriverName whose buffer
+     * could be freed once the lock is dropped. */
+    for (i = 0; i < Count; i++)
+    {
+        DPRINT1("Removed device %wZ still open: device %p driver %p refs %ld ptrcount %ld attached %p, Vpb %p flags 0x%x vpbrefs %lu\n",
+                &DeviceNode->InstancePath, Snap[i].Device, Snap[i].Driver, Snap[i].Refs,
+                (LONG)Snap[i].PointerCount, Snap[i].Attached,
+                Snap[i].Vpb, Snap[i].VpbFlags, Snap[i].VpbRefs);
+    }
+
+    /* Also name the target-device-change registrations still pinning this node. */
+    PiDiagReportTargetNotify(DeviceNode);
+}
+
 static
 VOID
 PiCloseRemovedDevice(
@@ -2801,9 +2863,13 @@ PiCloseRemovedDevice(
     PDEVICE_OBJECT DeviceObject = DeviceNode->PhysicalDeviceObject;
 
     if (DeviceNode->State != DeviceNodeRemovePendingCloses ||
-        DeviceNode->Child != NULL ||
-        PiDeviceStackIsOpen(DeviceNode->PhysicalDeviceObject))
+        DeviceNode->Child != NULL)
     {
+        return;
+    }
+    if (PiDeviceStackIsOpen(DeviceNode->PhysicalDeviceObject))
+    {
+        PiReportOpenRemovedStack(DeviceNode);
         return;
     }
 
