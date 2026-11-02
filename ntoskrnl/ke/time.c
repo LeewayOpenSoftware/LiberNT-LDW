@@ -261,6 +261,11 @@ KeUpdateSystemTime(IN PKTRAP_FRAME TrapFrame,
 #endif
 }
 
+#ifdef _M_AMD64
+extern PKTHREAD volatile KiW32TraceThread;
+VOID NTAPI KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode);
+#endif
+
 VOID
 NTAPI
 KeUpdateRunTime(IN PKTRAP_FRAME TrapFrame,
@@ -291,6 +296,12 @@ KiUpdateRunTime(IN PKTRAP_FRAME TrapFrame,
         Prcb->SkipTick = FALSE;
         return;
     }
+
+#ifdef _M_AMD64
+    /* Gecko startup diag (trace-loader-gecko2 only): sample the latched thread */
+    if (Thread == KiW32TraceThread)
+        KiW32UserSample(TrapFrame, KiIsUserModeTrap(TrapFrame));
+#endif
 
 #if defined(_WIN64) && (NTDDI_VERSION >= NTDDI_LONGHORN)
     /* Charge measured execution against the absolute quantum target. */

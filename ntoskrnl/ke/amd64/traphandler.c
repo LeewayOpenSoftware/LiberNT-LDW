@@ -237,7 +237,7 @@ KiPicoSystemCallHandler(
  * ==================================================================== */
 #define KIW32_MAX 2048
 static PEPROCESS KiW32TraceProcess = NULL;
-static PKTHREAD  KiW32TraceThread  = NULL;
+PKTHREAD volatile KiW32TraceThread = NULL;   /* read by KiUpdateRunTime (USERSAMP) */
 static LONG64    KiW32Freq = 0;
 static LONG      KiW32PendId = -1;
 static LONG64    KiW32PendTsc = 0;
@@ -257,6 +257,162 @@ KiW32IsGeckoImage(PEPROCESS Process)
     return (!_strnicmp(Image, "firefox", 7) ||
             !_strnicmp(Image, "basilisk", 8) ||
             !_strnicmp(Image, "plugin-conta", 12)) ? TRUE : FALSE;
+}
+
+/* ====================================================================
+ * USERSAMP: user-mode sampling of the latched Gecko main thread.
+ * DIAGNOSTIC ONLY (trace-loader-gecko2), never for main. KiUpdateRunTime
+ * calls KiW32UserSample on every clock tick whose current thread is
+ * KiW32TraceThread (one pointer compare for all other threads). A user-mode
+ * tick bumps an open-addressed histogram keyed by the RIP page (integer
+ * only, interrupt-safe); a kernel-mode tick only bumps a counter. The
+ * histogram is resolved against PEB->Ldr by KiUsDump at the W32DIAG dumps.
+ * ==================================================================== */
+#define KIUS_SLOTS 2048
+#define KIUS_MODS  512
+#define KIUS_TOP   40
+static ULONG64 KiUsPage[KIUS_SLOTS];
+static ULONG   KiUsCount[KIUS_SLOTS];
+static LONG64  KiUsTicksUser = 0;
+static LONG64  KiUsTicksKernel = 0;
+static LONG64  KiUsDropped = 0;
+
+VOID NTAPI
+KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode)
+{
+    ULONG64 Page, Idx;
+    ULONG n;
+
+    if (!UserMode)
+    {
+        KiUsTicksKernel++;
+        return;
+    }
+    KiUsTicksUser++;
+
+    Page = TrapFrame->Rip >> 12;
+    Idx = (Page * 0x9E3779B97F4A7C15ULL) >> (64 - 11);
+    for (n = 0; n < KIUS_SLOTS; n++)
+    {
+        if (KiUsCount[Idx] == 0)
+        {
+            KiUsPage[Idx] = Page;
+            KiUsCount[Idx] = 1;
+            return;
+        }
+        if (KiUsPage[Idx] == Page)
+        {
+            KiUsCount[Idx]++;
+            return;
+        }
+        Idx = (Idx + 1) & (KIUS_SLOTS - 1);
+    }
+    KiUsDropped++;
+}
+
+static VOID
+KiUsDump(PCSTR Reason)
+{
+    PEPROCESS Process = KiW32TraceProcess;
+    KAPC_STATE ApcState;
+    BOOLEAN Attached = FALSE;
+    PPEB Peb;
+    static ULONG64 ModBase[KIUS_MODS], ModEnd[KIUS_MODS], ModCount[KIUS_MODS];
+    static PUNICODE_STRING ModName[KIUS_MODS];
+    static UCHAR Used[KIUS_SLOTS], ModUsed[KIUS_MODS];
+    ULONG NumMods = 0, i, k, m;
+    ULONG64 Anon = 0, Total = 0;
+
+    if (!Process)
+        return;
+
+    DbgPrint("USERSAMP dump reason=%s ticksUser=%I64d ticksKernel=%I64d dropped=%I64d\n",
+             Reason, KiUsTicksUser, KiUsTicksKernel, KiUsDropped);
+
+    if (PsGetCurrentProcess() != Process)
+    {
+        KeStackAttachProcess(&Process->Pcb, &ApcState);
+        Attached = TRUE;
+    }
+
+    _SEH2_TRY
+    {
+        PLIST_ENTRY Head, Entry;
+
+        Peb = Process->Peb;
+        if (!Peb || !Peb->Ldr)
+            _SEH2_LEAVE;
+        Head = &Peb->Ldr->InLoadOrderModuleList;
+        for (Entry = Head->Flink; Entry != Head && NumMods < KIUS_MODS; Entry = Entry->Flink)
+        {
+            PLDR_DATA_TABLE_ENTRY Mod = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+            ModBase[NumMods] = (ULONG64)Mod->DllBase;
+            ModEnd[NumMods] = (ULONG64)Mod->DllBase + Mod->SizeOfImage;
+            ModName[NumMods] = &Mod->BaseDllName;
+            ModCount[NumMods] = 0;
+            ModUsed[NumMods] = 0;
+            NumMods++;
+        }
+
+        /* Aggregate the histogram per module */
+        for (i = 0; i < KIUS_SLOTS; i++)
+        {
+            ULONG64 Addr;
+            if (!KiUsCount[i]) continue;
+            Total += KiUsCount[i];
+            Addr = KiUsPage[i] << 12;
+            for (m = 0; m < NumMods; m++)
+                if (Addr + 0xFFF >= ModBase[m] && Addr < ModEnd[m]) break;
+            if (m < NumMods) ModCount[m] += KiUsCount[i];
+            else Anon += KiUsCount[i];
+        }
+
+        DbgPrint("USERSAMP samples=%I64u anon=%I64u modules=%lu\n", Total, Anon, NumMods);
+        for (k = 0; k < 20; k++)
+        {
+            ULONG64 best = 0; LONG bm = -1;
+            for (m = 0; m < NumMods; m++)
+                if (!ModUsed[m] && ModCount[m] > best) { best = ModCount[m]; bm = (LONG)m; }
+            if (bm < 0) break;
+            ModUsed[bm] = 1;
+            DbgPrint("USERSAMP module %wZ count=%I64u\n", ModName[bm], best);
+        }
+
+        /* Hottest RIP pages as module+offset (page-granular) */
+        RtlZeroMemory(Used, sizeof(Used));
+        for (k = 0; k < KIUS_TOP; k++)
+        {
+            ULONG best = 0; LONG bi = -1;
+            ULONG64 Addr;
+            for (i = 0; i < KIUS_SLOTS; i++)
+                if (!Used[i] && KiUsCount[i] > best) { best = KiUsCount[i]; bi = (LONG)i; }
+            if (bi < 0) break;
+            Used[bi] = 1;
+            Addr = KiUsPage[bi] << 12;
+            for (m = 0; m < NumMods; m++)
+                if (Addr + 0xFFF >= ModBase[m] && Addr < ModEnd[m]) break;
+            if (m < NumMods)
+                DbgPrint("USERSAMP page %p = %wZ+0x%I64x count=%lu\n",
+                         (PVOID)Addr, ModName[m],
+                         Addr >= ModBase[m] ? Addr - ModBase[m] : 0, best);
+            else
+                DbgPrint("USERSAMP page %p = (anon) count=%lu\n", (PVOID)Addr, best);
+        }
+
+        /* Module map so any bucket can be resolved offline */
+        for (m = 0; m < NumMods; m++)
+            DbgPrint("USERSAMP map %p size=%I64x %wZ\n",
+                     (PVOID)ModBase[m], ModEnd[m] - ModBase[m], ModName[m]);
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        DbgPrint("USERSAMP dump aborted (exception 0x%lx)\n", _SEH2_GetExceptionCode());
+    }
+    _SEH2_END;
+
+    if (Attached)
+        KeUnstackDetachProcess(&ApcState);
+    DbgPrint("USERSAMP end reason=%s\n", Reason);
 }
 
 static VOID
@@ -284,6 +440,7 @@ KiW32TraceDump(PCSTR Reason)
         }
     }
     DbgPrint("W32DIAG end reason=%s\n", Reason);
+    KiUsDump(Reason);
 }
 
 /* Called from win32k: Reason 1 = first top-level window, 2 = process exit. */
