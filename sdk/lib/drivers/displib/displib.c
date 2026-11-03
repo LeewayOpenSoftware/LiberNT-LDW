@@ -39,6 +39,9 @@ static BOOLEAN DisplibIsSupportedVersion(_In_ ULONG Version)
 {
     switch (Version)
     {
+        case DXGKDDI_INTERFACE_VERSION_WIN7:
+        case DXGKDDI_INTERFACE_VERSION_VISTA_SP1:
+        case DXGKDDI_INTERFACE_VERSION_VISTA:
         case DXGKDDI_INTERFACE_VERSION_WDDM3_2:
         case DXGKDDI_INTERFACE_VERSION_WDDM3_1:
         case DXGKDDI_INTERFACE_VERSION_WDDM3_0:
