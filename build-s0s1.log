@@ -1,10 +1,7 @@
 [0/2] Re-checking globbed directories...
-[0/415] Performing build step for 'host-tools'
+[0/414] Performing build step for 'host-tools'
 ninja: no work to do.
-[2/9] Performing install step for 'host-tools'
-[3/9] Completed 'host-tools'
-[4/9] Building C object drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.c.obj
-[5/9] Building RC object drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.rc.res
-[6/9] Linking C shared module drivers\directx\dxgkrnl\dxgkrnl.sys
-[7/9] Linking C shared module drivers\directx\softgpu\BasicDisplay.sys
-[8/9] Linking C shared module drivers\directx\legacytest\legacytest.sys
+[2/6] Performing install step for 'host-tools'
+[3/6] Completed 'host-tools'
+[4/6] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/adapter.c.obj
+[5/6] Linking C shared module drivers\directx\dxgkrnl\dxgkrnl.sys

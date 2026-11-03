@@ -4289,18 +4289,22 @@ DxgkpEnsureGlobalInitialization(VOID)
 
     {
         RTL_QUERY_REGISTRY_TABLE QueryTable[2];
-        ULONG LegacyWddm1x = 0;
-        ULONG DefaultZero = 0;
+        WCHAR LegacyWddm1xBuf[8] = L"0";
+        ULONG LegacyWddm1x;
 
         RtlZeroMemory(QueryTable, sizeof(QueryTable));
-        QueryTable[0].Flags = RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK;
+        QueryTable[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
         QueryTable[0].Name = L"LegacyWddm1x";
-        QueryTable[0].EntryContext = &LegacyWddm1x;
-        QueryTable[0].DefaultType = (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD;
-        QueryTable[0].DefaultData = &DefaultZero;
-        QueryTable[0].DefaultLength = sizeof(DefaultZero);
+        QueryTable[0].EntryContext = LegacyWddm1xBuf;
+        QueryTable[0].DefaultType = REG_SZ;
+        QueryTable[0].DefaultData = L"0";
+        QueryTable[0].DefaultLength = sizeof(L"0");
 
         (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
+        /* Accept both REG_SZ (the in-box reg.exe only writes REG_SZ) and REG_DWORD. */
+        LegacyWddm1x = (ULONG)wcstoul(LegacyWddm1xBuf, NULL, 10);
+        if (LegacyWddm1x == 0 && *(PULONG)LegacyWddm1xBuf <= 1)
+            LegacyWddm1x = *(PULONG)LegacyWddm1xBuf;
         g_DxgkpLegacyWddm1xEnabled = (LegacyWddm1x != 0);
         DXGKRNL_INFO("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%lu\n", LegacyWddm1x);
     }
