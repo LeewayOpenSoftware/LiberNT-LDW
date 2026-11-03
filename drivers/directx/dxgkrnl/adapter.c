@@ -4302,7 +4302,7 @@ DxgkpEnsureGlobalInitialization(VOID)
 
         (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
         g_DxgkpLegacyWddm1xEnabled = (LegacyWddm1x != 0);
-        DXGKRNL_TRACE("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%lu\n", LegacyWddm1x);
+        DXGKRNL_INFO("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%lu\n", LegacyWddm1x);
     }
 
     Status = DxgkpMms2Initialize();
@@ -18013,8 +18013,8 @@ DxgkpInitializeMiniport(
                         Version, VersionLevel, (ULONG)DXGK_CAPS_CORE_LEVEL_WDDM_2_0, (ULONG)REACTOS_WDDM_TARGET_LEVEL);
             return STATUS_REVISION_MISMATCH;
         }
-        DXGKRNL_TRACE("DxgkpInitializeMiniport: LegacyWddm1x admitting DDI 0x%lX level %lu\n",
-                      Version, VersionLevel);
+        DXGKRNL_INFO("DxgkpInitializeMiniport: LegacyWddm1x admitting DDI 0x%lX level %lu\n",
+                     Version, VersionLevel);
     }
 
     if (UseDodLayout)
