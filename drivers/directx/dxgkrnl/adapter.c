@@ -1497,6 +1497,7 @@ DxgkpStopTdrWatchdog(
  */
 static LONG DxgkpInitialized = 0;
 static NTSTATUS DxgkpInitializationStatus = STATUS_UNSUCCESSFUL;
+static BOOLEAN g_DxgkpLegacyWddm1xEnabled;
 static FAST_MUTEX DxgkpMapMemoryMutex;
 static LIST_ENTRY DxgkpMapMemoryList;
 static FAST_MUTEX DxgkpSleepDisableMutex;
@@ -4285,6 +4286,24 @@ DxgkpEnsureGlobalInitialization(VOID)
 
     /* Initialize debug helpers. */
     DxgkDebugInit();
+
+    {
+        RTL_QUERY_REGISTRY_TABLE QueryTable[2];
+        ULONG LegacyWddm1x = 0;
+        ULONG DefaultZero = 0;
+
+        RtlZeroMemory(QueryTable, sizeof(QueryTable));
+        QueryTable[0].Flags = RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK;
+        QueryTable[0].Name = L"LegacyWddm1x";
+        QueryTable[0].EntryContext = &LegacyWddm1x;
+        QueryTable[0].DefaultType = (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD;
+        QueryTable[0].DefaultData = &DefaultZero;
+        QueryTable[0].DefaultLength = sizeof(DefaultZero);
+
+        (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
+        g_DxgkpLegacyWddm1xEnabled = (LegacyWddm1x != 0);
+        DXGKRNL_TRACE("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%lu\n", LegacyWddm1x);
+    }
 
     Status = DxgkpMms2Initialize();
     if (!NT_SUCCESS(Status))
@@ -7661,7 +7680,12 @@ DxgkpSelectInterfaceAdvertisement(
     _Out_ PULONG AdvertisedSize,
     _Out_ PULONG AdvertisedVersion)
 {
-    if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_WIN7)
+    if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_VISTA_SP1)
+    {
+        *AdvertisedSize = DXGKP_FIELD_END(DXGKRNL_INTERFACE, DxgkCbExcludeAdapterAccess);
+        *AdvertisedVersion = RequestedVersion;
+    }
+    else if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_WIN7)
     {
         *AdvertisedSize = DXGKP_FIELD_END(DXGKRNL_INTERFACE, DxgkCbExcludeAdapterAccess);
         *AdvertisedVersion = DXGKDDI_INTERFACE_VERSION_WIN7;
@@ -17748,6 +17772,17 @@ DxgkpFullInitDataPrefixSize(
     if (DxgkCapsCoreInterfaceVersionAtLeast(
             Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_3))
         return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiFormatHistoryBuffer);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_2))
+        return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_1))
+        return DXGKP_FIELD_END(
+            DRIVER_INITIALIZATION_DATA,
+            DxgkDdiSetDisplayPrivateDriverFormat);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_0))
+        return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiDestroyContext);
     return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval);
 }
 
@@ -17765,6 +17800,7 @@ DxgkpDodInitDataPrefixSize(
 
 #ifdef _WIN64
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiSetDisplayPrivateDriverFormat) == 0x1F0);
+C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiDestroyContext) == 0x1E0);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiQueryVidPnHWCapability) == 0x238);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval) == 0x298);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiFormatHistoryBuffer) == 0x2C8);
@@ -17966,9 +18002,19 @@ DxgkpInitializeMiniport(
     if (!DxgkCapsCoreInterfaceVersionPermitted(
             Version, REACTOS_WDDM_TARGET_LEVEL))
     {
-        DXGKRNL_ERR("DxgkpInitializeMiniport: DDI selector 0x%lX level %lu is outside the Win11 miniport range %lu..%lu\n",
-                    Version, VersionLevel, (ULONG)DXGK_CAPS_CORE_LEVEL_WDDM_2_0, (ULONG)REACTOS_WDDM_TARGET_LEVEL);
-        return STATUS_REVISION_MISMATCH;
+        BOOLEAN LegacyAdmit = g_DxgkpLegacyWddm1xEnabled &&
+            (VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_0 ||
+             VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_1) &&
+            !UseDodLayout;
+
+        if (!LegacyAdmit)
+        {
+            DXGKRNL_ERR("DxgkpInitializeMiniport: DDI selector 0x%lX level %lu is outside the Win11 miniport range %lu..%lu\n",
+                        Version, VersionLevel, (ULONG)DXGK_CAPS_CORE_LEVEL_WDDM_2_0, (ULONG)REACTOS_WDDM_TARGET_LEVEL);
+            return STATUS_REVISION_MISMATCH;
+        }
+        DXGKRNL_TRACE("DxgkpInitializeMiniport: LegacyWddm1x admitting DDI 0x%lX level %lu\n",
+                      Version, VersionLevel);
     }
 
     if (UseDodLayout)
