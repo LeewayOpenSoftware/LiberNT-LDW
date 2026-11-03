@@ -4289,24 +4289,32 @@ DxgkpEnsureGlobalInitialization(VOID)
 
     {
         RTL_QUERY_REGISTRY_TABLE QueryTable[2];
-        WCHAR LegacyWddm1xBuf[8] = L"0";
-        ULONG LegacyWddm1x;
+        union { UNICODE_STRING String; ULONG Raw[4]; } Value;
+        WCHAR ValueBuffer[8];
+
+        RtlZeroMemory(&Value, sizeof(Value));
+        RtlZeroMemory(ValueBuffer, sizeof(ValueBuffer));
+        Value.String.Buffer = ValueBuffer;
+        Value.String.MaximumLength = sizeof(ValueBuffer);
 
         RtlZeroMemory(QueryTable, sizeof(QueryTable));
         QueryTable[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
         QueryTable[0].Name = L"LegacyWddm1x";
-        QueryTable[0].EntryContext = LegacyWddm1xBuf;
+        QueryTable[0].EntryContext = &Value;
         QueryTable[0].DefaultType = REG_SZ;
         QueryTable[0].DefaultData = L"0";
         QueryTable[0].DefaultLength = sizeof(L"0");
 
         (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
-        /* Accept both REG_SZ (the in-box reg.exe only writes REG_SZ) and REG_DWORD. */
-        LegacyWddm1x = (ULONG)wcstoul(LegacyWddm1xBuf, NULL, 10);
-        if (LegacyWddm1x == 0 && *(PULONG)LegacyWddm1xBuf <= 1)
-            LegacyWddm1x = *(PULONG)LegacyWddm1xBuf;
-        g_DxgkpLegacyWddm1xEnabled = (LegacyWddm1x != 0);
-        DXGKRNL_INFO("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%lu\n", LegacyWddm1x);
+
+        /* DIRECT returns REG_SZ as a UNICODE_STRING and REG_DWORD as a raw ULONG. */
+        if ((Value.String.Length == sizeof(L"1") - sizeof(WCHAR) && ValueBuffer[0] == L'1') ||
+            Value.Raw[0] == 1)
+        {
+            g_DxgkpLegacyWddm1xEnabled = TRUE;
+        }
+        DXGKRNL_INFO("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%d\n",
+                     g_DxgkpLegacyWddm1xEnabled ? 1 : 0);
     }
 
     Status = DxgkpMms2Initialize();
