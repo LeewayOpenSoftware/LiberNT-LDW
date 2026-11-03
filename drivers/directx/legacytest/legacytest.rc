@@ -1,0 +1,7 @@
+#define REACTOS_VERSION_DLL
+#define REACTOS_STR_FILE_DESCRIPTION  "LiberNT WDDM 1.x Synthetic Test Miniport"
+#define REACTOS_STR_INTERNAL_NAME     "legacytest"
+#define REACTOS_STR_ORIGINAL_FILENAME "legacytest.sys"
+#define REACTOS_STR_PRODUCT_VERSION   "1.0.0.0"
+#define REACTOS_STR_FILE_VERSION      "1.0.0.0"
+#include <reactos/version.rc>
