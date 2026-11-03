@@ -16,7 +16,6 @@
 static ULONG Lt1xDdiVersion = DXGKDDI_INTERFACE_VERSION_VISTA;
 static ULONG Lt1xPoisonTail = 0;
 static ULONG Lt1xChildCount = 0;
-static ULONG Lt1xDeviceCounter = 0;
 
 static
 NTSTATUS
@@ -36,7 +35,6 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
         return Status;
 
     RtlInitUnicodeString(&ValueName, L"Parameters");
-    /* Subkey Parameters: open it when present; missing means defaults. */
     {
         OBJECT_ATTRIBUTES SubAttributes;
         HANDLE SubKey = NULL;
@@ -68,16 +66,13 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_ADD_DEVICE Lt1xDdiAddDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiAddDevice(
     _In_ PDEVICE_OBJECT PhysicalDeviceObject,
     _Out_ PVOID *MiniportDeviceContext)
 {
     PVOID Context;
-
-    UNREFERENCED_PARAMETER(PhysicalDeviceObject);
 
     DbgPrint("LT1X: DxgkDdiAddDevice PDO=%p\n", PhysicalDeviceObject);
     Context = ExAllocatePoolWithTag(NonPagedPool, sizeof(ULONG_PTR), LT1X_TAG);
@@ -88,9 +83,8 @@ Lt1xDdiAddDevice(
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_START_DEVICE Lt1xDdiStartDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiStartDevice(
     _In_ PVOID MiniportDeviceContext,
     _In_ PDXGK_START_INFO DxgkStartInfo,
@@ -109,18 +103,16 @@ Lt1xDdiStartDevice(
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_STOP_DEVICE Lt1xDdiStopDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiStopDevice(_In_ PVOID MiniportDeviceContext)
 {
     DbgPrint("LT1X: DxgkDdiStopDevice ctx=%p\n", MiniportDeviceContext);
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_REMOVE_DEVICE Lt1xDdiRemoveDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiRemoveDevice(_In_ PVOID MiniportDeviceContext)
 {
     DbgPrint("LT1X: DxgkDdiRemoveDevice ctx=%p\n", MiniportDeviceContext);
@@ -129,19 +121,15 @@ Lt1xDdiRemoveDevice(_In_ PVOID MiniportDeviceContext)
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RESET_DEVICE Lt1xDdiResetDevice;
+static VOID APIENTRY
 Lt1xDdiResetDevice(_In_ PVOID MiniportDeviceContext)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    DbgPrint("LT1X: DxgkDdiResetDevice\n");
-    return STATUS_SUCCESS;
+    DbgPrint("LT1X: DxgkDdiResetDevice ctx=%p\n", MiniportDeviceContext);
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SET_POWER_STATE Lt1xDdiSetPowerState;
+static NTSTATUS APIENTRY
 Lt1xDdiSetPowerState(
     _In_ PVOID MiniportDeviceContext,
     _In_ ULONG DeviceUid,
@@ -154,17 +142,15 @@ Lt1xDdiSetPowerState(
     return STATUS_SUCCESS;
 }
 
-static
-VOID
-APIENTRY
+static DXGKDDI_UNLOAD Lt1xDdiUnload;
+static VOID APIENTRY
 Lt1xDdiUnload(VOID)
 {
     DbgPrint("LT1X: DxgkDdiUnload\n");
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERY_INTERFACE Lt1xDdiQueryInterface;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryInterface(
     _In_ PVOID MiniportDeviceContext,
     _In_ PQUERY_INTERFACE QueryInterface)
@@ -175,72 +161,72 @@ Lt1xDdiQueryInterface(
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_NOTIFY_ACPI_EVENT Lt1xDdiNotifyAcpiEvent;
+static NTSTATUS APIENTRY
 Lt1xDdiNotifyAcpiEvent(
     _In_ PVOID MiniportDeviceContext,
     _In_ DXGK_EVENT_TYPE EventType,
-    _In_ PUCHAR EventData,
-    _In_ ULONG DataSize)
+    _In_ ULONG Event,
+    _In_ PVOID Argument,
+    _Out_ PULONG ArgumentStatus)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(EventData);
-    UNREFERENCED_PARAMETER(DataSize);
-    DbgPrint("LT1X: DxgkDdiNotifyAcpiEvent type=%d\n", EventType);
+    UNREFERENCED_PARAMETER(Argument);
+    DbgPrint("LT1X: DxgkDdiNotifyAcpiEvent type=%d event=%lu\n", EventType, Event);
+    *ArgumentStatus = 0;
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-VOID
-APIENTRY
+static DXGKDDI_CONTROL_ETW_LOGGING Lt1xDdiControlEtwLogging;
+static VOID APIENTRY
 Lt1xDdiControlEtwLogging(
     _In_ BOOLEAN Enable,
-    _In_ ULONG Flags)
+    _In_ ULONG Flags,
+    _In_ UCHAR Level)
 {
     UNREFERENCED_PARAMETER(Enable);
     UNREFERENCED_PARAMETER(Flags);
+    UNREFERENCED_PARAMETER(Level);
     DbgPrint("LT1X: DxgkDdiControlEtwLogging\n");
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_DISPATCH_IO_REQUEST Lt1xDdiDispatchIoRequest;
+static NTSTATUS APIENTRY
 Lt1xDdiDispatchIoRequest(
     _In_ PVOID MiniportDeviceContext,
     _In_ ULONG VidPnSourceId,
-    _In_ PDXGK_IO_REQUEST IoRequest)
+    _In_ PVIDEO_REQUEST_PACKET VideoRequestPacket)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
     UNREFERENCED_PARAMETER(VidPnSourceId);
-    UNREFERENCED_PARAMETER(IoRequest);
+    UNREFERENCED_PARAMETER(VideoRequestPacket);
     DbgPrint("LT1X: DxgkDdiDispatchIoRequest\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-BOOLEAN
-APIENTRY
-Lt1xDdiInterruptRoutine(_In_ PVOID MiniportDeviceContext)
+static DXGKDDI_INTERRUPT_ROUTINE Lt1xDdiInterruptRoutine;
+static BOOLEAN APIENTRY
+Lt1xDdiInterruptRoutine(
+    _In_ PVOID MiniportDeviceContext,
+    _In_ ULONG MessageNumber)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(MessageNumber);
     return FALSE;
 }
 
-static
-VOID
-APIENTRY
+static DXGKDDI_DPC_ROUTINE Lt1xDdiDpcRoutine;
+static VOID APIENTRY
 Lt1xDdiDpcRoutine(_In_ PVOID MiniportDeviceContext)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERY_CHILD_RELATIONS Lt1xDdiQueryChildRelations;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryChildRelations(
     _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGK_CHILD_DESCRIPTOR ChildRelations,
+    _Out_ PDXGK_CHILD_DESCRIPTOR ChildRelations,
     _In_ ULONG ChildRelationsSize)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
@@ -251,70 +237,68 @@ Lt1xDdiQueryChildRelations(
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERY_CHILD_STATUS Lt1xDdiQueryChildStatus;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryChildStatus(
     _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGK_CHILD_STATUS ChildStatus)
+    _Inout_ PDXGK_CHILD_STATUS ChildStatus,
+    _In_ BOOLEAN NonDestructiveOnly)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
     UNREFERENCED_PARAMETER(ChildStatus);
+    UNREFERENCED_PARAMETER(NonDestructiveOnly);
     DbgPrint("LT1X: DxgkDdiQueryChildStatus\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERY_DEVICE_DESCRIPTOR Lt1xDdiQueryDeviceDescriptor;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryDeviceDescriptor(
     _In_ PVOID MiniportDeviceContext,
     _In_ ULONG ChildUid,
-    _In_ PDXGK_CHILD_DESCRIPTOR ChildDescriptor)
+    _Inout_ PDXGK_DEVICE_DESCRIPTOR DeviceDescriptor)
 {
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(ChildUid);
-    UNREFERENCED_PARAMETER(ChildDescriptor);
+    UNREFERENCED_PARAMETER(DeviceDescriptor);
     DbgPrint("LT1X: DxgkDdiQueryDeviceDescriptor uid=%lu\n", ChildUid);
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERYADAPTERINFO Lt1xDdiQueryAdapterInfo;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryAdapterInfo(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_QUERYADAPTERINFO QueryAdapterInfo)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_QUERYADAPTERINFO pQueryAdapterInfo)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(hAdapter);
 
     DbgPrint("LT1X: DxgkDdiQueryAdapterInfo type=%d outSize=%lu\n",
-             QueryAdapterInfo->Type, QueryAdapterInfo->OutputDataSize);
+             pQueryAdapterInfo->Type, pQueryAdapterInfo->OutputDataSize);
 
-    switch (QueryAdapterInfo->Type)
+    switch (pQueryAdapterInfo->Type)
     {
         case DXGKQAITYPE_DRIVERCAPS:
-            /* The caller zeroes the buffer; all-zero caps are a valid
-             * minimal answer for every WDDM revision. */
+            /* The caller zeroes the buffer; all-zero caps are valid for
+             * every WDDM revision. */
             return STATUS_SUCCESS;
 
         case DXGKQAITYPE_QUERYSEGMENT:
         {
             PDXGK_QUERYSEGMENTOUT SegmentOut;
 
-            if (QueryAdapterInfo->pOutputData == NULL ||
-                QueryAdapterInfo->OutputDataSize < sizeof(DXGK_QUERYSEGMENTOUT))
+            if (pQueryAdapterInfo->pOutputData == NULL ||
+                pQueryAdapterInfo->OutputDataSize < sizeof(DXGK_QUERYSEGMENTOUT))
                 return STATUS_INVALID_PARAMETER;
-            SegmentOut = (PDXGK_QUERYSEGMENTOUT)QueryAdapterInfo->pOutputData;
+            SegmentOut = (PDXGK_QUERYSEGMENTOUT)pQueryAdapterInfo->pOutputData;
             SegmentOut->NbSegment = 0;
             return STATUS_SUCCESS;
         }
 
         case DXGKQAITYPE_NUMPOWERCOMPONENTS:
-            if (QueryAdapterInfo->pOutputData == NULL ||
-                QueryAdapterInfo->OutputDataSize < sizeof(ULONG))
+            if (pQueryAdapterInfo->pOutputData == NULL ||
+                pQueryAdapterInfo->OutputDataSize < sizeof(ULONG))
                 return STATUS_INVALID_PARAMETER;
-            *(PULONG)QueryAdapterInfo->pOutputData = 0;
+            *(PULONG)pQueryAdapterInfo->pOutputData = 0;
             return STATUS_SUCCESS;
 
         default:
@@ -322,619 +306,540 @@ Lt1xDdiQueryAdapterInfo(
     }
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CREATEDEVICE Lt1xDdiCreateDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiCreateDevice(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_CREATEDEVICE CreateDevice)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_CREATEDEVICE pCreateDevice)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    DbgPrint("LT1X: DxgkDdiCreateDevice flags=0x%x\n", CreateDevice ? CreateDevice->Flags : 0);
+    UNREFERENCED_PARAMETER(hAdapter);
+    DbgPrint("LT1X: DxgkDdiCreateDevice\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CREATEALLOCATION Lt1xDdiCreateAllocation;
+static NTSTATUS APIENTRY
 Lt1xDdiCreateAllocation(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_CREATEALLOCATION CreateAllocation)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_CREATEALLOCATION pCreateAllocation)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(CreateAllocation);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pCreateAllocation);
     DbgPrint("LT1X: DxgkDdiCreateAllocation\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_DESTROYALLOCATION Lt1xDdiDestroyAllocation;
+static NTSTATUS APIENTRY
 Lt1xDdiDestroyAllocation(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PDXGKARG_DESTROYALLOCATION DestroyAllocation)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_DESTROYALLOCATION pDestroyAllocation)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(DestroyAllocation);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pDestroyAllocation);
     DbgPrint("LT1X: DxgkDdiDestroyAllocation\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_DESCRIBEALLOCATION Lt1xDdiDescribeAllocation;
+static NTSTATUS APIENTRY
 Lt1xDdiDescribeAllocation(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_DESCRIBEALLOCATION DescribeAllocation)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_DESCRIBEALLOCATION pDescribeAllocation)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DescribeAllocation);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pDescribeAllocation);
     DbgPrint("LT1X: DxgkDdiDescribeAllocation\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_GETSTANDARDALLOCATIONDRIVERDATA Lt1xDdiGetStandardAllocationDriverData;
+static NTSTATUS APIENTRY
 Lt1xDdiGetStandardAllocationDriverData(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_GETSTANDARDALLOCATIONDRIVERDATA GetStandardAllocationDriverData)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_GETSTANDARDALLOCATIONDRIVERDATA pStandardAllocationDriverData)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(GetStandardAllocationDriverData);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pStandardAllocationDriverData);
     DbgPrint("LT1X: DxgkDdiGetStandardAllocationDriverData\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_ACQUIRESWIZZLINGRANGE Lt1xDdiAcquireSwizzlingRange;
+static NTSTATUS APIENTRY
 Lt1xDdiAcquireSwizzlingRange(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_ACQUIRESWIZZLINGRANGE AcquireSwizzlingRange)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_ACQUIRESWIZZLINGRANGE pAcquireSwizzlingRange)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(AcquireSwizzlingRange);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pAcquireSwizzlingRange);
     DbgPrint("LT1X: DxgkDdiAcquireSwizzlingRange\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RELEASESWIZZLINGRANGE Lt1xDdiReleaseSwizzlingRange;
+static NTSTATUS APIENTRY
 Lt1xDdiReleaseSwizzlingRange(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_RELEASESWIZZLINGRANGE ReleaseSwizzlingRange)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_RELEASESWIZZLINGRANGE pReleaseSwizzlingRange)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(ReleaseSwizzlingRange);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pReleaseSwizzlingRange);
     DbgPrint("LT1X: DxgkDdiReleaseSwizzlingRange\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_PATCH Lt1xDdiPatch;
+static NTSTATUS APIENTRY
 Lt1xDdiPatch(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_PATCH Patch)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_PATCH pPatch)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiPatch allocCount=%lu\n",
-             Patch ? Patch->AllocationListSize : 0);
+             pPatch ? pPatch->AllocationListSize : 0);
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SUBMITCOMMAND Lt1xDdiSubmitCommand;
+static NTSTATUS APIENTRY
 Lt1xDdiSubmitCommand(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_SUBMITCOMMAND SubmitCommand)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SUBMITCOMMAND pSubmitCommand)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SubmitCommand);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSubmitCommand);
     DbgPrint("LT1X: DxgkDdiSubmitCommand\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_PREEMPTCOMMAND Lt1xDdiPreemptCommand;
+static NTSTATUS APIENTRY
 Lt1xDdiPreemptCommand(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_PREEMPTCOMMAND PreemptCommand)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_PREEMPTCOMMAND pPreemptCommand)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(PreemptCommand);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pPreemptCommand);
     DbgPrint("LT1X: DxgkDdiPreemptCommand\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_BUILDPAGINGBUFFER Lt1xDdiBuildPagingBuffer;
+static NTSTATUS APIENTRY
 Lt1xDdiBuildPagingBuffer(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_BUILDPAGINGBUFFER BuildPagingBuffer)
+    IN_CONST_HANDLE hAdapter,
+    IN_PDXGKARG_BUILDPAGINGBUFFER pBuildPagingBuffer)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(BuildPagingBuffer);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pBuildPagingBuffer);
     DbgPrint("LT1X: DxgkDdiBuildPagingBuffer\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETPALETTE Lt1xDdiSetPalette;
+static NTSTATUS APIENTRY
 Lt1xDdiSetPalette(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_SETPALETTE SetPalette)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETPALETTE pSetPalette)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetPalette);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetPalette);
     DbgPrint("LT1X: DxgkDdiSetPalette\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETPOINTERPOSITION Lt1xDdiSetPointerPosition;
+static NTSTATUS APIENTRY
 Lt1xDdiSetPointerPosition(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_SETPOINTERPOSITION *SetPointerPosition)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETPOINTERPOSITION pSetPointerPosition)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetPointerPosition);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetPointerPosition);
     DbgPrint("LT1X: DxgkDdiSetPointerPosition\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETPOINTERSHAPE Lt1xDdiSetPointerShape;
+static NTSTATUS APIENTRY
 Lt1xDdiSetPointerShape(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_SETPOINTERSHAPE SetPointerShape)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETPOINTERSHAPE pSetPointerShape)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetPointerShape);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetPointerShape);
     DbgPrint("LT1X: DxgkDdiSetPointerShape\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
-Lt1xDdiResetFromTimeout(_In_ PVOID MiniportDeviceContext)
+static DXGKDDI_RESETFROMTIMEOUT Lt1xDdiResetFromTimeout;
+static NTSTATUS APIENTRY
+Lt1xDdiResetFromTimeout(IN_CONST_HANDLE hAdapter)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiResetFromTimeout\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
-Lt1xDdiRestartFromTimeout(_In_ PVOID MiniportDeviceContext)
+static DXGKDDI_RESTARTFROMTIMEOUT Lt1xDdiRestartFromTimeout;
+static NTSTATUS APIENTRY
+Lt1xDdiRestartFromTimeout(IN_CONST_HANDLE hAdapter)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiRestartFromTimeout\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_ESCAPE Lt1xDdiEscape;
+static NTSTATUS APIENTRY
 Lt1xDdiEscape(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_ESCAPE Escape)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_ESCAPE pEscape)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(Escape);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pEscape);
     DbgPrint("LT1X: DxgkDdiEscape\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_COLLECTDBGINFO Lt1xDdiCollectDbgInfo;
+static NTSTATUS APIENTRY
 Lt1xDdiCollectDbgInfo(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_COLLECTDBGINFO *CollectDbgInfo)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_COLLECTDBGINFO pCollectDbgInfo)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(CollectDbgInfo);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pCollectDbgInfo);
     DbgPrint("LT1X: DxgkDdiCollectDbgInfo\n");
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERYCURRENTFENCE Lt1xDdiQueryCurrentFence;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryCurrentFence(
-    _In_ PVOID MiniportDeviceContext,
-    _Inout_ DXGKARG_QUERYCURRENTFENCE *QueryCurrentFence)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_QUERYCURRENTFENCE pCurrentFence)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
+    UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiQueryCurrentFence\n");
-    QueryCurrentFence->CurrentFence = 0;
+    pCurrentFence->CurrentFence = 0;
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_ISSUPPORTEDVIDPN Lt1xDdiIsSupportedVidPn;
+static NTSTATUS APIENTRY
 Lt1xDdiIsSupportedVidPn(
-    _In_ PVOID MiniportDeviceContext,
-    _Inout_ PDXGKARG_ISSUPPORTEDVIDPN IsSupportedVidPn)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_ISSUPPORTEDVIDPN pIsSupportedVidPn)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(IsSupportedVidPn);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pIsSupportedVidPn);
     DbgPrint("LT1X: DxgkDdiIsSupportedVidPn\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RECOMMENDFUNCTIONALVIDPN Lt1xDdiRecommendFunctionalVidPn;
+static NTSTATUS APIENTRY
 Lt1xDdiRecommendFunctionalVidPn(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_RECOMMENDFUNCTIONALVIDPN RecommendFunctionalVidPn)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_RECOMMENDFUNCTIONALVIDPN_CONST pRecommendFunctionalVidPn)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(RecommendFunctionalVidPn);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pRecommendFunctionalVidPn);
     DbgPrint("LT1X: DxgkDdiRecommendFunctionalVidPn\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_ENUMVIDPNCOFUNCMODALITY Lt1xDdiEnumVidPnCofuncModality;
+static NTSTATUS APIENTRY
 Lt1xDdiEnumVidPnCofuncModality(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_ENUMVIDPNCOFUNCMODALITY *EnumCofuncModality)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_ENUMVIDPNCOFUNCMODALITY_CONST pEnumCofuncModality)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(EnumCofuncModality);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pEnumCofuncModality);
     DbgPrint("LT1X: DxgkDdiEnumVidPnCofuncModality\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETVIDPNSOURCEADDRESS Lt1xDdiSetVidPnSourceAddress;
+static NTSTATUS APIENTRY
 Lt1xDdiSetVidPnSourceAddress(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_SETVIDPNSOURCEADDRESS *SetVidPnSourceAddress)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETVIDPNSOURCEADDRESS pSetVidPnSourceAddress)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetVidPnSourceAddress);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetVidPnSourceAddress);
     DbgPrint("LT1X: DxgkDdiSetVidPnSourceAddress\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETVIDPNSOURCEVISIBILITY Lt1xDdiSetVidPnSourceVisibility;
+static NTSTATUS APIENTRY
 Lt1xDdiSetVidPnSourceVisibility(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_SETVIDPNSOURCEVISIBILITY *SetVidPnSourceVisibility)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETVIDPNSOURCEVISIBILITY pSetVidPnSourceVisibility)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetVidPnSourceVisibility);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetVidPnSourceVisibility);
     DbgPrint("LT1X: DxgkDdiSetVidPnSourceVisibility\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_COMMITVIDPN Lt1xDdiCommitVidPn;
+static NTSTATUS APIENTRY
 Lt1xDdiCommitVidPn(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_COMMITVIDPN *CommitVidPn)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_COMMITVIDPN_CONST pCommitVidPn)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(CommitVidPn);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pCommitVidPn);
     DbgPrint("LT1X: DxgkDdiCommitVidPn\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_UPDATEACTIVEVIDPNPRESENTPATH Lt1xDdiUpdateActiveVidPnPresentPath;
+static NTSTATUS APIENTRY
 Lt1xDdiUpdateActiveVidPnPresentPath(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_UPDATEACTIVEVIDPNPRESENTPATH *UpdateActiveVidPnPresentPath)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_UPDATEACTIVEVIDPNPRESENTPATH_CONST pUpdateActiveVidPnPresentPath)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(UpdateActiveVidPnPresentPath);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pUpdateActiveVidPnPresentPath);
     DbgPrint("LT1X: DxgkDdiUpdateActiveVidPnPresentPath\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RECOMMENDMONITORMODES Lt1xDdiRecommendMonitorModes;
+static NTSTATUS APIENTRY
 Lt1xDdiRecommendMonitorModes(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_RECOMMENDMONITORMODES *RecommendMonitorModes)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_RECOMMENDMONITORMODES_CONST pRecommendMonitorModes)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(RecommendMonitorModes);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pRecommendMonitorModes);
     DbgPrint("LT1X: DxgkDdiRecommendMonitorModes\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RECOMMENDVIDPNTOPOLOGY Lt1xDdiRecommendVidPnTopology;
+static NTSTATUS APIENTRY
 Lt1xDdiRecommendVidPnTopology(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_RECOMMENDVIDPNTOPOLOGY *RecommendVidPnTopology)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_RECOMMENDVIDPNTOPOLOGY_CONST pRecommendVidPnTopology)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(RecommendVidPnTopology);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pRecommendVidPnTopology);
     DbgPrint("LT1X: DxgkDdiRecommendVidPnTopology\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_GETSCANLINE Lt1xDdiGetScanLine;
+static NTSTATUS APIENTRY
 Lt1xDdiGetScanLine(
-    _In_ PVOID MiniportDeviceContext,
-    _Inout_ DXGKARG_GETSCANLINE *GetScanLine)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_GETSCANLINE pGetScanLine)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    GetScanLine->InVerticalBlank = TRUE;
-    GetScanLine->ScanLine = 0;
+    UNREFERENCED_PARAMETER(hAdapter);
+    pGetScanLine->InVerticalBlank = TRUE;
+    pGetScanLine->ScanLine = 0;
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_STOPCAPTURE Lt1xDdiStopCapture;
+static NTSTATUS APIENTRY
 Lt1xDdiStopCapture(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_STOPCAPTURE *StopCapture)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_STOPCAPTURE pStopCapture)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(StopCapture);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pStopCapture);
     DbgPrint("LT1X: DxgkDdiStopCapture\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CONTROLINTERRUPT Lt1xDdiControlInterrupt;
+static NTSTATUS APIENTRY
 Lt1xDdiControlInterrupt(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_CONTROL_INTERRUPT *ControlInterrupt)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_DXGK_INTERRUPT_TYPE InterruptType,
+    IN_BOOLEAN EnableInterrupt)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(ControlInterrupt);
-    DbgPrint("LT1X: DxgkDdiControlInterrupt\n");
+    UNREFERENCED_PARAMETER(hAdapter);
+    DbgPrint("LT1X: DxgkDdiControlInterrupt type=%d enable=%d\n",
+             InterruptType, EnableInterrupt);
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CREATEOVERLAY Lt1xDdiCreateOverlay;
+static NTSTATUS APIENTRY
 Lt1xDdiCreateOverlay(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_CREATEOVERLAY CreateOverlay)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_CREATEOVERLAY pCreateOverlay)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(CreateOverlay);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pCreateOverlay);
     DbgPrint("LT1X: DxgkDdiCreateOverlay\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
-Lt1xDdiDestroyDevice(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext)
+static DXGKDDI_DESTROYDEVICE Lt1xDdiDestroyDevice;
+static NTSTATUS APIENTRY
+Lt1xDdiDestroyDevice(IN_CONST_HANDLE hDevice)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    DbgPrint("LT1X: DxgkDdiDestroyDevice\n");
+    DbgPrint("LT1X: DxgkDdiDestroyDevice h=%p\n", hDevice);
     return STATUS_SUCCESS;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_OPENALLOCATIONINFO Lt1xDdiOpenAllocation;
+static NTSTATUS APIENTRY
 Lt1xDdiOpenAllocation(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PDXGKARG_OPENALLOCATION OpenAllocation)
+    IN_CONST_HANDLE hDevice,
+    IN_CONST_PDXGKARG_OPENALLOCATION pOpenAllocation)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(OpenAllocation);
+    UNREFERENCED_PARAMETER(hDevice);
+    UNREFERENCED_PARAMETER(pOpenAllocation);
     DbgPrint("LT1X: DxgkDdiOpenAllocation\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CLOSEALLOCATION Lt1xDdiCloseAllocation;
+static NTSTATUS APIENTRY
 Lt1xDdiCloseAllocation(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID AllocationContext)
+    IN_CONST_HANDLE hDevice,
+    IN_CONST_PDXGKARG_CLOSEALLOCATION pCloseAllocation)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(AllocationContext);
+    UNREFERENCED_PARAMETER(hDevice);
+    UNREFERENCED_PARAMETER(pCloseAllocation);
     DbgPrint("LT1X: DxgkDdiCloseAllocation\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RENDER Lt1xDdiRender;
+static NTSTATUS APIENTRY
 Lt1xDdiRender(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PDXGKARG_RENDER Render)
+    IN_CONST_HANDLE hContext,
+    INOUT_PDXGKARG_RENDER pRender)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(Render);
+    UNREFERENCED_PARAMETER(hContext);
+    UNREFERENCED_PARAMETER(pRender);
     DbgPrint("LT1X: DxgkDdiRender\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_PRESENT Lt1xDdiPresent;
+static NTSTATUS APIENTRY
 Lt1xDdiPresent(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PDXGKARG_PRESENT Present)
+    IN_CONST_HANDLE hContext,
+    INOUT_PDXGKARG_PRESENT pPresent)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(Present);
+    UNREFERENCED_PARAMETER(hContext);
+    UNREFERENCED_PARAMETER(pPresent);
     DbgPrint("LT1X: DxgkDdiPresent\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_UPDATEOVERLAY Lt1xDdiUpdateOverlay;
+static NTSTATUS APIENTRY
 Lt1xDdiUpdateOverlay(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID AllocationContext,
-    _In_ PDXGKARG_UPDATEOVERLAY UpdateOverlay)
+    IN_CONST_HANDLE hOverlay,
+    IN_CONST_PDXGKARG_UPDATEOVERLAY pUpdateOverlay)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(AllocationContext);
-    UNREFERENCED_PARAMETER(UpdateOverlay);
+    UNREFERENCED_PARAMETER(hOverlay);
+    UNREFERENCED_PARAMETER(pUpdateOverlay);
     DbgPrint("LT1X: DxgkDdiUpdateOverlay\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_FLIPOVERLAY Lt1xDdiFlipOverlay;
+static NTSTATUS APIENTRY
 Lt1xDdiFlipOverlay(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID AllocationContext,
-    _In_ PDXGKARG_FLIPOVERLAY FlipOverlay)
+    IN_CONST_HANDLE hOverlay,
+    IN_CONST_PDXGKARG_FLIPOVERLAY pFlipOverlay)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(AllocationContext);
-    UNREFERENCED_PARAMETER(FlipOverlay);
+    UNREFERENCED_PARAMETER(hOverlay);
+    UNREFERENCED_PARAMETER(pFlipOverlay);
     DbgPrint("LT1X: DxgkDdiFlipOverlay\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
-Lt1xDdiDestroyOverlay(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID AllocationContext)
+static DXGKDDI_DESTROYOVERLAY Lt1xDdiDestroyOverlay;
+static NTSTATUS APIENTRY
+Lt1xDdiDestroyOverlay(IN_CONST_HANDLE hOverlay)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(AllocationContext);
+    UNREFERENCED_PARAMETER(hOverlay);
     DbgPrint("LT1X: DxgkDdiDestroyOverlay\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_CREATECONTEXT Lt1xDdiCreateContext;
+static NTSTATUS APIENTRY
 Lt1xDdiCreateContext(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_CREATECONTEXT CreateContext)
+    IN_CONST_HANDLE hDevice,
+    INOUT_PDXGKARG_CREATECONTEXT pCreateContext)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(CreateContext);
+    UNREFERENCED_PARAMETER(hDevice);
+    UNREFERENCED_PARAMETER(pCreateContext);
     DbgPrint("LT1X: DxgkDdiCreateContext\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
-Lt1xDdiDestroyContext(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID Context)
+static DXGKDDI_DESTROYCONTEXT Lt1xDdiDestroyContext;
+static NTSTATUS APIENTRY
+Lt1xDdiDestroyContext(IN_CONST_HANDLE hContext)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(hContext);
     DbgPrint("LT1X: DxgkDdiDestroyContext\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_LINK_DEVICE Lt1xDdiLinkDevice;
+static NTSTATUS APIENTRY
 Lt1xDdiLinkDevice(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PDXGKARG_LINK_DEVICE LinkDevice)
+    _In_ CONST PDEVICE_OBJECT PhysicalDeviceObject,
+    _In_ CONST PVOID MiniportDeviceContext,
+    _Inout_ PLINKED_DEVICE LinkedDevice)
 {
+    UNREFERENCED_PARAMETER(PhysicalDeviceObject);
     UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(LinkDevice);
+    UNREFERENCED_PARAMETER(LinkedDevice);
     DbgPrint("LT1X: DxgkDdiLinkDevice\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_SETDISPLAYPRIVATEDRIVERFORMAT Lt1xDdiSetDisplayPrivateDriverFormat;
+static NTSTATUS APIENTRY
 Lt1xDdiSetDisplayPrivateDriverFormat(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_SETDISPLAYPRIVATEDRIVERFORMAT *SetDisplayPrivateDriverFormat)
+    IN_CONST_HANDLE hAdapter,
+    IN_CONST_PDXGKARG_SETDISPLAYPRIVATEDRIVERFORMAT pSetDisplayPrivateDriverFormat)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(SetDisplayPrivateDriverFormat);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pSetDisplayPrivateDriverFormat);
     DbgPrint("LT1X: DxgkDdiSetDisplayPrivateDriverFormat\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_RENDERKM Lt1xDdiRenderKm;
+static NTSTATUS APIENTRY
 Lt1xDdiRenderKm(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ PVOID DeviceContext,
-    _In_ PVOID Context,
-    _In_ PDXGKARG_RENDER Render)
+    IN_CONST_HANDLE hContext,
+    INOUT_PDXGKARG_RENDER pRender)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(DeviceContext);
-    UNREFERENCED_PARAMETER(Context);
-    UNREFERENCED_PARAMETER(Render);
+    UNREFERENCED_PARAMETER(hContext);
+    UNREFERENCED_PARAMETER(pRender);
     DbgPrint("LT1X: DxgkDdiRenderKm\n");
     return STATUS_NOT_SUPPORTED;
 }
 
-static
-NTSTATUS
-APIENTRY
+static DXGKDDI_QUERYVIDPNHWCAPABILITY Lt1xDdiQueryVidPnHWCapability;
+static NTSTATUS APIENTRY
 Lt1xDdiQueryVidPnHWCapability(
-    _In_ PVOID MiniportDeviceContext,
-    _In_ CONST DXGKARG_QUERYVIDPNHWCAPABILITY *QueryVidPnHWCapability)
+    IN_CONST_HANDLE hAdapter,
+    INOUT_PDXGKARG_QUERYVIDPNHWCAPABILITY pVidPnHWCaps)
 {
-    UNREFERENCED_PARAMETER(MiniportDeviceContext);
-    UNREFERENCED_PARAMETER(QueryVidPnHWCapability);
+    UNREFERENCED_PARAMETER(hAdapter);
+    UNREFERENCED_PARAMETER(pVidPnHWCaps);
     DbgPrint("LT1X: DxgkDdiQueryVidPnHWCapability\n");
     return STATUS_NOT_SUPPORTED;
 }
@@ -1024,8 +929,8 @@ DriverEntry(
     InitData.DxgkDdiLinkDevice = Lt1xDdiLinkDevice;
     InitData.DxgkDdiSetDisplayPrivateDriverFormat = Lt1xDdiSetDisplayPrivateDriverFormat;
 
-    /* WDDM 1.1-era slots past the Vista prefix; dxgkrnl ignores them for a
-     * 1.0 Version, but populating them exercises the prefix contract. */
+    /* 1.1-era slots past the Vista prefix; dxgkrnl must ignore them for a
+     * 1.0 Version, and the PoisonTail run proves the prefix contract. */
     InitData.DxgkDdiRenderKm = Lt1xDdiRenderKm;
     InitData.DxgkDdiQueryVidPnHWCapability = Lt1xDdiQueryVidPnHWCapability;
 

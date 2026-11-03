@@ -1,0 +1,755 @@
+Auto-detected RosBE at C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015 (/clang: LLVM, amd64)
+Detected RosBE for amd64
+Configuring a new ReactOS build on:
+Microsoft Windows [Versi¢n 10.0.26100.9711]
+
+Creating directories in output-Clang-amd64-debug
+CMake Deprecation Warning at CMakeLists.txt:14 (cmake_policy):
+  The OLD behavior for policy CMP0116 will be removed from a future version
+  of CMake.
+
+  The cmake-policies(7) manual explains that the OLD behaviors of all
+  policies are deprecated and that a policy should be set to OLD only under
+  specific short-term circumstances.  Projects should be ported to the NEW
+  behavior and not rely on setting a policy to OLD.
+
+
+-- The C compiler identification is Clang 24.0.0
+-- The CXX compiler identification is Clang 24.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found Git: C:/Program Files/Git/mingw64/bin/git.exe (found version "2.53.0.windows.2")
+-- KDBG: the fex-arm64ec feed is not checked out; building without the integrated debugger. Run scripts/feeds update fex-arm64ec to build it.
+-- Found BISON: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/bison.exe (found version "3.8.2")
+-- Found FLEX: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/flex.exe (found version "2.6.4")
+Not cross-compiling, no special host-tools cmake command
+-- Build type: Debug
+-- Display driver model: WDDM 3.2 compatibility ceiling (UMD ABI 0x6003)
+-- The ASM compiler identification is Clang
+-- Found assembler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang.exe
+-- Selected localization: all
+-- Building separate debug symbols
+-- Build the LLVM runtimes with sdk/tools/cxx-runtime/build-cxx-runtime.py, or set REACTOS_LIBCXX_ROOT to their install directory
+-- indicdll has no base address
+-- msctfime has no base address
+-- msutb has no base address
+-- wevtsvc has no base address
+-- d3dumdrt has no base address
+-- softgpuum has no base address
+-- d2d1 has no base address
+-- d3d10 has no base address
+-- d3d10_1 has no base address
+-- d3d10core has no base address
+-- d3d11 has no base address
+-- d3d12 has no base address
+-- d3dcompiler_39 has no base address
+-- d3dcompiler_47 has no base address
+-- dcomp has no base address
+-- dpwsockx has no base address
+-- dxgi has no base address
+-- winegstreamer has no base address
+-- xaudio2_9 has no base address
+-- Mesa Gallium: the mesa feed is not checked out; skipping it. Run scripts/feeds update mesa to build it.
+-- glthunk has no base address
+-- cabview has no base address
+-- mmcshext has no base address
+-- prnfldr has no base address
+-- FFmpeg: no published payload for amd64 release n8.1.3-1; building the decoders without FFmpeg. Set FFMPEG_PAYLOAD or FFMPEG_FROM_SOURCE.
+-- bluetoothapis has no base address
+-- browseui has no base address
+-- certmgr_snapin has no base address
+-- combase has no base address
+-- comctl32_v6 has no base address
+-- coml2 has no base address
+-- cryptbase has no base address
+-- cryptsp has no base address
+-- cryptowinrt has no base address
+-- dbgcore has no base address
+-- devobj has no base address
+-- directmanipulation has no base address
+-- dispex has no base address
+-- drvstore has no base address
+-- dsrole has no base address
+-- dssenh has no base address
+-- dwrite has no base address
+-- dxcore has no base address
+-- dxva2 has no base address
+-- evr has no base address
+-- feclient has no base address
+-- fwpuclnt has no base address
+-- icu has no base address
+-- icuuc has no base address
+-- ieproxy has no base address
+-- iertutil has no base address
+-- ifmon has no base address
+-- installservice has no base address
+-- iyuv_32 has no base address
+-- kernelbase has no base address
+-- kernelbase_ros has no base address
+-- ktmw32 has no base address
+-- logoncli has no base address
+-- magnification has no base address
+-- mf has no base address
+-- mf3216 has no base address
+-- mfasfsrcsnk has no base address
+-- mferror has no base address
+-- mfh264enc has no base address
+-- mfmediaengine has no base address
+-- mfmp4srcsnk has no base address
+-- mfplat has no base address
+-- mfplay has no base address
+-- mfreadwrite has no base address
+-- mfsrcsnk has no base address
+-- mmdevapi has no base address
+-- msasn1 has no base address
+-- msauddecmft has no base address
+-- msdaps has no base address
+-- msmpeg2vdec has no base address
+-- msnet32 has no base address
+-- mssprxy has no base address
+-- msvcirt has no base address
+-- msvcm80 has no base address
+-- msvcm90 has no base address
+-- msvcp80 has no base address
+-- msvcp90 has no base address
+-- msvcr80 has no base address
+-- msvcr90 has no base address
+-- netsetupshim has no base address
+-- netprofm has no base address
+-- netutils has no base address
+-- ncrypt has no base address
+-- nsi has no base address
+-- opcservices has no base address
+-- perfos has no base address
+-- perfproc has no base address
+-- photometadatahandler has no base address
+-- portabledeviceapi has no base address
+-- portabledevicetypes has no base address
+-- qasf has no base address
+-- rometadata has no base address
+-- rstrtmgr has no base address
+-- rtworkq has no base address
+-- samcli has no base address
+-- sechost has no base address
+-- sensorsapi has no base address
+-- shcore has no base address
+-- slc has no base address
+-- profapi has no base address
+-- srvcli has no base address
+-- twinapi has no base address
+-- settingsyncpolicy has no base address
+-- sndvolsso has no base address
+-- appxalluserstore has no base address
+-- winlangdb has no base address
+-- bcp47langs has no base address
+-- dui70 has no base address
+-- wkscli has no base address
+-- sspicli has no base address
+-- taskschd has no base address
+-- tdh has no base address
+-- threadpoolwinrt has no base address
+-- thumbcache has no base address
+-- twaindsm has no base address
+-- uiautomationcore has no base address
+-- utildll has no base address
+-- vulkan-1: the mesa feed is not checked out; skipping it. Run scripts/feeds update mesa to build it.
+-- webservices has no base address
+-- wer has no base address
+-- wevtapi has no base address
+-- windows_applicationmodel has no base address
+-- windows_devices_bluetooth has no base address
+-- windows_devices_enumeration has no base address
+-- windows_devices_radios has no base address
+-- windows_devices_usb has no base address
+-- windows_gaming_input has no base address
+-- windows_gaming_ui_gamebar has no base address
+-- windows_globalization has no base address
+-- windows_graphics has no base address
+-- windows_media has no base address
+-- windows_media_devices has no base address
+-- windows_media_mediacontrol has no base address
+-- windows_media_playback_backgroundmediaplayer has no base address
+-- windows_media_playback_mediaplayer has no base address
+-- windows_media_speech has no base address
+-- windows_networking has no base address
+-- windows_networking_connectivity has no base address
+-- windows_networking_hostname has no base address
+-- windows_perception_stub has no base address
+-- windows_security_authentication_onlineid has no base address
+-- windows_security_credentials_ui_userconsentverifier has no base address
+-- windows_storage has no base address
+-- windows_storage_applicationdata has no base address
+-- windows_system_profile_systemid has no base address
+-- windows_system_profile_systemmanufacturers has no base address
+-- windows_ui has no base address
+-- windows_ui_core_textinput has no base address
+-- windows_ui_xaml has no base address
+-- windows_web has no base address
+-- winusb has no base address
+-- wintypes has no base address
+-- wldp has no base address
+-- winedmo has no base address
+-- wpd_ci has no base address
+-- wpdshext has no base address
+-- wpprecorderum has no base address
+-- wow64 has no base address
+-- WoW64 win32u parity: 0 service export gaps, 286 missing Wine wrappers
+-- wow64win has no base address
+-- wpnapps has no base address
+-- wsdapi has no base address
+-- wshbth has no base address
+-- wshunix has no base address
+-- avrt has no base address
+-- bcryptprimitives has no base address
+-- dwmcore has no base address
+-- udwm has no base address
+-- dwmprof has no base address
+-- user32_vista has no base address
+-- WoW64: double-building 473 i386 targets into SysWOW64
+-- Configuring done (68.2s)
+CMake Warning in dll/win32/windows.media.playback.backgroundmediaplayer/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.media.playback.backgroundmediaplayer/CMakeFiles/windows_media_playback_backgroundmediaplayer.dir/./
+
+  has 209 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.media.playback.backgroundmediaplayer_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.security.authentication.onlineid/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.security.authentication.onlineid/CMakeFiles/windows_security_authentication_onlineid.dir/./
+
+  has 201 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.security.authentication.onlineid_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.security.credentials.ui.userconsentverifier/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.security.credentials.ui.userconsentverifier/CMakeFiles/windows_security_credentials_ui_userconsentverifier.dir/./
+
+  has 223 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.security.credentials.ui.userconsentverifier_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.system.profile.systemmanufacturers/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.system.profile.systemmanufacturers/CMakeFiles/windows_system_profile_systemmanufacturers.dir/./
+
+  has 205 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.system.profile.systemmanufacturers_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+-- Generating done (57.6s)
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    MINGW_TOOLCHAIN_PREFIX
+
+
+-- Build files have been written to: C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug
+[0/2] Re-checking globbed directories...
+[1/381] Creating directories for 'host-tools'
+[2/381] Generating _mingw.h
+[3/381] Generating _mingw_mac.h
+[4/381] Generating apiset.h
+[5/381] Generating apisetcconv.h
+[6/381] Generating concurrencysal.h
+[7/381] Generating corecrt.h
+[8/381] Generating crtdefs.h
+[9/381] Generating dontuse.h
+[10/381] Generating driverspecs.h
+[11/381] Generating excpt.h
+[12/381] Generating gcc_sal.h
+[13/381] Generating intrin.h
+[14/381] Generating intrin0.inl.h
+[15/381] No download step for 'host-tools'
+[16/381] Generating kernelspecs.h
+[17/381] Generating mingw32/gcc_float.h
+[18/381] Generating mingw32/intrin_arm.h
+[19/381] Generating ms_sal.h
+[20/381] Generating msvctarget.h
+[21/381] Generating packoff.h
+[22/381] Generating packon.h
+[23/381] Generating poppack.h
+[24/381] Generating mingw32/intrin.h
+[25/381] Generating mingw32/intrin_x86.h
+[26/381] Generating mingw32/intrin_ppc.h
+[27/381] Generating mingw32/intrin_x86_64.h
+[28/381] Generating pseh/excpt.h
+[29/381] No update step for 'host-tools'
+[30/381] Generating pseh/framebased.h
+[31/381] Generating pseh/pseh.h
+[32/381] Generating pseh/pseh2.h
+[33/381] Generating pseh/framebased/internal.h
+[34/381] Generating pseh/pseh2_64.h
+[35/381] Generating pshpack1.h
+[36/381] Generating pshpack4.h
+[37/381] Generating pshpack2.h
+[38/381] Generating pshpack8.h
+[39/381] Generating sal.h
+[40/381] Generating sdkddkver.h
+[41/381] Generating pseh/pseh3.h
+[42/381] Generating section_attribs.h
+[43/381] Generating setjmp.h
+[44/381] Generating vadefs.h
+[45/381] Generating setjmpex.h
+[46/381] No patch step for 'host-tools'
+[46/381] Performing configure step for 'host-tools'
+CMake Deprecation Warning at CMakeLists.txt:14 (cmake_policy):
+  The OLD behavior for policy CMP0116 will be removed from a future version
+  of CMake.
+
+  The cmake-policies(7) manual explains that the OLD behaviors of all
+  policies are deprecated and that a policy should be set to OLD only under
+  specific short-term circumstances.  Projects should be ported to the NEW
+  behavior and not rely on setting a policy to OLD.
+
+
+-- The C compiler identification is Clang 24.0.0
+-- The CXX compiler identification is Clang 24.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found Git: C:/Program Files/Git/mingw64/bin/git.exe (found version "2.53.0.windows.2")
+-- KDBG: the fex-arm64ec feed is not checked out; building without the integrated debugger. Run scripts/feeds update fex-arm64ec to build it.
+-- Found BISON: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/bison.exe (found version "3.8.2")
+-- Found FLEX: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/flex.exe (found version "2.6.4")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - found
+-- Found Threads: TRUE
+-- Configuring done (16.4s)
+-- Generating done (0.9s)
+-- Build files have been written to: C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin
+[50/381] Generating winpackagefamily.h
+[51/381] Performing build step for 'host-tools'
+[1/296] [FLEX][pp_scanner] Building scanner with flex 2.6.4
+[2/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/dat.c.obj
+[3/296] [BISON][pp_parser] Building parser with bison 3.8.2
+[4/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fcons.c.obj
+[5/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/astoll.c.obj
+[6/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/niwrite.c.obj
+[7/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/filewrite.c.obj
+[8/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fileopen.c.obj
+[9/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/cvmod.c.obj
+[10/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/ffileread.c.obj
+[11/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fgetline.c.obj
+[12/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/eaccess.c.obj
+[13/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/error.c.obj
+[14/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/checkerr.c.obj
+[15/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/flag.c.obj
+[16/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fconv.c.obj
+[17/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fillbytes.c.obj
+[18/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fnmatch.c.obj
+[19/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/format.c.obj
+[20/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/comerr.c.obj
+[21/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/geterrno.c.obj
+[22/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/getexecpath.c.obj
+[23/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/gid.c.obj
+[24/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/wpp.c.obj
+[25/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/jsprintf.c.obj
+[26/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/ppl.yy.c.obj
+[27/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/ppy.tab.c.obj
+[28/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/jssnprintf.c.obj
+[29/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/match.c.obj
+[30/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/mem.c.obj
+[31/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/movebytes.c.obj
+[32/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/raisecond.c.obj
+[33/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/saveargs.c.obj
+[34/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/searchinpath.c.obj
+[35/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/seterrno.c.obj
+[36/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/streql.c.obj
+[37/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/strlcat.c.obj
+[38/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/strlcpy.c.obj
+[39/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/uid.c.obj
+[40/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/zerobytes.c.obj
+[41/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/lzx.c.obj
+[42/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/sha1.c.obj
+[43/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/wimcore.c.obj
+[44/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/xpress_huff.c.obj
+[45/296] Building C object sdk/tools/mkisofs/CMakeFiles/libmdigest.dir/schilytools/libmdigest/sha3.c.obj
+[46/296] Building C object sdk/tools/mkisofs/CMakeFiles/libsiconv.dir/schilytools/libsiconv/sic_nls.c.obj
+[47/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_037.c.obj
+[48/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10000.c.obj
+[49/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10001.c.obj
+[50/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10002.c.obj
+[51/296] Linking C static library sdk\tools\wpp\libwpphost.a
+[52/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10003.c.obj
+[53/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10004.c.obj
+[54/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10005.c.obj
+[55/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10006.c.obj
+[56/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10007.c.obj
+[57/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10008.c.obj
+[58/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10010.c.obj
+[59/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10017.c.obj
+[60/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10021.c.obj
+[61/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10029.c.obj
+[62/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1006.c.obj
+[63/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10079.c.obj
+[64/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10081.c.obj
+[65/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10082.c.obj
+[66/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1026.c.obj
+[67/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1250.c.obj
+[68/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1251.c.obj
+[69/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1252.c.obj
+[70/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1253.c.obj
+[71/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1254.c.obj
+[72/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1255.c.obj
+[73/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1256.c.obj
+[74/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1257.c.obj
+[75/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1258.c.obj
+[76/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1361.c.obj
+[77/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20127.c.obj
+[78/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20866.c.obj
+[79/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20932.c.obj
+[80/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_21866.c.obj
+[81/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28591.c.obj
+[82/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28592.c.obj
+[83/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28593.c.obj
+[84/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28594.c.obj
+[85/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28595.c.obj
+[86/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28596.c.obj
+[87/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/dirent.c.obj
+[88/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/gettimeofday.c.obj
+[89/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28597.c.obj
+[90/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28598.c.obj
+[91/296] Building C object sdk/tools/fatten/CMakeFiles/fatfs_host.dir/__/__/lib/3rdparty/fatfs/ffunicode.c.obj
+[92/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28599.c.obj
+[93/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28600.c.obj
+[94/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28601.c.obj
+[95/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28603.c.obj
+[96/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28604.c.obj
+[97/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28605.c.obj
+[98/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28606.c.obj
+[99/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_424.c.obj
+[100/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_437.c.obj
+[101/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_500.c.obj
+[102/296] Building C object sdk/tools/fatten/CMakeFiles/fatfs_host.dir/__/__/lib/3rdparty/fatfs/ff.c.obj
+[103/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_737.c.obj
+[104/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_775.c.obj
+[105/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_850.c.obj
+[106/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_852.c.obj
+[107/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_855.c.obj
+[108/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_856.c.obj
+[109/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_857.c.obj
+[110/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_860.c.obj
+[111/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_861.c.obj
+[112/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_862.c.obj
+[113/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_863.c.obj
+[114/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_864.c.obj
+[115/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_865.c.obj
+[116/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_866.c.obj
+[117/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_869.c.obj
+[118/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_874.c.obj
+[119/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_875.c.obj
+[120/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_878.c.obj
+[121/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_932.c.obj
+[122/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_936.c.obj
+[123/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_949.c.obj
+[124/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_950.c.obj
+[125/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/casemap.c.obj
+[126/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/compose.c.obj
+[127/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/cptable.c.obj
+[128/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/mbtowc.c.obj
+[129/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/string.c.obj
+[130/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/utf8.c.obj
+[131/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/wctomb.c.obj
+[132/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/wctype.c.obj
+[133/296] [FLEX][p_scanner] Building scanner with flex 2.6.4
+[134/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmcheck.c.obj
+[135/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cminit.c.obj
+[136/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmheal.c.obj
+[137/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmindex.c.obj
+[138/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmkeydel.c.obj
+[139/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmname.c.obj
+[140/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmse.c.obj
+[141/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmvalue.c.obj
+[142/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivebin.c.obj
+[143/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivecell.c.obj
+[144/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hiveinit.c.obj
+[145/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivelog.c.obj
+[146/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivesum.c.obj
+[147/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivewrt.c.obj
+[148/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infcore.c.obj
+[149/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infget.c.obj
+[150/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infput.c.obj
+[151/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostgen.c.obj
+[152/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostget.c.obj
+[153/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostput.c.obj
+[154/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostrtl.c.obj
+[155/296] Linking C static library sdk\lib\libwim\liblibwimcorehost.a
+[156/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_capture.c.obj
+[157/296] [BISON][p_parser] Building parser with bison 3.8.2
+[158/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_io.c.obj
+[159/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_read.c.obj
+[160/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_write.c.obj
+[161/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/adler32.c.obj
+[162/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/crc32.c.obj
+[163/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/deflate.c.obj
+[164/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inffast.c.obj
+[165/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inflate.c.obj
+[166/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inftrees.c.obj
+[167/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/trees.c.obj
+[168/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/zutil.c.obj
+[169/296] Building C object sdk/tools/CMakeFiles/bin2c.dir/bin2c.c.obj
+[170/296] Building C object sdk/tools/CMakeFiles/gendib.dir/gendib/gendib.c.obj
+[171/296] Building C object sdk/tools/CMakeFiles/geninc.dir/geninc/geninc.c.obj
+[172/296] Building C object sdk/tools/CMakeFiles/obj2bin.dir/obj2bin/obj2bin.c.obj
+[173/296] Building C object sdk/tools/CMakeFiles/spec2def.dir/spec2def/spec2def.c.obj
+[174/296] Building C object sdk/tools/CMakeFiles/pefixup.dir/pefixup.c.obj
+[175/296] Building C object sdk/tools/CMakeFiles/gas2armasm.dir/gas2armasm/gas2armasm.c.obj
+[176/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/getargs.c.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/mkisofs/schilytools/libschily/getargs.c:1308:34: warning: cast to smaller integer type 'long' from 'const char *' [-Wpointer-to-int-cast]
+ 1308 |                 raisecond("getarg_bad_format", (long)fmt);
+      |                                                ^~~~~~~~~
+1 warning generated.
+[177/296] Linking C static library sdk\tools\fatten\libfatfs_host.a
+[178/296] Linking C static library sdk\tools\mkisofs\liblibschily.a
+[179/296] Building C object sdk/tools/CMakeFiles/windmc.dir/windmc/windmc.c.obj
+[180/296] Building CXX object sdk/tools/CMakeFiles/utf16le.dir/utf16le/utf16le.cpp.obj
+[181/296] Building C object sdk/tools/fatten/CMakeFiles/fatten.dir/fatten.c.obj
+[182/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/mszip.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/mszip.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/mszip.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\mszip.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/mszip.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/mszip.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/mszip.cxx:16:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/mszip.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/mszip.cxx:16:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/mszip.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[183/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/chmc/err.c.obj
+[184/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/cabman.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/cabman.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/cabman.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\cabman.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/cabman.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.cxx:17:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.cxx:17:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[185/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/raw.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/raw.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/raw.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\raw.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/raw.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/raw.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/raw.cxx:13:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/raw.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/raw.cxx:13:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/raw.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[186/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/hhpcomp.cpp.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:71:27: warning: object backing the pointer 'chm_config.title' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   71 |     chm_config.title    = project_file.get_title_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:72:27: warning: object backing the pointer 'chm_config.hhc' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   72 |     chm_config.hhc      = project_file.get_contents_file_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:73:27: warning: object backing the pointer 'chm_config.hhk' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   73 |     chm_config.hhk      = project_file.get_index_file_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:74:27: warning: object backing the pointer 'chm_config.deftopic' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   74 |     chm_config.deftopic = project_file.get_default_topic_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4 warnings generated.
+[187/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/cabinet.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/cabinet.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/cabinet.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\cabinet.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/cabinet.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.cxx:26:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.cxx:26:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[188/296] Building C object sdk/tools/fatten/CMakeFiles/fatten.dir/diskio.c.obj
+[189/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/dfp.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/dfp.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/dfp.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\dfp.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/dfp.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/dfp.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/dfp.cxx:17:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/dfp.cxx:17:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabman.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[190/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/chmc/chmc.c.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/chmc/chmc.c:1153:52: warning: format specifies type 'intmax_t' (aka 'long long') but the argument has type 'UInt64' (aka 'unsigned long') [-Wformat]
+ 1153 |                 chmc_dump("[%d] at: %jd\n", section->mark_count, at);
+      |                                     ~~~                          ^~
+      |                                     %lu
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/chmc/chmc.h:263:54: note: expanded from macro 'chmc_dump'
+  263 | #define chmc_dump(fmt, ...) fprintf(stderr, fmt , ## __VA_ARGS__)
+      |                                             ~~~      ^~~~~~~~~~~
+1 warning generated.
+[191/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/CCFDATAStorage.cxx.obj
+FAILED: sdk/tools/cabman/CMakeFiles/cabman.dir/CCFDATAStorage.cxx.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/host -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs/zlib -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/cabman/CMakeFiles/cabman.dir/CCFDATAStorage.cxx.obj -MF sdk\tools\cabman\CMakeFiles\cabman.dir\CCFDATAStorage.cxx.obj.d -o sdk/tools/cabman/CMakeFiles/cabman.dir/CCFDATAStorage.cxx.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/CCFDATAStorage.cxx
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/CCFDATAStorage.cxx:19:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/CCFDATAStorage.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/CCFDATAStorage.cxx:19:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/CCFDATAStorage.h:10:
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/cabman/cabinet.h:12:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[192/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/hhp_reader.cpp.obj
+[193/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/lzx_compress/lz_nonslide.c.obj
+[194/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/utils.cpp.obj
+FAILED: sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/utils.cpp.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang++.exe -DNONSLIDE -DTARGET_amd64 -D__REACTOS__ -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/sdk/tools/hhpcomp -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp -g -std=gnu++11 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../../../= -MD -MT sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/utils.cpp.obj -MF sdk\tools\hhpcomp\CMakeFiles\hhpcomp.dir\utils.cpp.obj.d -o sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/utils.cpp.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/utils.cpp
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/utils.cpp:26:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:70:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/cpuid.h:447:22: error: static declaration of '__cpuidex' follows non-static declaration
+  447 | static __inline void __cpuidex(int __cpu_info[4], int __leaf, int __subleaf) {
+      |                      ^
+C:/Strawberry/c/x86_64-w64-mingw32/include/psdk_inc/intrin-impl.h:2031:6: note: previous definition is here
+ 2031 | void __cpuidex(int CPUInfo[4], int function_id, int subfunction_id) {
+      |      ^
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/utils.cpp:26:
+In file included from C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/intrin.h:12:
+In file included from C:/Strawberry/c/x86_64-w64-mingw32/include/intrin.h:122:
+C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include/mm3dnow.h:16:2: warning: "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead." [-W#warnings]
+   16 | #warning "The <mm3dnow.h> header is deprecated, and 3dNow! intrinsics are unsupported. For other intrinsics, include <x86intrin.h>, instead."
+      |  ^
+1 warning and 1 error generated.
+[195/296] Building CXX object sdk/tools/asmpp/CMakeFiles/asmpp.dir/asmpp.cpp.obj
+ninja: build stopped: subcommand failed.
+FAILED: host-tools/src/host-tools-stamp/host-tools-build host-tools/bin/asmpp.exe host-tools/bin/bin2c.exe host-tools/bin/gas2armasm.exe host-tools/bin/widl.exe host-tools/bin/gendib.exe host-tools/bin/cabman.exe host-tools/bin/fatten.exe host-tools/bin/hpp.exe host-tools/bin/isohybrid.exe host-tools/bin/mkdiskimg.exe host-tools/bin/mkdrvdb.exe host-tools/bin/mkhive.exe host-tools/bin/mkisofs.exe host-tools/bin/obj2bin.exe host-tools/bin/spec2def.exe host-tools/bin/geninc.exe host-tools/bin/mkshelllink.exe host-tools/bin/txt2nls.exe host-tools/bin/utf16le.exe host-tools/bin/xml2sdb.exe host-tools/bin/windmc.exe host-tools/bin/wimage.exe host-tools/bin/pefixup.exe host-tools/bin/symz.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/src/host-tools-stamp/host-tools-build C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/asmpp.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/bin2c.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/gas2armasm.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/widl.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/gendib.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/cabman.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/fatten.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/hpp.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/isohybrid.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/mkdiskimg.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/mkdrvdb.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/mkhive.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/mkisofs.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/obj2bin.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/spec2def.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/geninc.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/mkshelllink.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/txt2nls.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/utf16le.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/xml2sdb.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/windmc.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/wimage.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/pefixup.exe C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin/symz.exe 
+C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\Nicolas\HarnessAgents\hive\agents\pam-mvzy3ngz\scratch\ln\output-Clang-amd64-debug\host-tools\bin && C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\cmake-3.31.6\bin\cmake.exe --build ."
+ninja: build stopped: subcommand failed.
+Traceback (most recent call last):
+  File "C:\Users\Nicolas\HarnessAgents\hive\agents\pam-mvzy3ngz\scratch\ln\sdk\tools\cxx-runtime\build-cxx-runtime.py", line 182, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Nicolas\HarnessAgents\hive\agents\pam-mvzy3ngz\scratch\ln\sdk\tools\cxx-runtime\build-cxx-runtime.py", line 106, in main
+    run('cmake', '--build', build, '--target', 'xdk', 'psdk')
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Nicolas\HarnessAgents\hive\agents\pam-mvzy3ngz\scratch\ln\sdk\tools\cxx-runtime\build-cxx-runtime.py", line 29, in run
+    subprocess.run([str(arg) for arg in args], check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Nicolas\AppData\Local\Programs\Python\Python314\Lib\subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['cmake', '--build', 'C:\\Users\\Nicolas\\HarnessAgents\\hive\\agents\\pam-mvzy3ngz\\scratch\\ln\\output-Clang-amd64-debug', '--target', 'xdk', 'psdk']' returned non-zero exit status 1.
+ 
+Error: building the LLVM runtimes failed.

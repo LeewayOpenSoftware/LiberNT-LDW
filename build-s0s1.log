@@ -1,0 +1,1117 @@
+[0/2] Re-checking globbed directories...
+[1/2] Re-running CMake...
+CMake Deprecation Warning at CMakeLists.txt:14 (cmake_policy):
+  The OLD behavior for policy CMP0116 will be removed from a future version
+  of CMake.
+
+  The cmake-policies(7) manual explains that the OLD behaviors of all
+  policies are deprecated and that a policy should be set to OLD only under
+  specific short-term circumstances.  Projects should be ported to the NEW
+  behavior and not rely on setting a policy to OLD.
+
+
+-- KDBG: the fex-arm64ec feed is not checked out; building without the integrated debugger. Run scripts/feeds update fex-arm64ec to build it.
+Not cross-compiling, no special host-tools cmake command
+-- Build type: Debug
+-- Display driver model: WDDM 3.2 compatibility ceiling (UMD ABI 0x6003)
+-- Selected localization: all
+-- Building separate debug symbols
+-- indicdll has no base address
+-- msctfime has no base address
+-- msutb has no base address
+-- wevtsvc has no base address
+-- d3dumdrt has no base address
+-- softgpuum has no base address
+-- d2d1 has no base address
+-- d3d10 has no base address
+-- d3d10_1 has no base address
+-- d3d10core has no base address
+-- d3d11 has no base address
+-- d3d12 has no base address
+-- d3dcompiler_39 has no base address
+-- d3dcompiler_47 has no base address
+-- dcomp has no base address
+-- dpwsockx has no base address
+-- dxgi has no base address
+-- winegstreamer has no base address
+-- xaudio2_9 has no base address
+-- Mesa Gallium: the mesa feed is not checked out; skipping it. Run scripts/feeds update mesa to build it.
+-- glthunk has no base address
+-- cabview has no base address
+-- mmcshext has no base address
+-- prnfldr has no base address
+-- FFmpeg: no published payload for amd64 release n8.1.3-1; building the decoders without FFmpeg. Set FFMPEG_PAYLOAD or FFMPEG_FROM_SOURCE.
+-- bluetoothapis has no base address
+-- browseui has no base address
+-- certmgr_snapin has no base address
+-- combase has no base address
+-- comctl32_v6 has no base address
+-- coml2 has no base address
+-- cryptbase has no base address
+-- cryptsp has no base address
+-- cryptowinrt has no base address
+-- dbgcore has no base address
+-- devobj has no base address
+-- directmanipulation has no base address
+-- dispex has no base address
+-- drvstore has no base address
+-- dsrole has no base address
+-- dssenh has no base address
+-- dwrite has no base address
+-- dxcore has no base address
+-- dxva2 has no base address
+-- evr has no base address
+-- feclient has no base address
+-- fwpuclnt has no base address
+-- icu has no base address
+-- icuuc has no base address
+-- ieproxy has no base address
+-- iertutil has no base address
+-- ifmon has no base address
+-- installservice has no base address
+-- iyuv_32 has no base address
+-- kernelbase has no base address
+-- kernelbase_ros has no base address
+-- ktmw32 has no base address
+-- logoncli has no base address
+-- magnification has no base address
+-- mf has no base address
+-- mf3216 has no base address
+-- mfasfsrcsnk has no base address
+-- mferror has no base address
+-- mfh264enc has no base address
+-- mfmediaengine has no base address
+-- mfmp4srcsnk has no base address
+-- mfplat has no base address
+-- mfplay has no base address
+-- mfreadwrite has no base address
+-- mfsrcsnk has no base address
+-- mmdevapi has no base address
+-- msasn1 has no base address
+-- msauddecmft has no base address
+-- msdaps has no base address
+-- msmpeg2vdec has no base address
+-- msnet32 has no base address
+-- mssprxy has no base address
+-- msvcirt has no base address
+-- msvcm80 has no base address
+-- msvcm90 has no base address
+-- msvcp80 has no base address
+-- msvcp90 has no base address
+-- msvcr80 has no base address
+-- msvcr90 has no base address
+-- netsetupshim has no base address
+-- netprofm has no base address
+-- netutils has no base address
+-- ncrypt has no base address
+-- nsi has no base address
+-- opcservices has no base address
+-- perfos has no base address
+-- perfproc has no base address
+-- photometadatahandler has no base address
+-- portabledeviceapi has no base address
+-- portabledevicetypes has no base address
+-- qasf has no base address
+-- rometadata has no base address
+-- rstrtmgr has no base address
+-- rtworkq has no base address
+-- samcli has no base address
+-- sechost has no base address
+-- sensorsapi has no base address
+-- shcore has no base address
+-- slc has no base address
+-- profapi has no base address
+-- srvcli has no base address
+-- twinapi has no base address
+-- settingsyncpolicy has no base address
+-- sndvolsso has no base address
+-- appxalluserstore has no base address
+-- winlangdb has no base address
+-- bcp47langs has no base address
+-- dui70 has no base address
+-- wkscli has no base address
+-- sspicli has no base address
+-- taskschd has no base address
+-- tdh has no base address
+-- threadpoolwinrt has no base address
+-- thumbcache has no base address
+-- twaindsm has no base address
+-- uiautomationcore has no base address
+-- utildll has no base address
+-- vulkan-1: the mesa feed is not checked out; skipping it. Run scripts/feeds update mesa to build it.
+-- webservices has no base address
+-- wer has no base address
+-- wevtapi has no base address
+-- windows_applicationmodel has no base address
+-- windows_devices_bluetooth has no base address
+-- windows_devices_enumeration has no base address
+-- windows_devices_radios has no base address
+-- windows_devices_usb has no base address
+-- windows_gaming_input has no base address
+-- windows_gaming_ui_gamebar has no base address
+-- windows_globalization has no base address
+-- windows_graphics has no base address
+-- windows_media has no base address
+-- windows_media_devices has no base address
+-- windows_media_mediacontrol has no base address
+-- windows_media_playback_backgroundmediaplayer has no base address
+-- windows_media_playback_mediaplayer has no base address
+-- windows_media_speech has no base address
+-- windows_networking has no base address
+-- windows_networking_connectivity has no base address
+-- windows_networking_hostname has no base address
+-- windows_perception_stub has no base address
+-- windows_security_authentication_onlineid has no base address
+-- windows_security_credentials_ui_userconsentverifier has no base address
+-- windows_storage has no base address
+-- windows_storage_applicationdata has no base address
+-- windows_system_profile_systemid has no base address
+-- windows_system_profile_systemmanufacturers has no base address
+-- windows_ui has no base address
+-- windows_ui_core_textinput has no base address
+-- windows_ui_xaml has no base address
+-- windows_web has no base address
+-- winusb has no base address
+-- wintypes has no base address
+-- wldp has no base address
+-- winedmo has no base address
+-- wpd_ci has no base address
+-- wpdshext has no base address
+-- wpprecorderum has no base address
+-- wow64 has no base address
+-- WoW64 win32u parity: 0 service export gaps, 286 missing Wine wrappers
+-- wow64win has no base address
+-- wpnapps has no base address
+-- wsdapi has no base address
+-- wshbth has no base address
+-- wshunix has no base address
+-- avrt has no base address
+-- bcryptprimitives has no base address
+-- dwmcore has no base address
+-- udwm has no base address
+-- dwmprof has no base address
+-- user32_vista has no base address
+-- WoW64: double-building 473 i386 targets into SysWOW64
+-- Configuring done (34.0s)
+CMake Warning in dll/win32/windows.media.playback.backgroundmediaplayer/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.media.playback.backgroundmediaplayer/CMakeFiles/windows_media_playback_backgroundmediaplayer.dir/./
+
+  has 209 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.media.playback.backgroundmediaplayer_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.security.authentication.onlineid/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.security.authentication.onlineid/CMakeFiles/windows_security_authentication_onlineid.dir/./
+
+  has 201 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.security.authentication.onlineid_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.security.credentials.ui.userconsentverifier/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.security.credentials.ui.userconsentverifier/CMakeFiles/windows_security_credentials_ui_userconsentverifier.dir/./
+
+  has 223 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.security.credentials.ui.userconsentverifier_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+CMake Warning in dll/win32/windows.system.profile.systemmanufacturers/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/dll/win32/windows.system.profile.systemmanufacturers/CMakeFiles/windows_system_profile_systemmanufacturers.dir/./
+
+  has 205 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    windows.system.profile.systemmanufacturers_stubs.c.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+-- Generating done (41.1s)
+-- Build files have been written to: C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug
+[0/4] Re-checking globbed directories...
+[1/431] Creating directories for 'host-tools'
+[2/431] No download step for 'host-tools'
+[3/431] No update step for 'host-tools'
+[4/431] No patch step for 'host-tools'
+[4/431] Performing configure step for 'host-tools'
+CMake Deprecation Warning at CMakeLists.txt:14 (cmake_policy):
+  The OLD behavior for policy CMP0116 will be removed from a future version
+  of CMake.
+
+  The cmake-policies(7) manual explains that the OLD behaviors of all
+  policies are deprecated and that a policy should be set to OLD only under
+  specific short-term circumstances.  Projects should be ported to the NEW
+  behavior and not rely on setting a policy to OLD.
+
+
+-- The C compiler identification is Clang 24.0.0
+-- The CXX compiler identification is Clang 24.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/bin/clang++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found Git: C:/Program Files/Git/cmd/git.exe (found version "2.53.0.windows.2")
+-- KDBG: the fex-arm64ec feed is not checked out; building without the integrated debugger. Run scripts/feeds update fex-arm64ec to build it.
+-- Found BISON: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/bison.exe (found version "3.8.2")
+-- Found FLEX: C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/win_flex_bison-2.5.25/flex.exe (found version "2.6.4")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - found
+-- Found Threads: TRUE
+-- Configuring done (10.4s)
+-- Generating done (0.5s)
+-- Build files have been written to: C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/host-tools/bin
+[5/431] Performing build step for 'host-tools'
+[1/296] [FLEX][pp_scanner] Building scanner with flex 2.6.4
+[2/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/dat.c.obj
+[3/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/ffileread.c.obj
+[4/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fgetline.c.obj
+[5/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fileopen.c.obj
+[6/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/filewrite.c.obj
+[7/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/flag.c.obj
+[8/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/niwrite.c.obj
+[9/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/astoll.c.obj
+[10/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/checkerr.c.obj
+[11/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/comerr.c.obj
+[12/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/eaccess.c.obj
+[13/296] [BISON][pp_parser] Building parser with bison 3.8.2
+[14/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/error.c.obj
+[15/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/cvmod.c.obj
+[16/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/stdio/fcons.c.obj
+[17/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fconv.c.obj
+[18/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fillbytes.c.obj
+[19/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/fnmatch.c.obj
+[20/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/format.c.obj
+[21/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/geterrno.c.obj
+[22/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/getexecpath.c.obj
+[23/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/gid.c.obj
+[24/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/jsprintf.c.obj
+[25/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/jssnprintf.c.obj
+[26/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/match.c.obj
+[27/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/mem.c.obj
+[28/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/movebytes.c.obj
+[29/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/raisecond.c.obj
+[30/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/saveargs.c.obj
+[31/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/searchinpath.c.obj
+[32/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/wpp.c.obj
+[33/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/seterrno.c.obj
+[34/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/streql.c.obj
+[35/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/strlcat.c.obj
+[36/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/strlcpy.c.obj
+[37/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/ppy.tab.c.obj
+[38/296] Building C object sdk/tools/wpp/CMakeFiles/wpphost.dir/ppl.yy.c.obj
+[39/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/uid.c.obj
+[40/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/zerobytes.c.obj
+[41/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/lzx.c.obj
+[42/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/sha1.c.obj
+[43/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/wimcore.c.obj
+[44/296] Building C object sdk/lib/libwim/CMakeFiles/libwimcorehost.dir/xpress_huff.c.obj
+[45/296] Building C object sdk/tools/mkisofs/CMakeFiles/libmdigest.dir/schilytools/libmdigest/sha3.c.obj
+[46/296] Building C object sdk/tools/mkisofs/CMakeFiles/libsiconv.dir/schilytools/libsiconv/sic_nls.c.obj
+[47/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_037.c.obj
+[48/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10000.c.obj
+[49/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10001.c.obj
+[50/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10002.c.obj
+[51/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10003.c.obj
+[52/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10004.c.obj
+[53/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10005.c.obj
+[54/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10006.c.obj
+[55/296] Linking C static library sdk\tools\wpp\libwpphost.a
+[56/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10007.c.obj
+[57/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10008.c.obj
+[58/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10010.c.obj
+[59/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10017.c.obj
+[60/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10021.c.obj
+[61/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10029.c.obj
+[62/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1006.c.obj
+[63/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10079.c.obj
+[64/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10081.c.obj
+[65/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_10082.c.obj
+[66/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1026.c.obj
+[67/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1250.c.obj
+[68/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1251.c.obj
+[69/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1252.c.obj
+[70/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1253.c.obj
+[71/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1254.c.obj
+[72/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1255.c.obj
+[73/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1256.c.obj
+[74/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1257.c.obj
+[75/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1258.c.obj
+[76/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_1361.c.obj
+[77/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20127.c.obj
+[78/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20866.c.obj
+[79/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_20932.c.obj
+[80/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_21866.c.obj
+[81/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28591.c.obj
+[82/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28592.c.obj
+[83/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28593.c.obj
+[84/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28594.c.obj
+[85/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28595.c.obj
+[86/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28596.c.obj
+[87/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28597.c.obj
+[88/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28598.c.obj
+[89/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28599.c.obj
+[90/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28600.c.obj
+[91/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28601.c.obj
+[92/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28603.c.obj
+[93/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28604.c.obj
+[94/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28605.c.obj
+[95/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_28606.c.obj
+[96/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_424.c.obj
+[97/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_437.c.obj
+[98/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_500.c.obj
+[99/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_737.c.obj
+[100/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_775.c.obj
+[101/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_850.c.obj
+[102/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_852.c.obj
+[103/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_855.c.obj
+[104/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_856.c.obj
+[105/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_857.c.obj
+[106/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_860.c.obj
+[107/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_861.c.obj
+[108/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_862.c.obj
+[109/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_863.c.obj
+[110/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_864.c.obj
+[111/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_865.c.obj
+[112/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_866.c.obj
+[113/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_869.c.obj
+[114/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_874.c.obj
+[115/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_875.c.obj
+[116/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_878.c.obj
+[117/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_932.c.obj
+[118/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_936.c.obj
+[119/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_949.c.obj
+[120/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/c_950.c.obj
+[121/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/casemap.c.obj
+[122/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/compose.c.obj
+[123/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/cptable.c.obj
+[124/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/mbtowc.c.obj
+[125/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/string.c.obj
+[126/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/utf8.c.obj
+[127/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/wctomb.c.obj
+[128/296] Building C object sdk/tools/unicode/CMakeFiles/unicode.dir/wctype.c.obj
+[129/296] [FLEX][p_scanner] Building scanner with flex 2.6.4
+[130/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/dirent.c.obj
+[131/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/gettimeofday.c.obj
+[132/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmkeydel.c.obj
+[133/296] Building C object sdk/tools/fatten/CMakeFiles/fatfs_host.dir/__/__/lib/3rdparty/fatfs/ffunicode.c.obj
+[134/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmname.c.obj
+[135/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmse.c.obj
+[136/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmvalue.c.obj
+[137/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivebin.c.obj
+[138/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cminit.c.obj
+[139/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmheal.c.obj
+[140/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmcheck.c.obj
+[141/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/cmindex.c.obj
+[142/296] Building C object sdk/tools/fatten/CMakeFiles/fatfs_host.dir/__/__/lib/3rdparty/fatfs/ff.c.obj
+[143/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivecell.c.obj
+[144/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hiveinit.c.obj
+[145/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivesum.c.obj
+[146/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivelog.c.obj
+[147/296] Building C object sdk/lib/cmlib/CMakeFiles/cmlibhost.dir/hivewrt.c.obj
+[148/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infput.c.obj
+[149/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infget.c.obj
+[150/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostget.c.obj
+[151/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infcore.c.obj
+[152/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostput.c.obj
+[153/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/adler32.c.obj
+[154/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostgen.c.obj
+[155/296] Building C object sdk/lib/inflib/CMakeFiles/inflibhost.dir/infhostrtl.c.obj
+[156/296] [BISON][p_parser] Building parser with bison 3.8.2
+[157/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_io.c.obj
+[158/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inftrees.c.obj
+[159/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/crc32.c.obj
+[160/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_capture.c.obj
+[161/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/zutil.c.obj
+[162/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_read.c.obj
+[163/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inffast.c.obj
+[164/296] Linking C static library sdk\lib\libwim\liblibwimcorehost.a
+[165/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/deflate.c.obj
+[166/296] Building C object sdk/lib/libwim/CMakeFiles/libwimhost.dir/wim_write.c.obj
+[167/296] Building C object sdk/tools/CMakeFiles/geninc.dir/geninc/geninc.c.obj
+[168/296] Building C object sdk/tools/CMakeFiles/obj2bin.dir/obj2bin/obj2bin.c.obj
+[169/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/inflate.c.obj
+[170/296] Building C object sdk/lib/3rdparty/zlib/CMakeFiles/zlibhost.dir/trees.c.obj
+[171/296] Building C object sdk/tools/CMakeFiles/bin2c.dir/bin2c.c.obj
+[172/296] Building C object sdk/tools/CMakeFiles/gendib.dir/gendib/gendib.c.obj
+[173/296] Building C object sdk/tools/mkisofs/CMakeFiles/libschily.dir/schilytools/libschily/getargs.c.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/mkisofs/schilytools/libschily/getargs.c:1308:34: warning: cast to smaller integer type 'long' from 'const char *' [-Wpointer-to-int-cast]
+ 1308 |                 raisecond("getarg_bad_format", (long)fmt);
+      |                                                ^~~~~~~~~
+1 warning generated.
+[174/296] Building C object sdk/tools/CMakeFiles/gas2armasm.dir/gas2armasm/gas2armasm.c.obj
+[175/296] Building C object sdk/tools/CMakeFiles/spec2def.dir/spec2def/spec2def.c.obj
+[176/296] Building C object sdk/tools/CMakeFiles/pefixup.dir/pefixup.c.obj
+[177/296] Linking C static library sdk\tools\fatten\libfatfs_host.a
+[178/296] Linking C static library sdk\tools\mkisofs\liblibschily.a
+[179/296] Building C object sdk/tools/CMakeFiles/windmc.dir/windmc/windmc.c.obj
+[180/296] Building C object sdk/tools/fatten/CMakeFiles/fatten.dir/diskio.c.obj
+[181/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/raw.cxx.obj
+[182/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/CCFDATAStorage.cxx.obj
+[183/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/mszip.cxx.obj
+[184/296] Building CXX object sdk/tools/CMakeFiles/utf16le.dir/utf16le/utf16le.cpp.obj
+[185/296] Building C object sdk/tools/fatten/CMakeFiles/fatten.dir/fatten.c.obj
+[186/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/chmc/err.c.obj
+[187/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/cabman.cxx.obj
+[188/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/dfp.cxx.obj
+[189/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/__/port/mkstemps.c.obj
+[190/296] Building C object sdk/tools/hpp/CMakeFiles/hpp.dir/hpp.c.obj
+[191/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/lzx_compress/lzx_layer.c.obj
+[192/296] Building C object sdk/tools/isohybrid/CMakeFiles/isohybrid.dir/__/port/getopt1.c.obj
+[193/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/chmc/chmc.c.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/chmc/chmc.c:1153:52: warning: format specifies type 'intmax_t' (aka 'long long') but the argument has type 'UInt64' (aka 'unsigned long') [-Wformat]
+ 1153 |                 chmc_dump("[%d] at: %jd\n", section->mark_count, at);
+      |                                     ~~~                          ^~
+      |                                     %lu
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/chmc/chmc.h:263:54: note: expanded from macro 'chmc_dump'
+  263 | #define chmc_dump(fmt, ...) fprintf(stderr, fmt , ## __VA_ARGS__)
+      |                                             ~~~      ^~~~~~~~~~~
+1 warning generated.
+[194/296] Building C object sdk/tools/isohybrid/CMakeFiles/isohybrid.dir/__/port/getopt.c.obj
+[195/296] Building C object sdk/tools/kbdtool/CMakeFiles/kbdtool.dir/data.c.obj
+[196/296] Building CXX object sdk/tools/cabman/CMakeFiles/cabman.dir/cabinet.cxx.obj
+[197/296] Building C object sdk/tools/kbdtool/CMakeFiles/kbdtool.dir/main.c.obj
+[198/296] Building C object sdk/tools/kbdtool/CMakeFiles/kbdtool.dir/output.c.obj
+[199/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/hhp_reader.cpp.obj
+[200/296] Building C object sdk/tools/kbdtool/CMakeFiles/kbdtool.dir/parser.c.obj
+[201/296] Building C object sdk/tools/mkdiskimg/CMakeFiles/mkdiskimg.dir/mkdiskimg.c.obj
+[202/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/hhpcomp.cpp.obj
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:71:27: warning: object backing the pointer 'chm_config.title' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   71 |     chm_config.title    = project_file.get_title_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:72:27: warning: object backing the pointer 'chm_config.hhc' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   72 |     chm_config.hhc      = project_file.get_contents_file_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:73:27: warning: object backing the pointer 'chm_config.hhk' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   73 |     chm_config.hhk      = project_file.get_index_file_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/hhpcomp/hhpcomp.cpp:74:27: warning: object backing the pointer 'chm_config.deftopic' will be destroyed at the end of the full-expression [-Wdangling-assignment-gsl]
+   74 |     chm_config.deftopic = project_file.get_default_topic_string().c_str();
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4 warnings generated.
+[203/296] Building C object sdk/tools/mkdrvdb/CMakeFiles/mkdrvdb.dir/mkdrvdb.c.obj
+[204/296] Building CXX object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/utils.cpp.obj
+[205/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/boot.c.obj
+[206/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/eltorito.c.obj
+[207/296] Building C object sdk/tools/hhpcomp/CMakeFiles/hhpcomp.dir/lzx_compress/lz_nonslide.c.obj
+[208/296] Linking C static library sdk\tools\mkisofs\liblibsiconv.a
+[209/296] Linking C static library sdk\tools\mkisofs\liblibmdigest.a
+[210/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/hash.c.obj
+[211/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/cmi.c.obj
+[212/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/binhive.c.obj
+[213/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/inode.c.obj
+[214/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/match.c.obj
+[215/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/isonum.c.obj
+[216/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/joliet.c.obj
+[217/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/mkhive.c.obj
+[218/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/registry.c.obj
+[219/296] Building C object sdk/tools/isohybrid/CMakeFiles/isohybrid.dir/reactos_support_code.c.obj
+[220/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/reginf.c.obj
+[221/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/mkisofs.c.obj
+[222/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/name.c.obj
+[223/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/stream.c.obj
+[224/296] Building C object sdk/tools/rosexpandimg/CMakeFiles/rosexpandimg.dir/rosexpandimg.c.obj
+[225/296] Building C object sdk/tools/mkhive/CMakeFiles/mkhive.dir/rtl.c.obj
+[226/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/rock.c.obj
+[227/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/multi.c.obj
+[228/296] Building C object sdk/tools/mkshelllink/CMakeFiles/mkshelllink.dir/mkshelllink.c.obj
+[229/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/tree.c.obj
+[230/296] Building C object sdk/tools/mkisofs/CMakeFiles/mkisofs.dir/schilytools/mkisofs/write.c.obj
+[231/296] Building C object sdk/tools/symz/CMakeFiles/symz.dir/symz.c.obj
+[232/296] Building C object sdk/tools/rosexpandimg/CMakeFiles/rosexpandimg.dir/__/__/__/base/applications/cmdutils/lntexpandstorage/expandcore.c.obj
+[233/296] Building C object sdk/tools/symz/CMakeFiles/symz.dir/__/__/lib/3rdparty/lzma/LzFind.c.obj
+[234/296] Building C object sdk/tools/symz/CMakeFiles/symz.dir/__/__/lib/3rdparty/lzma/LzmaEnc.c.obj
+[235/296] Linking C static library sdk\tools\unicode\libunicode.a
+[236/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/attribute.c.obj
+[237/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/hash.c.obj
+[238/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/expr.c.obj
+[239/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/client.c.obj
+[240/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/proxy.c.obj
+[241/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/server.c.obj
+[242/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/register.c.obj
+[243/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/header.c.obj
+[244/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/utils.c.obj
+[245/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/typelib.c.obj
+[246/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/widl.c.obj
+[247/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/typetree.c.obj
+[248/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/__/port/getopt1.c.obj
+[249/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/write_sltg.c.obj
+[250/296] Building C object sdk/tools/isohybrid/CMakeFiles/isohybrid.dir/isohybrid.c.obj
+In file included from C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/isohybrid/isohybrid.c:45:
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/tools/isohybrid/reactos_support_code.h:42:9: warning: 'fseeko' macro redefined [-Wmacro-redefined]
+   42 | #define fseeko _fseeki64
+      |         ^
+C:/Users/Nicolas/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/x86_64-w64-mingw32/include/stdio.h:611:9: note: previous definition is here
+  611 | #define fseeko fseeko64
+      |         ^
+1 warning generated.
+[251/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/write_msft.c.obj
+[252/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/__/port/mkstemps.c.obj
+[253/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/__/port/getopt.c.obj
+[254/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/typegen.c.obj
+[255/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/parser.yy.c.obj
+[256/296] Building C object sdk/tools/wimage/CMakeFiles/wimage.dir/wimage.c.obj
+[257/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/metadata.c.obj
+[258/296] Building C object sdk/tools/xml2sdb/CMakeFiles/xml2sdb.dir/__/__/__/dll/appcompat/apphelp/sdbstringtable.c.obj
+[259/296] Building C object sdk/tools/xml2sdb/CMakeFiles/xml2sdb.dir/__/__/__/dll/appcompat/apphelp/sdbwrite.c.obj
+[260/296] Building C object sdk/tools/widl/CMakeFiles/widl.dir/parser.tab.c.obj
+[261/296] Linking C static library sdk\lib\libwim\liblibwimhost.a
+[262/296] Linking C static library sdk\lib\inflib\libinflibhost.a
+[263/296] Building CXX object sdk/tools/txt2nls/CMakeFiles/txt2nls.dir/main.cpp.obj
+[264/296] Linking C static library sdk\lib\cmlib\libcmlibhost.a
+[265/296] Linking C executable bin2c.exe
+[266/296] Building CXX object sdk/tools/xml2sdb/CMakeFiles/xml2sdb.dir/tinyxml2.cpp.obj
+[267/296] Linking C static library sdk\lib\3rdparty\zlib\libzlibhost.a
+[268/296] Linking C executable gendib.exe
+[269/296] Linking C executable gas2armasm.exe
+[270/296] Linking C executable geninc.exe
+[271/296] Linking C executable obj2bin.exe
+[272/296] Linking C executable spec2def.exe
+[273/296] Linking C executable fatten.exe
+[274/296] Linking CXX executable utf16le.exe
+[275/296] Linking C executable pefixup.exe
+[276/296] Linking C executable windmc.exe
+[277/296] Linking C executable kbdtool.exe
+[278/296] Linking CXX executable sdk\tools\hhpcomp\hhpcomp.exe
+[279/296] Linking C executable hpp.exe
+[280/296] Linking CXX executable cabman.exe
+[281/296] Linking C executable mkdiskimg.exe
+[282/296] Linking C executable isohybrid.exe
+[283/296] Linking C executable mkisofs.exe
+[284/296] Linking C executable mkdrvdb.exe
+[285/296] Building CXX object sdk/tools/xml2sdb/CMakeFiles/xml2sdb.dir/main.cpp.obj
+[286/296] Linking C executable mkhive.exe
+[287/296] Linking C executable mkshelllink.exe
+[288/296] Linking C executable symz.exe
+[289/296] Linking C executable rosexpandimg.exe
+[290/296] Linking CXX executable txt2nls.exe
+[291/296] Linking C executable wimage.exe
+[292/296] Linking C executable widl.exe
+[293/296] Building CXX object sdk/tools/asmpp/CMakeFiles/asmpp.dir/asmpp.cpp.obj
+[294/296] Linking CXX executable asmpp.exe
+[295/296] Building CXX object sdk/tools/xml2sdb/CMakeFiles/xml2sdb.dir/xml2sdb.cpp.obj
+[296/296] Linking CXX executable xml2sdb.exe
+[7/431] Performing install step for 'host-tools'
+[8/431] Completed 'host-tools'
+[9/431] Generating ntddk.h
+[10/431] Generating ntifs.h
+Could not find variable '$LXUID'
+Could not find variable '$LXGID'
+Could not find variable '$LXMOD'
+Could not find variable '$LXDEV'
+[11/431] Generating wdm.h
+[12/431] Generating devioctl.h
+[13/431] Generating ntdef.h
+[14/431] Generating winnt.h
+[15/431] Generating d3d10.h
+[16/431] Generating d3d10_1.h
+[17/431] Generating d3d10effect.h
+[18/431] Generating d3d10sdklayers.h
+[19/431] Generating d3d10shader.h
+[20/431] Generating d3d11.h
+[21/431] Generating d3d11_1.h
+[22/431] Generating d3d11_2.h
+[23/431] Generating d3d11_3.h
+[24/431] Generating d3d11_4.h
+[25/431] Generating d3d11on12.h
+[26/431] Generating d3d11sdklayers.h
+[27/431] Generating d3d12.h
+[28/431] Generating d3d12sdklayers.h
+[29/431] Generating d3d12shader.h
+[30/431] Generating d3d12video.h
+[31/431] Generating d3d9on12.h
+[32/431] Generating d3dcommon.h
+[33/431] Generating dcommon.h
+[34/431] Generating dcomp.h
+[35/431] Generating dcompanimation.h
+[36/431] Generating dcomptypes.h
+[37/431] Generating dxgi.h
+[38/431] Generating dxgi1_2.h
+[39/431] Generating dxgi1_3.h
+[40/431] Generating dxgi1_4.h
+[41/431] Generating dxgi1_5.h
+[42/431] Generating dxgi1_6.h
+[43/431] Generating dxgidebug.h
+[44/431] Generating dxgitype.h
+[45/431] Generating dxva2api.h
+[46/431] Generating dxvahd.h
+[47/431] Generating bugcodes.mc
+[48/431] Generating ../ddk/ntddk.h
+[49/431] Generating ../ddk/ntifs.h
+[50/431] Generating ../ddk/wdm.h
+[51/431] Generating ../psdk/devioctl.h
+[52/431] Generating ../psdk/ntdef.h
+[53/431] Generating ../psdk/winnt.h
+[54/431] Generating bugcodes.h, bugcodes.rc
+[55/431] Generating activation.h
+[56/431] Generating activaut.h
+[57/431] Generating activdbg.h
+[58/431] Generating activscp.h
+[59/431] Generating asptlb.h
+[60/431] Generating asyncinfo.h
+[61/431] Generating atliface.h
+[62/431] Generating audioclient.h
+[63/431] Generating audiopolicy.h
+[64/431] Generating bdaiface.h
+[65/431] Generating bits.h
+[66/431] Generating bits1_5.h
+[67/431] Generating bits2_0.h
+[68/431] Generating bits2_5.h
+[69/431] Generating bits3_0.h
+[70/431] Generating bits5_0.h
+[71/431] Generating comcat.h
+[72/431] Generating commoncontrols.h
+[73/431] Generating comsvcs.h
+[74/431] Generating control.h
+[75/431] Generating cor.h
+[76/431] Generating cordebug.h
+[77/431] Generating ctffunc.h
+[78/431] Generating ctfutb.h
+[79/431] Generating ctxtcall.h
+[80/431] Generating d2d1.h
+[81/431] Generating d2d1_1.h
+[82/431] Generating d2d1_2.h
+[83/431] Generating d2d1_3.h
+[84/431] Generating d2d1effectauthor.h
+[85/431] Generating d2d1effects.h
+[86/431] Generating d2d1effects_1.h
+[87/431] Generating d2d1effects_2.h
+[88/431] Generating devenum.h
+[89/431] Generating devicetopology.h
+[90/431] Generating dimm.h
+[91/431] Generating directmanipulation.h
+[92/431] Generating dispex.h
+[93/431] Generating docobj.h
+[94/431] Generating docobjectservice.h
+[95/431] Generating downloadmgr.h
+[96/431] Generating dragdropinterop.h
+[97/431] Generating drmexternals.h
+[98/431] Generating dvdif.h
+[99/431] Generating dwrite.h
+[100/431] Generating dwrite_1.h
+[101/431] Generating dwrite_2.h
+[102/431] Generating dwrite_3.h
+[103/431] Generating emptyvc.h
+[104/431] Generating endpointvolume.h
+[105/431] Generating eventtoken.h
+[106/431] Generating evr.h
+[107/431] Generating evr9.h
+[108/431] Generating exdisp.h
+[109/431] Generating filter.h
+[110/431] Generating fusion.h
+[111/431] Generating gameinput.h
+[112/431] Generating hlink.h
+[113/431] Generating holographicspaceinterop.h
+[114/431] Generating hstring.h
+[115/431] Generating htiface.h
+[116/431] Generating htiframe.h
+[117/431] Generating httprequest.h
+[118/431] Generating iads.h
+[119/431] Generating icftypes.h
+[120/431] Generating icodecapi.h
+[121/431] Generating ieautomation.h
+[122/431] Generating imapi.h
+[123/431] Generating imnact.h
+[124/431] Generating imnxport.h
+[125/431] Generating indexsrv.h
+[126/431] Generating inputpaneinterop.h
+[127/431] Generating inputscope.h
+[128/431] Generating inseng.h
+[129/431] Generating inspectable.h
+[130/431] Generating ivectorchangedeventargs.h
+[131/431] Generating mediaobj.h
+[132/431] Generating metahost.h
+[133/431] Generating mfd3d12.h
+[134/431] Generating mfidl.h
+[135/431] Generating mfmediaengine.h
+[136/431] Generating mfobjects.h
+[137/431] Generating mfplay.h
+[138/431] Generating mfreadwrite.h
+[139/431] Generating mftransform.h
+[140/431] Generating mimeinfo.h
+[141/431] Generating mimeole.h
+[142/431] Generating mlang.h
+[143/431] Generating mmc.h
+[144/431] Generating mmdeviceapi.h
+[145/431] Generating msaatext.h
+[146/431] Generating mscoree.h
+[147/431] Generating msctf.h
+[148/431] Generating msdadc.h
+[149/431] Generating mshtmhst.h
+[150/431] Generating mshtml.h
+[151/431] Generating msinkaut.h
+[152/431] Generating msopc.h
+[153/431] Generating mstask.h
+[154/431] Generating msxml.h
+[155/431] Generating msxml2.h
+[156/431] Generating msxml6.h
+[157/431] Generating natupnp.h
+[158/431] Generating netcon.h
+[159/431] Generating netfw.h
+[160/431] Generating netlistmgr.h
+[161/431] Generating notificationactivationcallback.h
+[162/431] Generating oaidl.h
+[163/431] Generating objectarray.h
+[164/431] Generating objidl.h
+[165/431] Generating objidlbase.h
+[166/431] Generating objsafe.h
+[167/431] Generating ocidl.h
+[168/431] Generating ocmm.h
+[169/431] Generating oleacc.h
+[170/431] Generating oledb.h
+[171/431] Generating oleidl.h
+[172/431] Generating optary.h
+[173/431] Generating perhist.h
+[174/431] Generating portabledeviceapi.h
+[175/431] Generating portabledevicetypes.h
+[176/431] Generating propidl.h
+[177/431] Generating propsys.h
+[178/431] Generating pstore.h
+[179/431] Generating restrictederrorinfo.h
+[180/431] Generating richole.h
+[181/431] Generating robuffer.h
+[182/431] Generating rometadataapi.h
+[183/431] Generating roparameterizediid.h
+[184/431] Generating rtworkq.h
+[185/431] Generating sensevts.h
+[186/431] Generating sensorsapi.h
+[187/431] Generating servprov.h
+[188/431] Generating shdeprecated.h
+[189/431] Generating shimgdata.h
+[190/431] Generating shldisp.h
+[191/431] Generating shobjidl.h
+[192/431] Generating shtypes.h
+[193/431] Generating spatialaudioclient.h
+[194/431] Generating strmif.h
+[195/431] Generating structuredquery.h
+[196/431] Generating structuredquerycondition.h
+[197/431] Generating systemmediatransportcontrolsinterop.h
+[198/431] Generating taskschd.h
+[199/431] Generating textstor.h
+[200/431] Generating thumbcache.h
+[201/431] Generating tlogstg.h
+[202/431] Generating tom.h
+[203/431] Generating transact.h
+[204/431] Generating tuner.h
+[205/431] Generating txcoord.h
+[206/431] Generating txdtc.h
+[207/431] Generating uiautomationclient.h
+[208/431] Generating uiautomationcore.h
+[209/431] Generating uiviewsettingsinterop.h
+[210/431] Generating unknwn.h
+[211/431] Generating urlhist.h
+[212/431] Generating urlmon.h
+[213/431] Generating vmr9.h
+[214/431] Generating vsbackup.h
+[215/431] Generating vss.h
+[216/431] Generating vswriter.h
+[217/431] Generating wbemcli.h
+[218/431] Generating wbemdisp.h
+[219/431] Generating wbemprov.h
+[220/431] Generating weakreference.h
+[221/431] Generating wia_lh.h
+[222/431] Generating wia_xp.h
+[223/431] Generating wincodec.h
+[224/431] Generating wincodecsdk.h
+[225/431] Generating windows.applicationmodel.activation.h
+[226/431] Generating windows.applicationmodel.background.h
+[227/431] Generating windows.applicationmodel.core.h
+[228/431] Generating windows.applicationmodel.datatransfer.dragdrop.core.h
+[229/431] Generating windows.applicationmodel.datatransfer.dragdrop.h
+[230/431] Generating windows.applicationmodel.datatransfer.h
+[231/431] Generating windows.applicationmodel.h
+[232/431] Generating windows.applicationmodel.store.preview.installcontrol.h
+[233/431] Generating windows.data.json.h
+[234/431] Generating windows.data.xml.dom.h
+[235/431] Generating windows.devices.bluetooth.advertisement.h
+[236/431] Generating windows.devices.bluetooth.genericattributeprofile.h
+[237/431] Generating windows.devices.bluetooth.h
+[238/431] Generating windows.devices.bluetooth.rfcomm.h
+[239/431] Generating windows.devices.enumeration.h
+[240/431] Generating windows.devices.geolocation.h
+[241/431] Generating windows.devices.haptics.h
+[242/431] Generating windows.devices.input.h
+[243/431] Generating windows.devices.power.h
+[244/431] Generating windows.devices.radios.h
+[245/431] Generating windows.devices.usb.h
+[246/431] Generating windows.foundation.collections.h
+[247/431] Generating windows.foundation.h
+[248/431] Generating windows.foundation.metadata.h
+[249/431] Generating windows.foundation.numerics.h
+[250/431] Generating windows.gaming.input.custom.h
+[251/431] Generating windows.gaming.input.forcefeedback.h
+[252/431] Generating windows.gaming.input.h
+[253/431] Generating windows.gaming.ui.h
+[254/431] Generating windows.globalization.h
+[255/431] Generating windows.graphics.capture.h
+[256/431] Generating windows.graphics.capture.interop.h
+[257/431] Generating windows.graphics.directx.direct3d11.h
+[258/431] Generating windows.graphics.directx.direct3d11.interop.h
+[259/431] Generating windows.graphics.directx.h
+[260/431] Generating windows.graphics.display.h
+[261/431] Generating windows.graphics.effects.h
+[262/431] Generating windows.graphics.h
+[263/431] Generating windows.graphics.holographic.h
+[264/431] Generating windows.graphics.imaging.h
+[265/431] Generating windows.management.deployment.h
+[266/431] Generating windows.media.capture.h
+[267/431] Generating windows.media.closedcaptioning.h
+[268/431] Generating windows.media.core.h
+[269/431] Generating windows.media.devices.h
+[270/431] Generating windows.media.effects.h
+[271/431] Generating windows.media.faceanalysis.h
+[272/431] Generating windows.media.h
+[273/431] Generating windows.media.mediaproperties.h
+[274/431] Generating windows.media.playback.h
+[275/431] Generating windows.media.render.h
+[276/431] Generating windows.media.speechrecognition.h
+[277/431] Generating windows.media.speechsynthesis.h
+[278/431] Generating windows.media.transcoding.h
+[279/431] Generating windows.networking.connectivity.h
+[280/431] Generating windows.networking.h
+[281/431] Generating windows.networking.sockets.h
+[282/431] Generating windows.perception.h
+[283/431] Generating windows.perception.spatial.h
+[284/431] Generating windows.perception.spatial.surfaces.h
+[285/431] Generating windows.security.authentication.onlineid.h
+[286/431] Generating windows.security.authorization.appcapabilityaccess.h
+[287/431] Generating windows.security.credentials.h
+[288/431] Generating windows.security.credentials.ui.h
+[289/431] Generating windows.security.cryptography.core.h
+[290/431] Generating windows.security.cryptography.h
+[291/431] Generating windows.security.enterprisedata.h
+[292/431] Generating windows.security.exchangeactivesyncprovisioning.h
+[293/431] Generating windows.security.isolation.h
+[294/431] Generating windows.storage.fileproperties.h
+[295/431] Generating windows.storage.h
+[296/431] Generating windows.storage.search.h
+[297/431] Generating windows.storage.streams.h
+[298/431] Generating windows.system.h
+[299/431] Generating windows.system.power.h
+[300/431] Generating windows.system.profile.h
+[301/431] Generating windows.system.profile.systemmanufacturers.h
+[302/431] Generating windows.system.threading.h
+[303/431] Generating windows.system.userprofile.h
+[304/431] Generating windows.ui.composition.h
+[305/431] Generating windows.ui.composition.interop.h
+[306/431] Generating windows.ui.core.h
+[307/431] Generating windows.ui.h
+[308/431] Generating windows.ui.input.h
+[309/431] Generating windows.ui.notifications.h
+[310/431] Generating windows.ui.shell.h
+[311/431] Generating windows.ui.text.core.h
+[312/431] Generating windows.ui.text.h
+[313/431] Generating windows.ui.viewmanagement.core.h
+[314/431] Generating windows.ui.viewmanagement.h
+[315/431] Generating windows.ui.windowmanagement.h
+[316/431] Generating windows.ui.xaml.h
+[317/431] Generating windows.ui.xaml.hosting.desktopwindowxamlsource.h
+[318/431] Generating windows.ui.xaml.interop.h
+[319/431] Generating windowscontracts.h
+[320/431] Generating winsxs.h
+[321/431] Generating wmdrmsdk.h
+[322/431] Generating wmiutils.h
+[323/431] Generating wmsbuffer.h
+[324/431] Generating wmsdkidl.h
+[325/431] Generating wmsecure.h
+[326/431] Generating wsdbase.h
+[327/431] Generating wsddisco.h
+[328/431] Generating wsdxml.h
+[329/431] Generating wtypes.h
+[330/431] Generating wuapi.h
+[331/431] Generating xapo.h
+[332/431] Generating xaudio2.h
+[333/431] Generating xaudio2fx.h
+[334/431] Generating xmldom.h
+[335/431] Generating xmldso.h
+[336/431] Generating xmllite.h
+[337/431] Building C object sdk/include/asm/CMakeFiles/genincdata.dir/genincdata.c.obj
+[338/431] Linking C shared module sdk\include\asm\genincdata.dll
+[339/431] Generating ksamd64.inc
+[340/431] Generating libdxgmms2_implib.def
+[341/431] Generating libhal_implib.def
+[342/431] Building C object sdk/lib/crt/CMakeFiles/memcmp.dir/mem/memcmp.c.obj
+[343/431] Building C object sdk/lib/drivers/displib/CMakeFiles/displib.dir/displib.c.obj
+[344/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/softgpu.c.obj
+[345/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/platform_common.c.obj
+[346/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/vidpn.c.obj
+[347/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/pointer.c.obj
+[348/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/dma.c.obj
+[349/431] Building C object sdk/lib/drivers/softgpu/CMakeFiles/softgpu_engine.dir/wddm2.c.obj
+[350/431] Building C object sdk/lib/pseh/CMakeFiles/pseh.dir/dummy.c.obj
+[351/431] Building C object sdk/lib/vcruntime/CMakeFiles/setjmp.dir/amd64/longjmp.c.obj
+[352/431] Building ASM object sdk/lib/vcruntime/CMakeFiles/setjmp.dir/amd64/__longjmp_noframe.s.obj
+[353/431] Building ASM object sdk/lib/vcruntime/CMakeFiles/setjmp.dir/amd64/_intrinsic_setjmp.s.obj
+[354/431] Building ASM object sdk/lib/vcruntime/CMakeFiles/setjmp.dir/amd64/_setjmp.s.obj
+[355/431] Building C object sdk/lib/wdmguid/CMakeFiles/wdmguid.dir/wdmguid.c.obj
+[356/431] Generating libntoskrnl_implib.def
+[357/431] Generating CMakeFiles/libdxgmms2.dir/libdxgmms2.a
+[358/431] Generating CMakeFiles/libhal.dir/libhal.a
+[359/431] Linking C static library sdk\lib\crt\libmemcmp.a
+[360/431] Linking C static library sdk\lib\drivers\displib\libdisplib.a
+[361/431] Linking C static library sdk\lib\drivers\softgpu\libsoftgpu_engine.a
+[362/431] Linking C static library sdk\lib\pseh\libpseh.a
+[363/431] Linking C static library sdk\lib\vcruntime\libsetjmp.a
+[364/431] Linking C static library sdk\lib\wdmguid\libwdmguid.a
+[365/431] Generating CMakeFiles/libntoskrnl.dir/libntoskrnl.a
+[366/431] Generating dxgkrnl.def, dxgkrnl_stubs.c
+[367/431] Generating BasicDisplay.def, BasicDisplay_stubs.c
+[368/431] Generating legacytest.def, legacytest_stubs.c
+[369/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dxgkrnl.c.obj
+[370/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dxgmms2_client.c.obj
+[371/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/iommu.c.obj
+[372/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/adapter.c.obj
+[373/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/acpievent.c.obj
+[374/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/adapter_map_core.c.obj
+[375/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/adapter_start_core.c.obj
+[376/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/child_core.c.obj
+[377/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/legacy.c.obj
+[378/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/pnp.c.obj
+[379/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/vidmm.c.obj
+[380/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/paging.c.obj
+[381/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/gpuva.c.obj
+[382/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/gpuva_core.c.obj
+[383/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/fence_core.c.obj
+[384/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/node_stats_core.c.obj
+[385/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dma_core.c.obj
+[386/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/residency_core.c.obj
+[387/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/paging_core.c.obj
+[388/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/display_core.c.obj
+[389/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/object_core.c.obj
+[390/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/keyedmutex_core.c.obj
+[391/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/capture.c.obj
+[392/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/handles.c.obj
+[393/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/device_work_core.c.obj
+[394/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/present_queue_core.c.obj
+[395/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/submit_reservation_core.c.obj
+[396/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/tracked_work_core.c.obj
+[397/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/vidmm_worker_drain_core.c.obj
+[398/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/context_sync.c.obj
+[399/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/context_sync_core.c.obj
+[400/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/context.c.obj
+[401/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/context_order.c.obj
+[402/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dma.c.obj
+[403/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/present.c.obj
+[404/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/presenttrace.c.obj
+[405/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/redirection.c.obj
+[406/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/composition_frame.c.obj
+[407/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/ntgdi_exports.c.obj
+[408/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/sync.c.obj
+[409/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/keyedmutex.c.obj
+[410/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/overlay.c.obj
+[411/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/trimnotify.c.obj
+[412/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/sync_wait_core.c.obj
+[413/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/vidsch.c.obj
+[414/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/vidpn.c.obj
+[415/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/d3dkmt.c.obj
+[416/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/blocklist.c.obj
+[417/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/display.c.obj
+[418/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/debug.c.obj
+[419/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/feature_query_core.c.obj
+[420/431] Building RC object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dxgkrnl.rc.res
+[421/431] Building C object drivers/directx/dxgkrnl/CMakeFiles/dxgkrnl.dir/dxgkrnl_stubs.c.obj
+[422/431] Building C object drivers/directx/softgpu/CMakeFiles/softgpu.dir/platform_root.c.obj
+[423/431] Building RC object drivers/directx/softgpu/CMakeFiles/softgpu.dir/softgpu.rc.res
+[424/431] Building C object drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.c.obj
+FAILED: drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.c.obj 
+C:\Users\Nicolas\AppData\Local\RosBE\pkgs\20261015\llvm\bin\clang.exe --target=x86_64-w64-mingw32 -DD3D_UMD_INTERFACE_VERSION=0x6003 -DDBG=1 -DDLL_EXPORT_VERSION=0xA00 -DDXGKDDI_INTERFACE_VERSION=0x11007 -DMINGW_HAS_SECURE_API=1 -DNTDDI_VERSION=0x06030000 -DREACTOS_GRAPHICS_DRIVER_MODEL_WDDM=1 -DUSE_COMPILER_EXCEPTIONS -DVER_PRODUCTBUILD=26100 -DVER_PRODUCTBUILD_QFE=1 -DVER_PRODUCTMAJORVERSION=10 -DVER_PRODUCTMINORVERSION=0 -DWINVER=0x0603 -D_AMD64_ -D_CRT_SUPPRESS_RESTRICT -D_GCC_SAL_CHECK_RETURN -D_GLIBCXX_HAVE_BROKEN_VSWPRINTF -D_M_AMD64 -D_M_X64 -D_NEW_DELETE_OPERATORS_ -D_SEH_ENABLE_TRACE -D_SETUPAPI_VER=0xA00 -D_USE_NATIVE_SEH=1 -D_WIN32_IE=0x603 -D_WIN32_WINDOWS=0xA00 -D_WIN32_WINNT=0x0603 -D_WIN64 -D__REACTOS__ -D__x86_64__  -isystem C:/Users/Nicolas/AppData/Local/RosBE/pkgs/20261015/llvm/lib/clang/24/include -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/drivers/directx/legacytest -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/crt -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/ddk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/ndk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/psdk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/reactos/libs -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/vcruntime -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/winrt -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include/psdk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include/ddk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include/dxsdk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include/reactos -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/output-Clang-amd64-debug/sdk/include/reactos/mc -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/dxsdk -IC:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/lib/pseh/include -std=gnu99   -U_X86_ -UWIN32 -ffile-prefix-map=C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln= -ffile-prefix-map=../= -U_USE_PSEH3 -Xclang -fasync-exceptions -pipe -fms-extensions -Wno-microsoft-anon-tag -fno-strict-aliasing -fno-common -mlong-double-64 -nostdlibinc -fno-associative-math -fno-builtin-stpcpy -gdwarf-2 -ggdb -march=athlon64 -mtune=generic -Werror -Wall -Wpointer-arith "-Wno-error=#pragma-messages" -Wunused-comparison -Wunused-result -O1 -mcx16 -MD -MT drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.c.obj -MF drivers\directx\legacytest\CMakeFiles\legacytest.dir\legacytest.c.obj.d -o drivers/directx/legacytest/CMakeFiles/legacytest.dir/legacytest.c.obj -c C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:212:10: error: unknown type name 'PDXGK_IO_REQUEST'
+  212 |     _In_ PDXGK_IO_REQUEST IoRequest)
+      |          ^
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:333:69: error: incompatible operand types ('DXGK_CREATEDEVICEFLAGS' (aka 'struct _DXGK_CREATEDEVICEFLAGS') and 'int')
+  333 |     DbgPrint("LT1X: DxgkDdiCreateDevice flags=0x%x\n", CreateDevice ? CreateDevice->Flags : 0);
+      |                                                                     ^ ~~~~~~~~~~~~~~~~~~~   ~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:715:16: error: unknown type name 'DXGKARG_CONTROL_INTERRUPT'; did you mean 'DXGKARG_CONTROLINTERRUPT'?
+  715 |     _In_ CONST DXGKARG_CONTROL_INTERRUPT *ControlInterrupt)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |                DXGKARG_CONTROLINTERRUPT
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/ddk/d3dkmddi.h:3126:3: note: 'DXGKARG_CONTROLINTERRUPT' declared here
+ 3126 | } DXGKARG_CONTROLINTERRUPT, *PDXGKARG_CONTROLINTERRUPT;
+      |   ^
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:891:10: error: unknown type name 'PDXGKARG_LINK_DEVICE'; did you mean 'PDXGKDDI_LINK_DEVICE'?
+  891 |     _In_ PDXGKARG_LINK_DEVICE LinkDevice)
+      |          ^~~~~~~~~~~~~~~~~~~~
+      |          PDXGKDDI_LINK_DEVICE
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/sdk/include/ddk/dispmprt.h:2878:30: note: 'PDXGKDDI_LINK_DEVICE' declared here
+ 2878 | typedef DXGKDDI_LINK_DEVICE *PDXGKDDI_LINK_DEVICE;
+      |                              ^
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:970:38: error: incompatible function pointer types assigning to 'PDXGKDDI_INTERRUPT_ROUTINE' (aka 'unsigned char (*)(void *, unsigned long)') from 'BOOLEAN (PVOID)' (aka 'unsigned char (void *)') [-Wincompatible-function-pointer-types]
+  970 |     InitData.DxgkDdiInterruptRoutine = Lt1xDdiInterruptRoutine;
+      |                                      ^ ~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:973:38: error: incompatible function pointer types assigning to 'PDXGKDDI_QUERY_CHILD_STATUS' (aka 'long (*)(void *, struct _DXGK_CHILD_STATUS *, unsigned char)') from 'NTSTATUS (PVOID, PDXGK_CHILD_STATUS)' (aka 'long (void *, struct _DXGK_CHILD_STATUS *)') [-Wincompatible-function-pointer-types]
+  973 |     InitData.DxgkDdiQueryChildStatus = Lt1xDdiQueryChildStatus;
+      |                                      ^ ~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:974:43: error: incompatible function pointer types assigning to 'PDXGKDDI_QUERY_DEVICE_DESCRIPTOR' (aka 'long (*)(void *, unsigned long, struct _DXGK_DEVICE_DESCRIPTOR *)') from 'NTSTATUS (PVOID, ULONG, PDXGK_CHILD_DESCRIPTOR)' (aka 'long (void *, unsigned long, struct _DXGK_CHILD_DESCRIPTOR *)') [-Wincompatible-function-pointer-types]
+  974 |     InitData.DxgkDdiQueryDeviceDescriptor = Lt1xDdiQueryDeviceDescriptor;
+      |                                           ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:976:37: error: incompatible function pointer types assigning to 'PDXGKDDI_NOTIFY_ACPI_EVENT' (aka 'long (*)(void *, enum _DXGK_EVENT_TYPE, unsigned long, void *, unsigned long *)') from 'NTSTATUS (PVOID, DXGK_EVENT_TYPE, PUCHAR, ULONG)' (aka 'long (void *, enum _DXGK_EVENT_TYPE, unsigned char *, unsigned long)') [-Wincompatible-function-pointer-types]
+  976 |     InitData.DxgkDdiNotifyAcpiEvent = Lt1xDdiNotifyAcpiEvent;
+      |                                     ^ ~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:977:33: error: incompatible function pointer types assigning to 'PDXGKDDI_RESET_DEVICE' (aka 'void (*)(void *)') from 'NTSTATUS (PVOID)' (aka 'long (void *)') [-Wincompatible-function-pointer-types]
+  977 |     InitData.DxgkDdiResetDevice = Lt1xDdiResetDevice;
+      |                                 ^ ~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:980:39: error: incompatible function pointer types assigning to 'PDXGKDDI_CONTROL_ETW_LOGGING' (aka 'void (*)(unsigned char, unsigned long, unsigned char)') from 'void (BOOLEAN, ULONG)' (aka 'void (unsigned char, unsigned long)') [-Wincompatible-function-pointer-types]
+  980 |     InitData.DxgkDdiControlEtwLogging = Lt1xDdiControlEtwLogging;
+      |                                       ^ ~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:981:38: error: incompatible function pointer types assigning to 'PDXGKDDI_QUERY_ADAPTER_INFO' (aka 'long (*)(void *const, const struct _DXGKARG_QUERYADAPTERINFO *)') from 'NTSTATUS (PVOID, PDXGKARG_QUERYADAPTERINFO)' (aka 'long (void *, struct _DXGKARG_QUERYADAPTERINFO *)') [-Wincompatible-function-pointer-types]
+  981 |     InitData.DxgkDdiQueryAdapterInfo = Lt1xDdiQueryAdapterInfo;
+      |                                      ^ ~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:984:39: error: incompatible function pointer types assigning to 'PDXGKDDI_DESTROY_ALLOCATION' (aka 'long (*)(void *const, const struct _DXGKARG_DESTROYALLOCATION *)') from 'NTSTATUS (PVOID, PVOID, PDXGKARG_DESTROYALLOCATION)' (aka 'long (void *, void *, struct _DXGKARG_DESTROYALLOCATION *)') [-Wincompatible-function-pointer-types]
+  984 |     InitData.DxgkDdiDestroyAllocation = Lt1xDdiDestroyAllocation;
+      |                                       ^ ~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:988:43: error: incompatible function pointer types assigning to 'PDXGKDDI_RELEASE_SWIZZLING_RANGE' (aka 'long (*)(void *const, const struct _DXGKARG_RELEASESWIZZLINGRANGE *)') from 'NTSTATUS (PVOID, PDXGKARG_RELEASESWIZZLINGRANGE)' (aka 'long (void *, struct _DXGKARG_RELEASESWIZZLINGRANGE *)') [-Wincompatible-function-pointer-types]
+  988 |     InitData.DxgkDdiReleaseSwizzlingRange = Lt1xDdiReleaseSwizzlingRange;
+      |                                           ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:989:27: error: incompatible function pointer types assigning to 'PDXGKDDI_PATCH' (aka 'long (*)(void *const, const struct _DXGKARG_PATCH *)') from 'NTSTATUS (PVOID, PDXGKARG_PATCH)' (aka 'long (void *, struct _DXGKARG_PATCH *)') [-Wincompatible-function-pointer-types]
+  989 |     InitData.DxgkDdiPatch = Lt1xDdiPatch;
+      |                           ^ ~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:990:35: error: incompatible function pointer types assigning to 'PDXGKDDI_SUBMIT_COMMAND' (aka 'long (*)(void *const, const struct _DXGKARG_SUBMITCOMMAND *)') from 'NTSTATUS (PVOID, PDXGKARG_SUBMITCOMMAND)' (aka 'long (void *, struct _DXGKARG_SUBMITCOMMAND *)') [-Wincompatible-function-pointer-types]
+  990 |     InitData.DxgkDdiSubmitCommand = Lt1xDdiSubmitCommand;
+      |                                   ^ ~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:991:36: error: incompatible function pointer types assigning to 'PDXGKDDI_PREEMPT_COMMAND' (aka 'long (*)(void *const, const struct _DXGKARG_PREEMPTCOMMAND *)') from 'NTSTATUS (PVOID, PDXGKARG_PREEMPTCOMMAND)' (aka 'long (void *, struct _DXGKARG_PREEMPTCOMMAND *)') [-Wincompatible-function-pointer-types]
+  991 |     InitData.DxgkDdiPreemptCommand = Lt1xDdiPreemptCommand;
+      |                                    ^ ~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:993:32: error: incompatible function pointer types assigning to 'PDXGKDDI_SET_PALETTE' (aka 'long (*)(void *const, const struct _DXGKARG_SETPALETTE *)') from 'NTSTATUS (PVOID, PDXGKARG_SETPALETTE)' (aka 'long (void *, struct _DXGKARG_SETPALETTE *)') [-Wincompatible-function-pointer-types]
+  993 |     InitData.DxgkDdiSetPalette = Lt1xDdiSetPalette;
+      |                                ^ ~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:995:37: error: incompatible function pointer types assigning to 'PDXGKDDI_SET_POINTER_SHAPE' (aka 'long (*)(void *const, const struct _DXGKARG_SETPOINTERSHAPE *)') from 'NTSTATUS (PVOID, PDXGKARG_SETPOINTERSHAPE)' (aka 'long (void *, struct _DXGKARG_SETPOINTERSHAPE *)') [-Wincompatible-function-pointer-types]
+  995 |     InitData.DxgkDdiSetPointerShape = Lt1xDdiSetPointerShape;
+      |                                     ^ ~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Nicolas/HarnessAgents/hive/agents/pam-mvzy3ngz/scratch/ln/drivers/directx/legacytest/legacytest.c:998:28: error: incompatible function pointer types assigning to 'PDXGKDDI_ESCAPE' (aka 'long (*)(void *const, const struct _DXGKARG_ESCAPE *)') from 'NTSTATUS (PVOID, PDXGKARG_ESCAPE)' (aka 'long (void *, struct _DXGKARG_ESCAPE *)') [-Wincompatible-function-pointer-types]
+  998 |     InitData.DxgkDdiEscape = Lt1xDdiEscape;
+      |                            ^ ~~~~~~~~~~~~~
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 errors generated.
+ninja: build stopped: subcommand failed.
