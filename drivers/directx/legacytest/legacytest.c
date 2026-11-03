@@ -24,7 +24,8 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
 {
     OBJECT_ATTRIBUTES ObjectAttributes;
     UNICODE_STRING ValueName;
-    KEY_VALUE_PARTIAL_INFORMATION Info;
+    UCHAR Buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data) + sizeof(ULONG)];
+    PKEY_VALUE_PARTIAL_INFORMATION Info = (PKEY_VALUE_PARTIAL_INFORMATION)Buffer;
     HANDLE KeyHandle;
     NTSTATUS Status;
     ULONG ResultLength;
@@ -49,19 +50,19 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
     }
 
     RtlInitUnicodeString(&ValueName, L"DdiVersion");
-    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, &Info, sizeof(Info), &ResultLength);
-    if (NT_SUCCESS(Status) && Info.Type == REG_DWORD && Info.DataLength == sizeof(ULONG))
-        Lt1xDdiVersion = *(PULONG)Info.Data;
+    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
+    if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
+        Lt1xDdiVersion = *(PULONG)Info->Data;
 
     RtlInitUnicodeString(&ValueName, L"PoisonTail");
-    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, &Info, sizeof(Info), &ResultLength);
-    if (NT_SUCCESS(Status) && Info.Type == REG_DWORD && Info.DataLength == sizeof(ULONG))
-        Lt1xPoisonTail = *(PULONG)Info.Data;
+    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
+    if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
+        Lt1xPoisonTail = *(PULONG)Info->Data;
 
     RtlInitUnicodeString(&ValueName, L"ChildCount");
-    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, &Info, sizeof(Info), &ResultLength);
-    if (NT_SUCCESS(Status) && Info.Type == REG_DWORD && Info.DataLength == sizeof(ULONG))
-        Lt1xChildCount = *(PULONG)Info.Data;
+    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
+    if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
+        Lt1xChildCount = *(PULONG)Info->Data;
 
     ZwClose(KeyHandle);
     return STATUS_SUCCESS;
