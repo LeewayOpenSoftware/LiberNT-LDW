@@ -18,7 +18,11 @@ DefaultDestDir=12
 %LegacyTest.DeviceDesc%=LegacyTest_Install,PCI\VEN_1234&DEV_1111
 
 [LegacyTest_Install]
+CopyFiles=LegacyTest_CopyFiles
 AddReg=LegacyTest_SoftwareSettings
+
+[LegacyTest_CopyFiles]
+legacytest.sys
 
 [LegacyTest_SoftwareSettings]
 HKR,,VgaCompatible,%REG_DWORD%,0
