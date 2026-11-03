@@ -264,7 +264,7 @@ KeUpdateSystemTime(IN PKTRAP_FRAME TrapFrame,
 #ifdef _M_AMD64
 extern PKTHREAD volatile KiW32TraceThread;
 VOID NTAPI KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode);
-VOID NTAPI KiW32StateSample(VOID);
+VOID NTAPI KiW32StateSample(PKTHREAD Current);
 #endif
 
 VOID
@@ -302,7 +302,7 @@ KiUpdateRunTime(IN PKTRAP_FRAME TrapFrame,
     /* Gecko startup diag (trace-loader-gecko2 only): sample the latched thread */
     if (KiW32TraceThread != NULL)
     {
-        KiW32StateSample();
+        KiW32StateSample(Thread);
         if (Thread == KiW32TraceThread)
             KiW32UserSample(TrapFrame, KiIsUserModeTrap(TrapFrame));
     }

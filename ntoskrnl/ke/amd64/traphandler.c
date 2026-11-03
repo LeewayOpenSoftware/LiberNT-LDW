@@ -284,6 +284,68 @@ static LONG64  KiUsStateTicks = 0;
 static ULONG   KiUsOffRun = 0;
 static ULONG   KiUsMaxOff = 0;
 static LONG    KiUsStateStop = 0;   /* stop after the dump: the traced thread may exit next */
+/* Competitor histogram: who holds the CPU while the traced thread is runnable-not-running. */
+#define KIUS_HOLD 24
+static ULONG64 KiUsHoldProc[KIUS_HOLD];
+static CHAR    KiUsHoldImg[KIUS_HOLD][16];
+static ULONG   KiUsHoldPid[KIUS_HOLD];
+static ULONG   KiUsHoldTid[KIUS_HOLD];
+static SCHAR   KiUsHoldPrio[KIUS_HOLD];
+static UCHAR   KiUsHoldFg[KIUS_HOLD];
+static ULONG   KiUsHoldHits[KIUS_HOLD];
+static ULONG   KiUsHoldUsed = 0;
+static ULONG   KiUsHoldDrop = 0;
+static ULONG   KiUsHoldSamples = 0;
+
+static VOID
+KiUsRecordHolder(PKTHREAD Current, PKTHREAD Traced)
+{
+    PKPROCESS kp;
+    PEPROCESS ep;
+    const CHAR *img;
+    ULONG j, n, pid, tid;
+    SCHAR prio;
+    UCHAR fg;
+
+    if (Current == NULL || Current == Traced)
+        return;
+    kp = Current->ApcState.Process;
+    if (kp == NULL)
+        return;
+    ep = CONTAINING_RECORD(kp, EPROCESS, Pcb);
+    KiUsHoldSamples++;
+    pid = (ULONG)(ULONG_PTR)((PETHREAD)Current)->Cid.UniqueProcess;
+    tid = (ULONG)(ULONG_PTR)((PETHREAD)Current)->Cid.UniqueThread;
+    prio = Current->Priority;
+    fg = (ep->Vm.Instance.Flags.MemoryPriority == MEMORY_PRIORITY_FOREGROUND) ? 1 : 0;
+    for (j = 0; j < KiUsHoldUsed; j++)
+    {
+        if (KiUsHoldProc[j] == (ULONG64)ep)
+        {
+            KiUsHoldHits[j]++;
+            KiUsHoldTid[j] = tid;
+            KiUsHoldPrio[j] = prio;
+            KiUsHoldFg[j] = fg;
+            return;
+        }
+    }
+    if (KiUsHoldUsed >= KIUS_HOLD)
+    {
+        KiUsHoldDrop++;
+        return;
+    }
+    j = KiUsHoldUsed++;
+    KiUsHoldProc[j] = (ULONG64)ep;
+    KiUsHoldPid[j] = pid;
+    KiUsHoldTid[j] = tid;
+    KiUsHoldPrio[j] = prio;
+    KiUsHoldFg[j] = fg;
+    KiUsHoldHits[j] = 1;
+    img = PsGetProcessImageFileName(ep);
+    for (n = 0; n < 15 && img && img[n]; n++)
+        KiUsHoldImg[j][n] = img[n];
+    KiUsHoldImg[j][n] = '\0';
+}
 
 VOID NTAPI
 KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode)
@@ -321,7 +383,7 @@ KiW32UserSample(IN PKTRAP_FRAME TrapFrame, IN BOOLEAN UserMode)
 /* Read the latched thread's state every tick (even when not current) so
  * off-CPU time is attributed to Ready (scheduling) vs Waiting (I/O/IPC). */
 VOID NTAPI
-KiW32StateSample(VOID)
+KiW32StateSample(PKTHREAD Current)
 {
     PKTHREAD T = KiW32TraceThread;
     UCHAR st;
@@ -347,6 +409,10 @@ KiW32StateSample(VOID)
                 KiUsWait[wr]++;
             if (!IsListEmpty(&((PETHREAD)T)->IrpList))
                 KiUsWaitIrp++;
+        }
+        else if (st == Ready || st == Standby || st == DeferredReady)
+        {
+            KiUsRecordHolder(Current, T);
         }
     }
 }
@@ -375,6 +441,24 @@ KiUsDump(PCSTR Reason)
     for (i = 0; i < 40; i++)
         if (KiUsWait[i])
             DbgPrint("USERSAMP waitreason %lu count=%lu\n", i, KiUsWait[i]);
+    DbgPrint("USERSAMP holder samples=%lu buckets=%lu dropped=%lu\n",
+             KiUsHoldSamples, KiUsHoldUsed, KiUsHoldDrop);
+    {
+        UCHAR HPrinted[KIUS_HOLD];
+        ULONG h, g;
+        RtlZeroMemory(HPrinted, sizeof(HPrinted));
+        for (h = 0; h < KiUsHoldUsed; h++)
+        {
+            ULONG best = 0; LONG bg = -1;
+            for (g = 0; g < KiUsHoldUsed; g++)
+                if (!HPrinted[g] && KiUsHoldHits[g] > best) { best = KiUsHoldHits[g]; bg = (LONG)g; }
+            if (bg < 0) break;
+            HPrinted[bg] = 1;
+            DbgPrint("USERSAMP holder pid=%lu tid=%lu image=%s prio=%d fg=%lu hits=%lu\n",
+                     KiUsHoldPid[bg], KiUsHoldTid[bg], KiUsHoldImg[bg],
+                     (LONG)KiUsHoldPrio[bg], (ULONG)KiUsHoldFg[bg], KiUsHoldHits[bg]);
+        }
+    }
     KiUsStateStop = 1;
 
     if (PsGetCurrentProcess() != Process)
