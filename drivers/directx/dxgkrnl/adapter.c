@@ -17217,13 +17217,27 @@ DxgkpAddDeviceRegistered(
 
     /* Registration already enforces the Win11 profile.  Keep the same floor
      * at AddDevice so a corrupted or stale registration cannot reintroduce a
-     * pre-WDDM 1.2 miniport through the PnP path. */
+     * pre-WDDM 1.2 miniport through the PnP path.  The LegacyWddm1x switch
+     * lifts the floor for exactly the 1.0/1.1 full-table miniports that
+     * registration already admitted. */
     if (!DxgkCapsCoreInterfaceVersionAtLeast(
             MpCtx->InitData.s.Version,
             DXGK_CAPS_CORE_LEVEL_WDDM_1_2))
     {
-        DXGKRNL_WARN("DxgkpAddDevice: pre-WDDM 1.2 miniport version 0x%lX rejected by the Win11 profile\n", MpCtx->InitData.s.Version);
-        return STATUS_NOT_SUPPORTED;
+        ULONG VersionLevel = DxgkCapsCoreInterfaceVersionToLevel(
+            MpCtx->InitData.s.Version);
+        BOOLEAN LegacyAdmit = g_DxgkpLegacyWddm1xEnabled &&
+            !MpCtx->IsDisplayOnlyDriver &&
+            (VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_0 ||
+             VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_1);
+
+        if (!LegacyAdmit)
+        {
+            DXGKRNL_WARN("DxgkpAddDevice: pre-WDDM 1.2 miniport version 0x%lX rejected by the Win11 profile\n", MpCtx->InitData.s.Version);
+            return STATUS_NOT_SUPPORTED;
+        }
+        DXGKRNL_INFO("DxgkpAddDevice: LegacyWddm1x admitting pre-WDDM 1.2 miniport version 0x%lX\n",
+                     MpCtx->InitData.s.Version);
     }
 
     /* Create the FDO; size the DeviceExtension to hold DXGKRNL_ADAPTER. */
