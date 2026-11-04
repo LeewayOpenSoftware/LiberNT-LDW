@@ -37,6 +37,35 @@ typedef struct _LT1X_CONTEXT
     DXGK_INTERFACE DxgkInterface;
 } LT1X_CONTEXT, *PLT1X_CONTEXT;
 
+#define LT1X_RECORD_MAGIC 0x5854314Cu /* 'XT1L' */
+
+typedef struct _LT1X_RECORD
+{
+    ULONG Magic;
+    PLT1X_CONTEXT Ctx;
+} LT1X_RECORD, *PLT1X_RECORD;
+
+static PVOID
+Lt1xRecordCreate(_In_ PLT1X_CONTEXT Ctx)
+{
+    PLT1X_RECORD Rec = ExAllocatePoolWithTag(NonPagedPool, sizeof(*Rec), LT1X_TAG);
+    if (Rec != NULL)
+    {
+        Rec->Magic = LT1X_RECORD_MAGIC;
+        Rec->Ctx = Ctx;
+    }
+    return Rec;
+}
+
+static PLT1X_CONTEXT
+Lt1xRecordContext(_In_opt_ PVOID Handle)
+{
+    PLT1X_RECORD Rec = (PLT1X_RECORD)Handle;
+    if (Rec == NULL || Rec->Magic != LT1X_RECORD_MAGIC)
+        return NULL;
+    return Rec->Ctx;
+}
+
 static
 NTSTATUS
 Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
@@ -725,9 +754,10 @@ Lt1xDdiCreateDevice(
     IN_CONST_HANDLE hAdapter,
     INOUT_PDXGKARG_CREATEDEVICE pCreateDevice)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiCreateDevice\n");
-    pCreateDevice->hDevice = (HANDLE)((ULONG_PTR)0x1DADDE1CEu);
+    pCreateDevice->hDevice = Lt1xRecordCreate((PLT1X_CONTEXT)hAdapter);
+    if (pCreateDevice->hDevice == NULL)
+        return STATUS_INSUFFICIENT_RESOURCES;
     /* No DXGK_DEVICEINFO to return; the union still holds the input
        Flags, which dxgkrnl must not dereference as pInfo. */
     pCreateDevice->pInfo = NULL;
@@ -1232,6 +1262,8 @@ static NTSTATUS APIENTRY
 Lt1xDdiDestroyDevice(IN_CONST_HANDLE hDevice)
 {
     DbgPrint("LT1X: DxgkDdiDestroyDevice h=%p\n", hDevice);
+    if (Lt1xRecordContext((PVOID)hDevice) != NULL)
+        ExFreePoolWithTag(hDevice, LT1X_TAG);
     return STATUS_SUCCESS;
 }
 
@@ -1282,10 +1314,61 @@ Lt1xDdiPresent(
     IN_CONST_HANDLE hContext,
     INOUT_PDXGKARG_PRESENT pPresent)
 {
-    UNREFERENCED_PARAMETER(hContext);
-    UNREFERENCED_PARAMETER(pPresent);
-    DbgPrint("LT1X: DxgkDdiPresent\n");
-    return STATUS_NOT_SUPPORTED;
+    PLT1X_CONTEXT Ctx = Lt1xRecordContext((PVOID)hContext);
+    PHYSICAL_ADDRESS SrcPa, DstPa;
+    PUCHAR SrcVa, DstVa;
+    ULONG Pitch, i, Row;
+    LONG SrcOriginX, SrcOriginY;
+    RECT Rect;
+
+    DbgPrint("LT1X: DxgkDdiPresent subrects=%u\n", pPresent->SubRectCnt);
+
+    if (Ctx == NULL || pPresent->pAllocationList == NULL)
+        return STATUS_INVALID_PARAMETER;
+
+    SrcPa = pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX].PhysicalAddress;
+    DstPa = pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX].PhysicalAddress;
+    if (SrcPa.QuadPart == 0 || DstPa.QuadPart == 0 ||
+        SrcPa.QuadPart < Ctx->FrameBufferPhys.QuadPart ||
+        DstPa.QuadPart < Ctx->FrameBufferPhys.QuadPart)
+        return STATUS_INVALID_PARAMETER;
+
+    Pitch = Ctx->ModeWidth * 4;
+    if (Pitch == 0)
+        return STATUS_SUCCESS;
+
+    /* The shadow and primary live in the CPU-visible aperture, so the
+       present is a CPU blit between the two bus addresses.  Surfaces are
+       unpitched (Width * 4); only 1:1 source/destination mappings occur
+       on the CDD path.  The DMA buffer stays empty: the copy is complete
+       when this returns and dxgkrnl skips the submit. */
+    SrcVa = (PUCHAR)Ctx->FrameBufferVa + (SIZE_T)(SrcPa.QuadPart - Ctx->FrameBufferPhys.QuadPart);
+    DstVa = (PUCHAR)Ctx->FrameBufferVa + (SIZE_T)(DstPa.QuadPart - Ctx->FrameBufferPhys.QuadPart);
+    SrcOriginX = pPresent->SrcRect.left - pPresent->DstRect.left;
+    SrcOriginY = pPresent->SrcRect.top - pPresent->DstRect.top;
+
+    for (i = 0; i < pPresent->SubRectCnt; i++)
+    {
+        Rect = pPresent->pDstSubRects[i];
+        if (Rect.left < 0)
+            Rect.left = 0;
+        if (Rect.top < 0)
+            Rect.top = 0;
+        if (Rect.right > (LONG)Ctx->ModeWidth)
+            Rect.right = (LONG)Ctx->ModeWidth;
+        if (Rect.bottom > (LONG)Ctx->ModeHeight)
+            Rect.bottom = (LONG)Ctx->ModeHeight;
+        if (Rect.left >= Rect.right || Rect.top >= Rect.bottom)
+            continue;
+
+        for (Row = (ULONG)Rect.top; Row < (ULONG)Rect.bottom; Row++)
+        {
+            RtlCopyMemory(DstVa + (SIZE_T)Row * Pitch + (SIZE_T)Rect.left * 4,
+                          SrcVa + (SIZE_T)(Row + SrcOriginY) * Pitch + (SIZE_T)(Rect.left + SrcOriginX) * 4,
+                          (SIZE_T)(Rect.right - Rect.left) * 4);
+        }
+    }
+    return STATUS_SUCCESS;
 }
 
 static DXGKDDI_UPDATEOVERLAY Lt1xDdiUpdateOverlay;
@@ -1327,9 +1410,13 @@ Lt1xDdiCreateContext(
     IN_CONST_HANDLE hDevice,
     INOUT_PDXGKARG_CREATECONTEXT pCreateContext)
 {
-    UNREFERENCED_PARAMETER(hDevice);
+    PLT1X_CONTEXT Ctx = Lt1xRecordContext((PVOID)hDevice);
     DbgPrint("LT1X: DxgkDdiCreateContext\n");
-    pCreateContext->hContext = (HANDLE)((ULONG_PTR)0x1DADDE1CEu);
+    if (Ctx == NULL)
+        return STATUS_INVALID_HANDLE;
+    pCreateContext->hContext = Lt1xRecordCreate(Ctx);
+    if (pCreateContext->hContext == NULL)
+        return STATUS_INSUFFICIENT_RESOURCES;
     return STATUS_SUCCESS;
 }
 
@@ -1338,6 +1425,8 @@ static NTSTATUS APIENTRY
 Lt1xDdiDestroyContext(IN_CONST_HANDLE hContext)
 {
     DbgPrint("LT1X: DxgkDdiDestroyContext h=%p\n", hContext);
+    if (Lt1xRecordContext((PVOID)hContext) != NULL)
+        ExFreePoolWithTag(hContext, LT1X_TAG);
     return STATUS_SUCCESS;
 }
 
