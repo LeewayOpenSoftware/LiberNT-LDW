@@ -728,6 +728,9 @@ Lt1xDdiCreateDevice(
     UNREFERENCED_PARAMETER(hAdapter);
     DbgPrint("LT1X: DxgkDdiCreateDevice\n");
     pCreateDevice->hDevice = (HANDLE)((ULONG_PTR)0x1DADDE1CEu);
+    /* No DXGK_DEVICEINFO to return; the union still holds the input
+       Flags, which dxgkrnl must not dereference as pInfo. */
+    pCreateDevice->pInfo = NULL;
     return STATUS_SUCCESS;
 }
 
