@@ -751,10 +751,11 @@ Lt1xDdiCreateAllocation(
         if (Token == NULL)
             return STATUS_INSUFFICIENT_RESOURCES;
         Info->hAllocation = Token;
-        Info->SupportedReadSegmentSet = 1u << 1;
-        Info->SupportedWriteSegmentSet = 1u << 1;
+        Info->SupportedReadSegmentSet = 1u << 0;
+        Info->SupportedWriteSegmentSet = 1u << 0;
         Info->EvictionSegmentSet = 0;
         Info->Alignment = 0x1000;
+        Info->Flags.CpuVisible = 1;
     }
     return STATUS_SUCCESS;
 }
