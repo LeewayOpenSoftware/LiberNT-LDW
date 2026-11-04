@@ -13,7 +13,7 @@
 #include <d3dkmddi.h>
 
 #define LT1X_TAG 'X1TL'
-#define LT1X_FB_MAP_SIZE (4 * 1024 * 1024)
+#define LT1X_FB_MAX_MAP_SIZE (16 * 1024 * 1024)
 #define LT1X_CHILD_UID 0
 
 static ULONG Lt1xDdiVersion = DXGKDDI_INTERFACE_VERSION_VISTA;
@@ -28,6 +28,7 @@ typedef struct _LT1X_CONTEXT
     HANDLE DeviceHandle;
     PHYSICAL_ADDRESS FrameBufferPhys;
     PVOID FrameBufferVa;
+    SIZE_T FrameBufferSize;
     ULONG ModeWidth;
     ULONG ModeHeight;
     ULONG ModeBpp;
@@ -128,7 +129,7 @@ Lt1xProbeCurrentMode(_In_ PLT1X_CONTEXT Ctx)
     }
 
     Stride = VirtWidth != 0 ? VirtWidth * Bpp / 8 : Width * Bpp / 8;
-    if (Height * Stride > LT1X_FB_MAP_SIZE)
+    if ((ULONGLONG)Height * Stride > Ctx->FrameBufferSize)
     {
         DbgPrint("LT1X: dispi mode %lux%lux%lu stride %lu does not fit the mapped window\n",
                  Width, Height, Bpp, Stride);
@@ -272,7 +273,7 @@ Lt1xSegmentVa(_In_ PLT1X_CONTEXT Ctx, _In_ UINT SegmentId, _In_ LARGE_INTEGER Se
     if (SegmentId == DXGK_SEGMENT_ID_SYSTEMMEMORY)
         return NULL;
     Offset = (ULONG64)SegmentAddress.QuadPart - (ULONG64)Ctx->FrameBufferPhys.QuadPart;
-    if (Offset >= LT1X_FB_MAP_SIZE)
+    if (Offset >= Ctx->FrameBufferSize)
         return NULL;
     return (PUCHAR)Ctx->FrameBufferVa + (SIZE_T)Offset;
 }
@@ -287,7 +288,7 @@ Lt1xExecutePaging(_In_ PLT1X_CONTEXT Ctx, _In_ DXGKARG_BUILDPAGINGBUFFER *Args)
         {
             PVOID Dst = Lt1xSegmentVa(Ctx, Args->Fill.Destination.SegmentId,
                                       Args->Fill.Destination.SegmentAddress);
-            if (Dst == NULL || Args->Fill.FillSize > LT1X_FB_MAP_SIZE)
+            if (Dst == NULL || Args->Fill.FillSize > Ctx->FrameBufferSize)
                 return STATUS_INVALID_PARAMETER;
             RtlFillMemory(Dst, Args->Fill.FillSize, Args->Fill.FillPattern);
             return STATUS_SUCCESS;
@@ -298,7 +299,7 @@ Lt1xExecutePaging(_In_ PLT1X_CONTEXT Ctx, _In_ DXGKARG_BUILDPAGINGBUFFER *Args)
                                       Args->Transfer.Source.SegmentAddress);
             PVOID Dst = Lt1xSegmentVa(Ctx, Args->Transfer.Destination.SegmentId,
                                       Args->Transfer.Destination.SegmentAddress);
-            if (Dst == NULL || Src == NULL || Args->Transfer.TransferSize > LT1X_FB_MAP_SIZE)
+            if (Dst == NULL || Src == NULL || Args->Transfer.TransferSize > Ctx->FrameBufferSize)
                 return STATUS_INVALID_PARAMETER;
             RtlMoveMemory(Dst, Src, Args->Transfer.TransferSize);
             return STATUS_SUCCESS;
@@ -377,15 +378,43 @@ Lt1xDdiStartDevice(
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
-    Ctx->FrameBufferVa = MmMapIoSpace(Ctx->FrameBufferPhys, LT1X_FB_MAP_SIZE, MmNonCached);
+    {
+        ULONG BarSave = 0, BarMask = 0, BytesIO = 0;
+
+        Status = Ctx->DxgkInterface.DxgkCbReadDeviceSpace(
+            Ctx->DeviceHandle, DXGK_WHICHSPACE_CONFIG, &BarSave, 0x10, sizeof(BarSave), &BytesIO);
+        if (NT_SUCCESS(Status) && BytesIO == sizeof(BarSave))
+        {
+            ULONG BarProbe = 0xFFFFFFFF;
+
+            if (NT_SUCCESS(Ctx->DxgkInterface.DxgkCbWriteDeviceSpace(
+                    Ctx->DeviceHandle, DXGK_WHICHSPACE_CONFIG, &BarProbe, 0x10, sizeof(BarProbe), &BytesIO)))
+            {
+                (VOID)Ctx->DxgkInterface.DxgkCbReadDeviceSpace(
+                    Ctx->DeviceHandle, DXGK_WHICHSPACE_CONFIG, &BarMask, 0x10, sizeof(BarMask), &BytesIO);
+                (VOID)Ctx->DxgkInterface.DxgkCbWriteDeviceSpace(
+                    Ctx->DeviceHandle, DXGK_WHICHSPACE_CONFIG, &BarSave, 0x10, sizeof(BarSave), &BytesIO);
+            }
+        }
+        Ctx->FrameBufferSize = 8 * 1024 * 1024;
+        if (BarMask != 0 && (BarMask & 0x1) == 0)
+        {
+            SIZE_T BarSize = (SIZE_T)(~(BarMask & 0xFFFFFFFEu) + 1);
+
+            if (BarSize >= 4 * 1024 * 1024 && BarSize <= LT1X_FB_MAX_MAP_SIZE)
+                Ctx->FrameBufferSize = BarSize;
+        }
+    }
+
+    Ctx->FrameBufferVa = MmMapIoSpace(Ctx->FrameBufferPhys, Ctx->FrameBufferSize, MmNonCached);
     if (Ctx->FrameBufferVa == NULL)
     {
         DbgPrint("LT1X: MmMapIoSpace failed\n");
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
-    DbgPrint("LT1X: framebuffer phys 0x%I64x va %p\n",
-             Ctx->FrameBufferPhys.QuadPart, Ctx->FrameBufferVa);
+    DbgPrint("LT1X: framebuffer phys 0x%I64x va %p size %Iu\n",
+             Ctx->FrameBufferPhys.QuadPart, Ctx->FrameBufferVa, Ctx->FrameBufferSize);
     Lt1xProbeCurrentMode(Ctx);
 
     *NumberOfVideoPresentSources = 1;
@@ -402,7 +431,7 @@ Lt1xDdiStopDevice(_In_ PVOID MiniportDeviceContext)
     DbgPrint("LT1X: DxgkDdiStopDevice ctx=%p\n", Ctx);
     if (Ctx->FrameBufferVa != NULL)
     {
-        MmUnmapIoSpace(Ctx->FrameBufferVa, LT1X_FB_MAP_SIZE);
+        MmUnmapIoSpace(Ctx->FrameBufferVa, Ctx->FrameBufferSize);
         Ctx->FrameBufferVa = NULL;
     }
     return STATUS_SUCCESS;
@@ -670,9 +699,9 @@ Lt1xDdiQueryAdapterInfo(
             RtlZeroMemory(&SegmentOut->pSegmentDescriptor[0], sizeof(DXGK_SEGMENTDESCRIPTOR));
             SegmentOut->pSegmentDescriptor[0].BaseAddress = Ctx->FrameBufferPhys;
             SegmentOut->pSegmentDescriptor[0].CpuTranslatedAddress = Ctx->FrameBufferPhys;
-            SegmentOut->pSegmentDescriptor[0].Size = LT1X_FB_MAP_SIZE;
+            SegmentOut->pSegmentDescriptor[0].Size = Ctx->FrameBufferSize;
             SegmentOut->pSegmentDescriptor[0].NbOfBanks = 1;
-            SegmentOut->pSegmentDescriptor[0].CommitLimit = LT1X_FB_MAP_SIZE;
+            SegmentOut->pSegmentDescriptor[0].CommitLimit = Ctx->FrameBufferSize;
             SegmentOut->pSegmentDescriptor[0].Flags.Aperture = 1;
             SegmentOut->pSegmentDescriptor[0].Flags.CpuVisible = 1;
             SegmentOut->pSegmentDescriptor[0].Flags.CacheCoherent = 1;
