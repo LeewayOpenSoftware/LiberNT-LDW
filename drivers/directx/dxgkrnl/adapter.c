@@ -4307,8 +4307,12 @@ DxgkpEnsureGlobalInitialization(VOID)
 
         (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
 
-        /* DIRECT returns REG_SZ as a UNICODE_STRING and REG_DWORD as a raw ULONG. */
-        if ((Value.String.Length == sizeof(L"1") - sizeof(WCHAR) && ValueBuffer[0] == L'1') ||
+        /* DIRECT returns REG_SZ as a UNICODE_STRING and REG_DWORD as a raw ULONG.
+         * For a value that exists the UNICODE_STRING points at the stored data;
+         * the local ValueBuffer only backs the default, so test the string
+         * itself and not the spare buffer. */
+        if ((Value.String.Length == sizeof(L"1") - sizeof(WCHAR) &&
+             Value.String.Buffer != NULL && Value.String.Buffer[0] == L'1') ||
             Value.Raw[0] == 1)
         {
             g_DxgkpLegacyWddm1xEnabled = TRUE;
