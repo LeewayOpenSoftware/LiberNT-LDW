@@ -268,9 +268,8 @@ Lt1xSegmentVa(_In_ PLT1X_CONTEXT Ctx, _In_ UINT SegmentId, _In_ LARGE_INTEGER Se
 {
     ULONG64 Offset;
 
-    if (SegmentId != 0 && SegmentId != DXGK_SEGMENT_ID_SYSTEMMEMORY)
-        return NULL;
-    if (SegmentId == DXGK_SEGMENT_ID_SYSTEMMEMORY)
+    /* Segment ids are 1-based: descriptor slot 0 is segment 1. */
+    if (SegmentId != 1)
         return NULL;
     Offset = (ULONG64)SegmentAddress.QuadPart - (ULONG64)Ctx->FrameBufferPhys.QuadPart;
     if (Offset >= Ctx->FrameBufferSize)
@@ -752,8 +751,8 @@ Lt1xDdiCreateAllocation(
         if (Token == NULL)
             return STATUS_INSUFFICIENT_RESOURCES;
         Info->hAllocation = Token;
-        Info->SupportedReadSegmentSet = 1;
-        Info->SupportedWriteSegmentSet = 1;
+        Info->SupportedReadSegmentSet = 1u << 1;
+        Info->SupportedWriteSegmentSet = 1u << 1;
         Info->EvictionSegmentSet = 0;
         Info->Alignment = 0x1000;
     }
