@@ -762,9 +762,25 @@ Lt1xDdiGetStandardAllocationDriverData(
     INOUT_PDXGKARG_GETSTANDARDALLOCATIONDRIVERDATA pStandardAllocationDriverData)
 {
     UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pStandardAllocationDriverData);
-    DbgPrint("LT1X: DxgkDdiGetStandardAllocationDriverData\n");
-    return STATUS_NOT_SUPPORTED;
+    DbgPrint("LT1X: DxgkDdiGetStandardAllocationDriverData type=%d\n",
+             pStandardAllocationDriverData->StandardAllocationType);
+
+    switch (pStandardAllocationDriverData->StandardAllocationType)
+    {
+        case D3DKMDT_STANDARDALLOCATION_SHAREDPRIMARYSURFACE:
+        case D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE:
+            pStandardAllocationDriverData->AllocationPrivateDriverDataSize = 0;
+            pStandardAllocationDriverData->ResourcePrivateDriverDataSize = 0;
+            return STATUS_SUCCESS;
+#if (DXGKDDI_INTERFACE_VERSION >= DXGKDDI_INTERFACE_VERSION_WIN7)
+        case D3DKMDT_STANDARDALLOCATION_GDISURFACE:
+            pStandardAllocationDriverData->AllocationPrivateDriverDataSize = 0;
+            pStandardAllocationDriverData->ResourcePrivateDriverDataSize = 0;
+            return STATUS_SUCCESS;
+#endif
+        default:
+            return STATUS_NOT_SUPPORTED;
+    }
 }
 
 static DXGKDDI_ACQUIRESWIZZLINGRANGE Lt1xDdiAcquireSwizzlingRange;
