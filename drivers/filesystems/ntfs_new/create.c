@@ -1912,6 +1912,7 @@ NtfsOpenVolume(
         VolCB->VolumeHandleCount++;
         VolCB->OpenHandleCount++;
         FileCB->TraverseOnly = FALSE;
+        FileCB->OwnerVolume = VolCB;
         FileObject->FsContext = FileCB;
         FileObject->Vpb = IrpSp->DeviceObject->Vpb;
     }
@@ -3285,6 +3286,7 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         }
         FileObject->FsContext = FileCB->StreamCB;
         FileObject->FsContext2 = FileCB;
+        FileCB->OwnerVolume = VolumeDeviceObject->DeviceExtension;
         FileObject->Vpb = VolumeDeviceObject->Vpb;
     }
 

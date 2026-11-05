@@ -354,6 +354,7 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
 
     FileCB = NtfsGetFileContext(FileObj);
     VolCB = (PVolumeContextBlock)VolumeDeviceObject->DeviceExtension;
+    NTFS_CHECK_FILE_VOLUME(VolCB, FileCB, "write");
     if (FileCB->IsVolumeOpen)
         return NtfsForwardVolumeIo(VolCB, FileCB, Irp, TRUE);
 

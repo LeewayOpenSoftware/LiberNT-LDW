@@ -361,6 +361,8 @@ typedef struct _FCB
     BOOLEAN IsVolumeOpen;
     BOOLEAN CleanupComplete;
     BOOLEAN TraverseOnly;
+    /* The volume context this open was created on (debug check only). */
+    PVOID OwnerVolume;
     BOOLEAN ManageVolumeAccess;
     BOOLEAN DismountedVolume;
     ULONG CreateOptions;
@@ -428,6 +430,16 @@ typedef struct _FCB
     NTFS_NATIVE_CCB NativeCcb;
 
 } FileContextBlock, *PFileContextBlock;
+
+#if DBG
+VOID
+NtfsCheckFileVolume(_In_ PVolumeContextBlock VolCB,
+                    _In_opt_ PFileContextBlock FileCB,
+                    _In_z_ PCSTR Where);
+#define NTFS_CHECK_FILE_VOLUME(VolCB, FileCB, Where) NtfsCheckFileVolume((VolCB), (FileCB), (Where))
+#else
+#define NTFS_CHECK_FILE_VOLUME(VolCB, FileCB, Where) ((void)0)
+#endif
 
 /* Called with VolumeStateMutex held when an open stops counting. */
 FORCEINLINE

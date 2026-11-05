@@ -10,6 +10,16 @@
 
 #include <fmifs/fmifs.h>
 
+/*
+ * ExitStatus of NtfsChkdsk when the volume was checked locked, has no
+ * problems left, and was dismounted afterwards. A success code: the check
+ * passed. It tells a boot-time caller that file objects opened on the
+ * volume before the check (images, current directories) still describe the
+ * volume as it was before the repair, so the system must be restarted
+ * before anything else uses it.
+ */
+#define NTFSLIB_CHKDSK_VOLUME_RELOADED ((ULONG)0x60000001L)
+
 BOOLEAN
 NTAPI
 NtfsChkdsk(

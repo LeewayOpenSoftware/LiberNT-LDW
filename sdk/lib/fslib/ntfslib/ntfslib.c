@@ -14,6 +14,7 @@
 #include <ndk/obfuncs.h>
 #include <ndk/rtlfuncs.h>
 #include <fmifs/fmifs.h>
+#include <fslib/ntfslib.h>
 #include <stdio.h>
 
 #include <ntfsformat.h>
@@ -818,6 +819,8 @@ NtfsChkdsk(
     NtfsFormatReport(Callback,
                      Repaired ? "Problems were found on the volume and corrected.\n"
                               : "No problems were found on the volume.\n");
-    *ExitStatus = (ULONG)STATUS_SUCCESS;
+    /* The repair went around the mounted file system, which was then
+     * dismounted: only a restart drops what was opened on it before. */
+    *ExitStatus = Locked ? NTFSLIB_CHKDSK_VOLUME_RELOADED : (ULONG)STATUS_SUCCESS;
     return TRUE;
 }

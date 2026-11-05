@@ -804,6 +804,7 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
 
     IrpSp = IoGetCurrentIrpStackLocation(Irp);
     FileCB = NtfsGetFileContext(IrpSp->FileObject);
+    NTFS_CHECK_FILE_VOLUME((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension, FileCB, "cleanup");
 
     if (FileCB && !FileCB->CleanupComplete)
     {
@@ -1013,6 +1014,36 @@ typedef struct _NTFS_LOCK_SITE_STATS
     volatile LONG WaitBuckets[NTFS_LOCK_STATS_BUCKETS];
     volatile LONG HoldBuckets[NTFS_LOCK_STATS_BUCKETS];
 } NTFS_LOCK_SITE_STATS;
+
+#if DBG
+/*
+ * A file object opened before a dismount keeps the volume's VPB, and once
+ * the volume is mounted again its IRPs reach the new mount while its
+ * context still belongs to the old one, with the old library volume and
+ * everything that volume had read. Name the first few.
+ */
+static volatile LONG NtfsForeignFileCount;
+
+VOID
+NtfsCheckFileVolume(_In_ PVolumeContextBlock VolCB,
+                    _In_opt_ PFileContextBlock FileCB,
+                    _In_z_ PCSTR Where)
+{
+    PVolumeContextBlock Owner;
+    LONG Count;
+
+    if (!FileCB || !FileCB->OwnerVolume || FileCB->OwnerVolume == (PVOID)VolCB)
+        return;
+    Owner = (PVolumeContextBlock)FileCB->OwnerVolume;
+    Count = InterlockedIncrement(&NtfsForeignFileCount);
+    if (Count <= 32 || (Count & (Count - 1)) == 0)
+    {
+        DbgPrint("NTFS: %s of a file opened on volume %p (dismounted %d) reached volume %p: file 0x%I64x, %ld so far\n",
+                 Where, Owner, Owner->Dismounted, VolCB,
+                 FileCB->StreamCB ? FileCB->StreamCB->FileReference : 0ULL, Count);
+    }
+}
+#endif
 
 ULONG NtfsLockStatsIntervalSeconds = 10;
 static NTFS_LOCK_SITE_STATS NtfsLockSites[NTFS_LOCK_STATS_SITES];

@@ -24,6 +24,7 @@
 #include <ndk/obfuncs.h>
 #include <ndk/psfuncs.h>
 #include <ndk/rtlfuncs.h>
+#include <ndk/setypes.h>
 #include <fmifs/fmifs.h>
 
 #include <fslib/vfatlib.h>
@@ -389,6 +390,16 @@ ChkdskCallback(
     return TRUE;
 }
 
+/*
+ * Set when a volume was repaired or marked clean while it was mounted, and
+ * then dismounted. Programs started before the check (the Session Manager,
+ * autochk itself) still have that volume's files open and mapped, and the
+ * file system keeps serving those opens with what it read before the
+ * repair. Windows restarts after a boot-time repair of the system volume;
+ * do the same once all volumes are checked.
+ */
+static BOOLEAN RestartAfterCheck = FALSE;
+
 static NTSTATUS
 CheckVolume(
     IN PCWSTR VolumePath,
@@ -490,6 +501,11 @@ CheckVolume(
                                                     NULL,
                                                     NULL,
                                                     (PULONG)&Status);
+            if (Success && (ULONG)Status == NTFSLIB_CHKDSK_VOLUME_RELOADED)
+            {
+                RestartAfterCheck = TRUE;
+                DPRINT1("AUTOCHK: %wZ was changed and dismounted, restart needed\n", &VolumePathU);
+            }
         }
         else
         {
@@ -691,6 +707,19 @@ _main(
     /* Close the keyboard */
     if (KeyboardHandle)
         NtClose(KeyboardHandle);
+
+    if (RestartAfterCheck)
+    {
+        BOOLEAN WasEnabled;
+
+        PrintString("A volume was repaired while it was in use. The system will now restart.\r\n");
+        DPRINT1("AUTOCHK: restarting after the check\n");
+        Status = RtlAdjustPrivilege(SE_SHUTDOWN_PRIVILEGE, TRUE, FALSE, &WasEnabled);
+        if (NT_SUCCESS(Status))
+            Status = NtShutdownSystem(ShutdownReboot);
+        DPRINT1("AUTOCHK: restart failed, Status 0x%08lx\n", Status);
+        PrintString("The system could not be restarted. Restart it before using it.\r\n");
+    }
 
     // PrintString("Done\r\n\r\n");
     return 0;

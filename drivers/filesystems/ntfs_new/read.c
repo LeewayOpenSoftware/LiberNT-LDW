@@ -401,6 +401,8 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     RequestedLength = IrpSp->Parameters.Read.Length;
     OriginalLength = RequestedLength;
     FileCB = NtfsGetFileContext(FileObject);
+    if (VolCB)
+        NTFS_CHECK_FILE_VOLUME(VolCB, FileCB, "read");
 
     if (FileCB && FileCB->IsVolumeOpen)
         return NtfsForwardVolumeIo(VolCB, FileCB, Irp, FALSE);
