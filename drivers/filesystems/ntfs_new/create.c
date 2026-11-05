@@ -1911,6 +1911,7 @@ NtfsOpenVolume(
     {
         VolCB->VolumeHandleCount++;
         VolCB->OpenHandleCount++;
+        FileCB->TraverseOnly = FALSE;
         FileObject->FsContext = FileCB;
         FileObject->Vpb = IrpSp->DeviceObject->Vpb;
     }
@@ -3255,6 +3256,11 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     else
     {
         VolCB->OpenHandleCount++;
+        FileCB->TraverseOnly =
+            (FileCB->CreateOptions & FILE_DIRECTORY_FILE) &&
+            (FileCB->DesiredAccess & ~(SYNCHRONIZE | FILE_TRAVERSE)) == 0;
+        if (FileCB->TraverseOnly)
+            VolCB->TraverseOnlyHandleCount++;
         Status = STATUS_SUCCESS;
     }
     ExReleaseFastMutex(&VolCB->VolumeStateMutex);
@@ -3306,6 +3312,7 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             ExAcquireFastMutex(&VolCB->VolumeStateMutex);
             if (VolCB->OpenHandleCount > 0)
                 VolCB->OpenHandleCount--;
+            NtfsForgetTraverseOnly(VolCB, FileCB);
             ExReleaseFastMutex(&VolCB->VolumeStateMutex);
             FileObject->FsContext = NULL;
             FileObject->FsContext2 = NULL;
@@ -3338,6 +3345,7 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             ExAcquireFastMutex(&VolCB->VolumeStateMutex);
             if (VolCB->OpenHandleCount > 0)
                 VolCB->OpenHandleCount--;
+            NtfsForgetTraverseOnly(VolCB, FileCB);
             ExReleaseFastMutex(&VolCB->VolumeStateMutex);
             FileObject->FsContext = NULL;
             FileObject->FsContext2 = NULL;
@@ -3393,6 +3401,7 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             ExAcquireFastMutex(&VolCB->VolumeStateMutex);
             if (VolCB->OpenHandleCount > 0)
                 VolCB->OpenHandleCount--;
+            NtfsForgetTraverseOnly(VolCB, FileCB);
             ExReleaseFastMutex(&VolCB->VolumeStateMutex);
             FileObject->FsContext = NULL;
             FileObject->FsContext2 = NULL;

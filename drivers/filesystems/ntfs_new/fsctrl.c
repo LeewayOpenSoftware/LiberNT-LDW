@@ -1563,18 +1563,28 @@ NtfsLockOrUnlockVolume(
         if (VolCB->Dismounted)
             Status = STATUS_VOLUME_DISMOUNTED;
         else if (VolCB->VolumeLockOwner ||
-                 VolCB->OpenHandleCount != 1)
+                 VolCB->OpenHandleCount - VolCB->TraverseOnlyHandleCount != 1)
         {
             /* chkdsk and autochk can only repair, or clear the dirty
              * flag, on a locked volume: say why the lock was refused. */
-            DPRINT1("Volume lock refused: %s, %ld open handle(s) on the volume (%ld of them volume opens)\n",
+            DPRINT1("Volume lock refused: %s, %ld open handle(s) on the volume "
+                    "(%ld volume opens, %ld traverse-only directory opens)\n",
                     VolCB->VolumeLockOwner ? "already locked" : "files are open",
                     VolCB->OpenHandleCount,
-                    VolCB->VolumeHandleCount);
+                    VolCB->VolumeHandleCount,
+                    VolCB->TraverseOnlyHandleCount);
             Status = STATUS_ACCESS_DENIED;
         }
         else
         {
+            /* Directory handles that can only be traversed (a process's
+             * current directory) cannot see or change anything, and new
+             * opens through them are refused while the volume is locked. */
+            if (VolCB->TraverseOnlyHandleCount)
+            {
+                DPRINT1("Volume locked with %ld traverse-only directory handle(s) still open\n",
+                        VolCB->TraverseOnlyHandleCount);
+            }
             VolCB->VolumeLockOwner = FileObject;
             Status = STATUS_SUCCESS;
         }

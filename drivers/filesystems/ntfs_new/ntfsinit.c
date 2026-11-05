@@ -839,6 +839,7 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         }
         if (VolCB->OpenHandleCount > 0)
             VolCB->OpenHandleCount--;
+        NtfsForgetTraverseOnly(VolCB, FileCB);
         FileCB->CleanupComplete = TRUE;
         FirstCleanup = TRUE;
         ExReleaseFastMutex(&VolCB->VolumeStateMutex);

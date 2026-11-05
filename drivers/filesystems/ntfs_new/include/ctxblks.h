@@ -40,6 +40,10 @@ typedef struct _VolumeContextBlock
     SHARE_ACCESS VolumeShareAccess;
     LONG OpenHandleCount;
     LONG VolumeHandleCount;
+    /* Of OpenHandleCount: directory opens granted only SYNCHRONIZE and
+     * FILE_TRAVERSE (a process's current directory). They can neither
+     * read nor change anything, so they do not block a volume lock. */
+    LONG TraverseOnlyHandleCount;
     PFILE_OBJECT VolumeLockOwner;
     PFILE_OBJECT ShrinkOwner;
     ULONGLONG ShrinkVolumeSectors;
@@ -356,6 +360,7 @@ typedef struct _FCB
     PNtfsFileRecord FileRec;
     BOOLEAN IsVolumeOpen;
     BOOLEAN CleanupComplete;
+    BOOLEAN TraverseOnly;
     BOOLEAN ManageVolumeAccess;
     BOOLEAN DismountedVolume;
     ULONG CreateOptions;
@@ -423,6 +428,20 @@ typedef struct _FCB
     NTFS_NATIVE_CCB NativeCcb;
 
 } FileContextBlock, *PFileContextBlock;
+
+/* Called with VolumeStateMutex held when an open stops counting. */
+FORCEINLINE
+VOID
+NtfsForgetTraverseOnly(_In_ PVolumeContextBlock VolCB,
+                       _In_ PFileContextBlock FileCB)
+{
+    if (FileCB->TraverseOnly)
+    {
+        FileCB->TraverseOnly = FALSE;
+        if (VolCB->TraverseOnlyHandleCount > 0)
+            VolCB->TraverseOnlyHandleCount--;
+    }
+}
 
 FORCEINLINE
 PFileContextBlock
