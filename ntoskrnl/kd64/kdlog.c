@@ -50,6 +50,22 @@ static ULONG64 KdpBootLogReserveEnd;
 static PRETRIEVAL_POINTERS_BUFFER KdpBootLogExtents;
 static UCHAR KdpBootLogTail[PAGE_SIZE];
 
+/*
+ * The log file is closed while the Session Manager runs its boot-execute
+ * programs: autochk must be able to lock the boot volume, and a volume with
+ * an open file cannot be locked. Output produced meanwhile is kept in memory
+ * and appended once the log is reopened.
+ */
+#define KDP_BOOT_LOG_SPILL_MAX (4 * 1024 * 1024)
+static volatile BOOLEAN KdpBootLogRunning;
+static volatile BOOLEAN KdpBootLogSuspendRequested;
+static volatile BOOLEAN KdpBootLogResumeRequested;
+static KEVENT KdpBootLogClosed;
+static PCHAR KdpBootLogSpill;
+static ULONG KdpBootLogSpillLength;
+static ULONG KdpBootLogSpillSize;
+static ULONG64 KdpBootLogSpillLost;
+
 static NTSTATUS KdpBootLogAppend(_In_reads_bytes_(Length) PCHAR Data, _In_ ULONG Length)
 {
     IO_STATUS_BLOCK IoStatus;
@@ -150,6 +166,99 @@ static VOID KdpBootLogTrim(VOID)
     KdpBootLogReserveEnd = KdpBootLogWritten;
 }
 
+static VOID KdpBootLogSpillAppend(_In_reads_bytes_(Length) PCHAR Data, _In_ ULONG Length)
+{
+    PCHAR Larger;
+    ULONG Size;
+
+    if (Length > KDP_BOOT_LOG_SPILL_MAX - KdpBootLogSpillLength)
+    {
+        KdpBootLogSpillLost += Length;
+        return;
+    }
+    if (KdpBootLogSpillLength + Length > KdpBootLogSpillSize)
+    {
+        Size = max(KdpBootLogSpillSize * 2, KDP_BOOT_LOG_CHUNK_SIZE);
+        while (Size < KdpBootLogSpillLength + Length)
+            Size *= 2;
+        Size = min(Size, KDP_BOOT_LOG_SPILL_MAX);
+        Larger = ExAllocatePoolWithTag(PagedPool, Size, 'LtoB');
+        if (Larger == NULL)
+        {
+            KdpBootLogSpillLost += Length;
+            return;
+        }
+        if (KdpBootLogSpill != NULL)
+        {
+            RtlCopyMemory(Larger, KdpBootLogSpill, KdpBootLogSpillLength);
+            ExFreePoolWithTag(KdpBootLogSpill, 'LtoB');
+        }
+        KdpBootLogSpill = Larger;
+        KdpBootLogSpillSize = Size;
+    }
+    RtlCopyMemory(KdpBootLogSpill + KdpBootLogSpillLength, Data, Length);
+    KdpBootLogSpillLength += Length;
+}
+
+/* Output goes to the file while it is open and to memory while it is not. */
+static VOID KdpBootLogEmit(_In_reads_bytes_(Length) PCHAR Data, _In_ ULONG Length)
+{
+    if (KdpBootLogHandle != NULL)
+        KdpBootLogAppend(Data, Length);
+    else
+        KdpBootLogSpillAppend(Data, Length);
+}
+
+static VOID KdpBootLogClose(VOID)
+{
+    IO_STATUS_BLOCK IoStatus;
+
+    /* The crash-time path writes to the file's clusters: stop it first. */
+    InterlockedExchangePointer((PVOID volatile *)&KdpBootLogPublished, NULL);
+    KdpBootLogExtents = NULL;
+    ZwFlushBuffersFile(KdpBootLogHandle, &IoStatus);
+    ZwClose(KdpBootLogHandle);
+    KdpBootLogHandle = NULL;
+}
+
+static VOID KdpBootLogReopen(VOID)
+{
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    ANSI_STRING AnsiName;
+    UNICODE_STRING FileName;
+    IO_STATUS_BLOCK IoStatus;
+    CHAR Notice[96];
+    NTSTATUS Status;
+
+    RtlInitAnsiString(&AnsiName, KdpBootLogName);
+    Status = RtlAnsiStringToUnicodeString(&FileName, &AnsiName, TRUE);
+    if (!NT_SUCCESS(Status))
+        return;
+    InitializeObjectAttributes(&ObjectAttributes, &FileName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    Status = ZwCreateFile(&KdpBootLogHandle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE, &ObjectAttributes, &IoStatus, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_SEQUENTIAL_ONLY | FILE_WRITE_THROUGH, NULL, 0);
+    RtlFreeUnicodeString(&FileName);
+    if (!NT_SUCCESS(Status))
+    {
+        KdpBootLogHandle = NULL;
+        DPRINT1("KD: Boot log %s not reopened (0x%08lx)\n", KdpBootLogName, Status);
+        return;
+    }
+
+    /* Append what was produced while the file was closed. */
+    if (KdpBootLogSpillLength != 0)
+        KdpBootLogAppend(KdpBootLogSpill, KdpBootLogSpillLength);
+    if (KdpBootLogSpillLost != 0)
+    {
+        RtlStringCbPrintfA(Notice, sizeof(Notice), "\n[%I64u bytes of log output were lost while the log was closed]\n", KdpBootLogSpillLost);
+        KdpBootLogAppend(Notice, (ULONG)strlen(Notice));
+    }
+    if (KdpBootLogSpill != NULL)
+        ExFreePoolWithTag(KdpBootLogSpill, 'LtoB');
+    KdpBootLogSpill = NULL;
+    KdpBootLogSpillLength = KdpBootLogSpillSize = 0;
+    KdpBootLogSpillLost = 0;
+}
+
 static VOID NTAPI KdpBootLogThread(_In_ PVOID Context)
 {
     IO_STATUS_BLOCK IoStatus;
@@ -166,16 +275,48 @@ static VOID NTAPI KdpBootLogThread(_In_ PVOID Context)
     Interval.QuadPart = -10000LL * KDP_BOOT_LOG_POLL_MS;
     for (;;)
     {
+        /* Reopen once the boot-execute programs are done (or at shutdown). */
+        if (KdpBootLogResumeRequested && (KdpBootLogHandle == NULL))
+        {
+            KdpBootLogSuspendRequested = FALSE;
+            KdpBootLogResumeRequested = FALSE;
+            KdpBootLogReopen();
+            Dirty = TRUE;
+        }
+
         Length = KdpCopyPrintBufferFrom(&KdpBootLogPosition, KdpBootLogBuffer, sizeof(KdpBootLogBuffer), &Lost);
         Dirty = Dirty || (Lost != 0) || (Length != 0);
         if (Lost != 0)
         {
             RtlStringCbPrintfA(Notice, sizeof(Notice), "\n[%I64u bytes of log output were lost before they could be written]\n", Lost);
-            KdpBootLogAppend(Notice, (ULONG)strlen(Notice));
+            KdpBootLogEmit(Notice, (ULONG)strlen(Notice));
         }
 
         if (Length != 0)
-            KdpBootLogAppend(KdpBootLogBuffer, Length);
+            KdpBootLogEmit(KdpBootLogBuffer, Length);
+
+        /* Everything so far is in the file: let the volume go. */
+        if (KdpBootLogSuspendRequested && !KdpBootLogResumeRequested && (KdpBootLogHandle != NULL))
+        {
+            KdpBootLogClose();
+            Dirty = FALSE;
+            KeSetEvent(&KdpBootLogClosed, IO_NO_INCREMENT, FALSE);
+        }
+
+        if (KdpBootLogHandle == NULL)
+        {
+            /* Closed: output collects in memory. A shutdown that could not
+             * reopen the file has nothing left to trim. */
+            if (KdpBootLogStopping && !KdpBootLogResumeRequested)
+            {
+                KeSetEvent(&KdpBootLogStopped, IO_NO_INCREMENT, FALSE);
+                return;
+            }
+            if (Length == sizeof(KdpBootLogBuffer))
+                continue;
+            KeWaitForSingleObject(&KdpBootLogWake, Executive, KernelMode, FALSE, &Interval);
+            continue;
+        }
 
         if (KdpBootLogStopping)
         {
@@ -398,13 +539,49 @@ VOID NTAPI KdShutdownBootLog(VOID)
     LARGE_INTEGER Timeout;
     PAGED_CODE();
 
-    if (KdpBootLogHandle == NULL)
+    if (!KdpBootLogRunning)
         return;
 
+    /* A log still closed for boot-execute gets its memory copy written. */
+    if (KdpBootLogSuspendRequested)
+        KdpBootLogResumeRequested = TRUE;
     KdpBootLogStopping = TRUE;
     KeSetEvent(&KdpBootLogWake, IO_NO_INCREMENT, FALSE);
     Timeout.QuadPart = -10000LL * KDP_BOOT_LOG_STOP_TIMEOUT_MS;
     KeWaitForSingleObject(&KdpBootLogStopped, Executive, KernelMode, FALSE, &Timeout);
+}
+
+/*
+ * Called before the Session Manager starts: autochk, which it runs first,
+ * needs to lock the boot volume, so the log must not keep a file open on it.
+ * Returns once the file is closed.
+ */
+VOID NTAPI KdSuspendBootLog(VOID)
+{
+    LARGE_INTEGER Timeout;
+    PAGED_CODE();
+
+    if (!KdpBootLogRunning)
+        return;
+
+    KeClearEvent(&KdpBootLogClosed);
+    KdpBootLogSuspendRequested = TRUE;
+    KeSetEvent(&KdpBootLogWake, IO_NO_INCREMENT, FALSE);
+    Timeout.QuadPart = -10000LL * KDP_BOOT_LOG_STOP_TIMEOUT_MS;
+    if (KeWaitForSingleObject(&KdpBootLogClosed, Executive, KernelMode, FALSE, &Timeout) == STATUS_TIMEOUT)
+        DPRINT1("KD: Boot log %s was not closed in time\n", KdpBootLogName);
+}
+
+/* Called once the Session Manager has run the boot-execute programs. */
+VOID NTAPI KdResumeBootLog(VOID)
+{
+    PAGED_CODE();
+
+    if (!KdpBootLogRunning || !KdpBootLogSuspendRequested)
+        return;
+
+    KdpBootLogResumeRequested = TRUE;
+    KeSetEvent(&KdpBootLogWake, IO_NO_INCREMENT, FALSE);
 }
 
 VOID NTAPI KdInitializeBootLog(_In_ PLOADER_PARAMETER_BLOCK LoaderBlock)
@@ -442,6 +619,7 @@ VOID NTAPI KdInitializeBootLog(_In_ PLOADER_PARAMETER_BLOCK LoaderBlock)
     }
 
     KeInitializeEvent(&KdpBootLogWake, SynchronizationEvent, FALSE);
+    KeInitializeEvent(&KdpBootLogClosed, NotificationEvent, FALSE);
     KeInitializeEvent(&KdpBootLogStopped, NotificationEvent, FALSE);
     Status = PsCreateSystemThread(&ThreadHandle, THREAD_ALL_ACCESS, NULL, NULL, NULL, KdpBootLogThread, NULL);
     if (!NT_SUCCESS(Status))
@@ -455,4 +633,5 @@ VOID NTAPI KdInitializeBootLog(_In_ PLOADER_PARAMETER_BLOCK LoaderBlock)
     Priority = HIGH_PRIORITY;
     ZwSetInformationThread(ThreadHandle, ThreadPriority, &Priority, sizeof(Priority));
     ZwClose(ThreadHandle);
+    KdpBootLogRunning = TRUE;
 }

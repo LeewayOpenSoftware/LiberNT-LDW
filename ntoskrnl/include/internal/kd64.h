@@ -122,6 +122,18 @@ KdShutdownBootLog(
     VOID
 );
 
+VOID
+NTAPI
+KdSuspendBootLog(
+    VOID
+);
+
+VOID
+NTAPI
+KdResumeBootLog(
+    VOID
+);
+
 BOOLEAN
 NTAPI
 KdShowShutdownLog(

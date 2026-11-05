@@ -1743,6 +1743,10 @@ NtInitializeRegistry(IN USHORT Flag)
 
     /* Release the registry lock */
     CmpUnlockRegistry();
+
+    /* The Session Manager calls this after its boot-execute programs:
+     * the boot log may hold its file on the boot volume again. */
+    KdResumeBootLog();
     return STATUS_SUCCESS;
 }
 

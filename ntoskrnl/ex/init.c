@@ -2083,6 +2083,10 @@ Phase1InitializationDiscard(IN PVOID Context)
     /* Allow strings to be displayed */
     InbvEnableDisplayString(TRUE);
 
+    /* The Session Manager first runs autochk, which must be able to lock the
+     * boot volume: the boot log closes its file until the registry is up. */
+    KdSuspendBootLog();
+
     /* Launch initial process */
     ProcessInfo = &InitBuffer->ProcessInfo;
     ExpLoadInitialProcess(InitBuffer, &ProcessParameters, &Environment);
