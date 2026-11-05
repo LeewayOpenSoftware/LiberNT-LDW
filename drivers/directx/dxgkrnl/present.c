@@ -2626,6 +2626,83 @@ DxgkExecuteCddGdiBitBlt(
     return Status;
 }
 
+/* Copy only the present's dirty rectangles from the shadow publication
+ * surface into the shared primary.  Used when the destination region is
+ * not the full surface, where the whole-surface copy above would do
+ * unnecessary work and previously forced the caller onto an error path. */
+static NTSTATUS
+DxgkpCopyShadowSubRectsToSharedPrimary(
+    _In_ PDXGKRNL_ADAPTER Adapter,
+    _In_ PDXGKVMM_ALLOCATION PrimaryAllocation,
+    _In_ PDXGKRNL_PRESENT_ENTRY Entry)
+{
+    PBYTE DestinationVa = NULL;
+    PBYTE SourceVa;
+    ULONG Width;
+    ULONG Height;
+    ULONG SourcePitch;
+    ULONG DestinationPitch;
+    ULONG Index;
+    NTSTATUS Status;
+
+    if (Adapter == NULL || PrimaryAllocation == NULL || Entry == NULL)
+        return STATUS_INVALID_PARAMETER;
+    if (Entry->SharedSurface.ShadowFb == NULL || Entry->SharedSurface.ShadowFbPitch == 0)
+        return STATUS_INVALID_PARAMETER;
+    if (Entry->DstSubRectCount == 0 || Entry->DstSubRects == NULL)
+        return STATUS_INVALID_PARAMETER;
+
+    Width = Entry->SharedSurface.PrimaryWidth;
+    Height = Entry->SharedSurface.PrimaryHeight;
+    if (Width == 0 || Height == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    Status = DxgkVidMmMapAllocationCpu(PrimaryAllocation, (PVOID *)&DestinationVa);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    DestinationPitch = DxgkpSurfaceCopyPitch(PrimaryAllocation, Width, Height, 0);
+    if (DestinationPitch < Width * sizeof(ULONG))
+        return STATUS_INVALID_BUFFER_SIZE;
+
+    SourceVa = (PBYTE)Entry->SharedSurface.ShadowFb;
+    SourcePitch = (ULONG)Entry->SharedSurface.ShadowFbPitch;
+
+    for (Index = 0; Index < Entry->DstSubRectCount; Index++)
+    {
+        RECT Rect = Entry->DstSubRects[Index];
+        ULONG RowBytes;
+        ULONG Row;
+
+        if (Rect.left < 0)
+            Rect.left = 0;
+        if (Rect.top < 0)
+            Rect.top = 0;
+        if (Rect.right > (LONG)Width)
+            Rect.right = (LONG)Width;
+        if (Rect.bottom > (LONG)Height)
+            Rect.bottom = (LONG)Height;
+        if (Rect.left >= Rect.right || Rect.top >= Rect.bottom)
+            continue;
+
+        if (Entry->SharedSurface.ShadowFbSize <
+                ((SIZE_T)(Rect.bottom - 1) * SourcePitch) + ((SIZE_T)Rect.right * sizeof(ULONG)) ||
+            PrimaryAllocation->Size <
+                ((SIZE_T)(Rect.bottom - 1) * DestinationPitch) + ((SIZE_T)Rect.right * sizeof(ULONG)))
+            return STATUS_INVALID_BUFFER_SIZE;
+
+        RowBytes = (ULONG)(Rect.right - Rect.left) * sizeof(ULONG);
+        for (Row = (ULONG)Rect.top; Row < (ULONG)Rect.bottom; Row++)
+        {
+            RtlCopyMemory(DestinationVa + ((SIZE_T)Row * DestinationPitch) + ((SIZE_T)Rect.left * sizeof(ULONG)),
+                          SourceVa + ((SIZE_T)Row * SourcePitch) + ((SIZE_T)Rect.left * sizeof(ULONG)),
+                          RowBytes);
+        }
+    }
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS
 DxgkpRefreshSharedPrimaryScanout(
     _In_ PDXGKRNL_ADAPTER Adapter,
@@ -2654,15 +2731,6 @@ DxgkpRefreshSharedPrimaryScanout(
         return STATUS_NOT_SUPPORTED;
     }
 
-    if (!DxgkPresentCoreIsFullDestinationRegion(
-             &Entry->DstRect,
-             Entry->DstSubRects,
-             Entry->DstSubRectCount))
-    {
-        *Handled = TRUE;
-        return STATUS_NOT_SUPPORTED;
-    }
-
     Allocation = Entry->SourceAllocation;
     if (Allocation == NULL || Allocation->Adapter != Adapter)
         return STATUS_INVALID_HANDLE;
@@ -2678,7 +2746,17 @@ DxgkpRefreshSharedPrimaryScanout(
         return Status;
     }
 
-    Status = DxgkpCopyShadowToSharedPrimary(Adapter, Allocation, &Entry->SharedSurface);
+    if (DxgkPresentCoreIsFullDestinationRegion(
+            &Entry->DstRect,
+            Entry->DstSubRects,
+            Entry->DstSubRectCount))
+    {
+        Status = DxgkpCopyShadowToSharedPrimary(Adapter, Allocation, &Entry->SharedSurface);
+    }
+    else
+    {
+        Status = DxgkpCopyShadowSubRectsToSharedPrimary(Adapter, Allocation, Entry);
+    }
     if (!NT_SUCCESS(Status))
     {
         DXGKRNL_WARN("DxgkpRefreshSharedPrimaryScanout: shadow copy failed "
