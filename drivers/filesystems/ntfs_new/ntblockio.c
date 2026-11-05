@@ -118,6 +118,18 @@ NtfsForwardVolumeIo(
         goto Complete;
     }
 
+    /*
+     * Metadata the library still holds in its write-back block cache is not
+     * on the disk yet. Commit the blocks this transfer overlaps first, so a
+     * volume read sees what the file system wrote, and a raw write on a
+     * locked volume can not be overwritten later by an older held block.
+     */
+    Status = NtfsDiskFlushRangeKm(VolCB->StorageDevice,
+                                  (ULONGLONG)ByteOffset.QuadPart,
+                                  Length);
+    if (!NT_SUCCESS(Status))
+        goto Complete;
+
     if (Irp->MdlAddress)
     {
         if (Irp->MdlAddress->Next ||
