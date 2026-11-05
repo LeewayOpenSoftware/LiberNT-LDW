@@ -31,6 +31,11 @@ typedef struct _VolumeContextBlock
     PFILE_OBJECT StreamFileObject;
     ERESOURCE MetadataResource;
     EX_PUSH_LOCK MetadataGate;
+#if DBG || defined(NTFS_LOCK_STATS)
+    /* Outermost owner of MetadataResource: when it got the lock, and where. */
+    LONGLONG MetadataGrantTicks;
+    ULONG MetadataOwnerSite;
+#endif
     FAST_MUTEX VolumeStateMutex;
     SHARE_ACCESS VolumeShareAccess;
     LONG OpenHandleCount;
@@ -582,22 +587,85 @@ NtfsMarkVolumeClean(_In_ PVolumeContextBlock VolCB);
 NTSTATUS
 NtfsMarkMountedVolumesClean(VOID);
 
+/*
+ * Metadata lock statistics (debug builds, or NTFS_LOCK_STATS): for the
+ * outermost acquire of each call site, how long the caller waited for the
+ * gate and how long the lock was then held, as totals, maxima and
+ * microsecond histograms. A summary goes to the debug log every
+ * NtfsLockStatsIntervalSeconds (0 = never). Counters are cumulative.
+ */
+#if DBG || defined(NTFS_LOCK_STATS)
+#define NTFS_LOCK_STATS_ENABLED 1
+
+extern ULONG NtfsLockStatsIntervalSeconds;
+
+ULONG
+NtfsLockStatsRegisterSite(_In_z_ PCSTR File,
+                          _In_ ULONG Line);
+
+VOID
+NtfsLockStatsAcquired(_In_ PVolumeContextBlock VolCB,
+                      _In_ ULONG Site,
+                      _In_ LONGLONG WaitStart);
+
+VOID
+NtfsLockStatsReleasing(_In_ PVolumeContextBlock VolCB);
+
+VOID
+NtfsLockStatsMaybeReport(VOID);
+#endif
+
 static inline
 VOID
-NtfsAcquireMetadata(_In_ PVolumeContextBlock VolCB)
+NtfsAcquireMetadataAtSite(_In_ PVolumeContextBlock VolCB,
+                          _In_ ULONG Site)
 {
     if (!ExIsResourceAcquiredExclusiveLite(&VolCB->MetadataResource))
+    {
+#ifdef NTFS_LOCK_STATS_ENABLED
+        LONGLONG WaitStart = KeQueryPerformanceCounter(NULL).QuadPart;
+#endif
         ExfAcquirePushLockExclusive(&VolCB->MetadataGate);
+        ExAcquireResourceExclusiveLite(&VolCB->MetadataResource, TRUE);
+#ifdef NTFS_LOCK_STATS_ENABLED
+        NtfsLockStatsAcquired(VolCB, Site, WaitStart);
+#endif
+        return;
+    }
     ExAcquireResourceExclusiveLite(&VolCB->MetadataResource, TRUE);
 }
 
 static inline
 VOID
-NtfsReleaseMetadata(_In_ PVolumeContextBlock VolCB)
+NtfsReleaseMetadataInline(_In_ PVolumeContextBlock VolCB)
 {
     BOOLEAN Last = ExIsResourceAcquiredSharedLite(&VolCB->MetadataResource) == 1;
 
+#ifdef NTFS_LOCK_STATS_ENABLED
+    if (Last)
+        NtfsLockStatsReleasing(VolCB);
+#endif
     ExReleaseResourceLite(&VolCB->MetadataResource);
     if (Last)
+    {
         ExfReleasePushLockExclusive(&VolCB->MetadataGate);
+#ifdef NTFS_LOCK_STATS_ENABLED
+        NtfsLockStatsMaybeReport();
+#endif
+    }
 }
+
+#ifdef NTFS_LOCK_STATS_ENABLED
+/* Each call site registers once and keeps its slot in a static. */
+#define NtfsAcquireMetadata(VolCB)                                          \
+    do                                                                      \
+    {                                                                       \
+        static ULONG NtfsLockSiteSlot;                                      \
+        if (!NtfsLockSiteSlot)                                              \
+            NtfsLockSiteSlot = NtfsLockStatsRegisterSite(__FILE__, __LINE__); \
+        NtfsAcquireMetadataAtSite((VolCB), NtfsLockSiteSlot);               \
+    } while (0)
+#else
+#define NtfsAcquireMetadata(VolCB) NtfsAcquireMetadataAtSite((VolCB), 0)
+#endif
+#define NtfsReleaseMetadata(VolCB) NtfsReleaseMetadataInline(VolCB)

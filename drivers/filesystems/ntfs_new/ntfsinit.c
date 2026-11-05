@@ -988,3 +988,180 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     NtfsReleaseDismountedVolume(VolumeDeviceObject);
     return STATUS_SUCCESS;
 }
+
+#ifdef NTFS_LOCK_STATS_ENABLED
+
+#define NTFS_LOCK_STATS_SITES   96
+#define NTFS_LOCK_STATS_BUCKETS 8
+
+/* Upper bounds of the histogram buckets, in microseconds; the last is open. */
+static const ULONG NtfsLockStatsBucketLimitUs[NTFS_LOCK_STATS_BUCKETS - 1] =
+{
+    10, 50, 100, 500, 1000, 5000, 20000
+};
+
+typedef struct _NTFS_LOCK_SITE_STATS
+{
+    PCSTR File;
+    ULONG Line;
+    volatile LONG64 Acquires;
+    volatile LONG64 WaitTicks;
+    volatile LONG64 WaitMaxTicks;
+    volatile LONG64 HoldTicks;
+    volatile LONG64 HoldMaxTicks;
+    volatile LONG WaitBuckets[NTFS_LOCK_STATS_BUCKETS];
+    volatile LONG HoldBuckets[NTFS_LOCK_STATS_BUCKETS];
+} NTFS_LOCK_SITE_STATS;
+
+ULONG NtfsLockStatsIntervalSeconds = 10;
+static NTFS_LOCK_SITE_STATS NtfsLockSites[NTFS_LOCK_STATS_SITES];
+static volatile LONG NtfsLockSiteCount;
+static volatile LONG64 NtfsLockStatsFrequency;
+static volatile LONG64 NtfsLockStatsLastReport;
+
+static
+LONG64
+NtfsLockStatsTicksToUs(_In_ LONG64 Ticks)
+{
+    LONG64 Frequency = NtfsLockStatsFrequency;
+
+    if (Frequency <= 0)
+        return 0;
+    return (Ticks / Frequency) * 1000000 + (Ticks % Frequency) * 1000000 / Frequency;
+}
+
+static
+VOID
+NtfsLockStatsRecord(_Inout_ volatile LONG64 *Total,
+                    _Inout_ volatile LONG64 *Max,
+                    _Inout_ volatile LONG *Buckets,
+                    _In_ LONG64 Ticks)
+{
+    LONG64 Old;
+    LONG64 Us;
+    ULONG Bucket;
+
+    if (Ticks < 0)
+        Ticks = 0;
+    InterlockedExchangeAdd64(Total, Ticks);
+    for (Old = *Max; Ticks > Old; Old = *Max)
+    {
+        if (InterlockedCompareExchange64(Max, Ticks, Old) == Old)
+            break;
+    }
+    Us = NtfsLockStatsTicksToUs(Ticks);
+    for (Bucket = 0; Bucket < NTFS_LOCK_STATS_BUCKETS - 1; Bucket++)
+    {
+        if (Us < NtfsLockStatsBucketLimitUs[Bucket])
+            break;
+    }
+    InterlockedIncrement(&Buckets[Bucket]);
+}
+
+ULONG
+NtfsLockStatsRegisterSite(_In_z_ PCSTR File,
+                          _In_ ULONG Line)
+{
+    LONG Slot;
+
+    if (!NtfsLockStatsFrequency)
+    {
+        LARGE_INTEGER Frequency;
+
+        KeQueryPerformanceCounter(&Frequency);
+        InterlockedCompareExchange64(&NtfsLockStatsFrequency, Frequency.QuadPart, 0);
+    }
+    /* Two threads racing on a new site may both register it: two rows, harmless. */
+    Slot = InterlockedIncrement(&NtfsLockSiteCount);
+    if (Slot > NTFS_LOCK_STATS_SITES)
+        return NTFS_LOCK_STATS_SITES; /* the last row collects the overflow */
+    NtfsLockSites[Slot - 1].File = File;
+    NtfsLockSites[Slot - 1].Line = Line;
+    return (ULONG)Slot;
+}
+
+VOID
+NtfsLockStatsAcquired(_In_ PVolumeContextBlock VolCB,
+                      _In_ ULONG Site,
+                      _In_ LONGLONG WaitStart)
+{
+    NTFS_LOCK_SITE_STATS *Stats;
+    LONGLONG Now = KeQueryPerformanceCounter(NULL).QuadPart;
+
+    VolCB->MetadataGrantTicks = Now;
+    VolCB->MetadataOwnerSite = Site;
+    if (Site == 0 || Site > NTFS_LOCK_STATS_SITES)
+        return;
+    Stats = &NtfsLockSites[Site - 1];
+    InterlockedIncrement64(&Stats->Acquires);
+    NtfsLockStatsRecord(&Stats->WaitTicks, &Stats->WaitMaxTicks, Stats->WaitBuckets, Now - WaitStart);
+}
+
+VOID
+NtfsLockStatsReleasing(_In_ PVolumeContextBlock VolCB)
+{
+    NTFS_LOCK_SITE_STATS *Stats;
+    ULONG Site = VolCB->MetadataOwnerSite;
+
+    VolCB->MetadataOwnerSite = 0;
+    if (Site == 0 || Site > NTFS_LOCK_STATS_SITES)
+        return;
+    Stats = &NtfsLockSites[Site - 1];
+    NtfsLockStatsRecord(&Stats->HoldTicks, &Stats->HoldMaxTicks, Stats->HoldBuckets,
+                        KeQueryPerformanceCounter(NULL).QuadPart - VolCB->MetadataGrantTicks);
+}
+
+VOID
+NtfsLockStatsMaybeReport(VOID)
+{
+    LONG64 Now;
+    LONG64 Last;
+    LONG Count;
+    LONG Index;
+    PCSTR Name;
+    PCSTR Scan;
+
+    if (!NtfsLockStatsIntervalSeconds || NtfsLockStatsFrequency <= 0 ||
+        KeGetCurrentIrql() > APC_LEVEL)
+    {
+        return;
+    }
+    Now = KeQueryPerformanceCounter(NULL).QuadPart;
+    Last = NtfsLockStatsLastReport;
+    if (Last == 0)
+    {
+        InterlockedCompareExchange64(&NtfsLockStatsLastReport, Now, 0);
+        return;
+    }
+    if (Now - Last < (LONG64)NtfsLockStatsIntervalSeconds * NtfsLockStatsFrequency ||
+        InterlockedCompareExchange64(&NtfsLockStatsLastReport, Now, Last) != Last)
+    {
+        return;
+    }
+
+    Count = min(NtfsLockSiteCount, NTFS_LOCK_STATS_SITES);
+    DbgPrint("NTFSLOCK report: cumulative, us; buckets <10 <50 <100 <500 <1m <5m <20m >=20m\n");
+    for (Index = 0; Index < Count; Index++)
+    {
+        NTFS_LOCK_SITE_STATS *Stats = &NtfsLockSites[Index];
+        volatile LONG *W = Stats->WaitBuckets;
+        volatile LONG *H = Stats->HoldBuckets;
+
+        if (!Stats->File || !Stats->Acquires)
+            continue;
+        for (Name = Scan = Stats->File; *Scan; Scan++)
+        {
+            if (*Scan == '/' || *Scan == '\\')
+                Name = Scan + 1;
+        }
+        DbgPrint("NTFSLOCK %s:%lu n=%I64d wait=%I64d wmax=%I64d hold=%I64d hmax=%I64d "
+                 "wb=%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld hb=%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld\n",
+                 Name, Stats->Line, Stats->Acquires,
+                 NtfsLockStatsTicksToUs(Stats->WaitTicks), NtfsLockStatsTicksToUs(Stats->WaitMaxTicks),
+                 NtfsLockStatsTicksToUs(Stats->HoldTicks), NtfsLockStatsTicksToUs(Stats->HoldMaxTicks),
+                 W[0], W[1], W[2], W[3], W[4], W[5], W[6], W[7],
+                 H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7]);
+    }
+}
+
+#endif /* NTFS_LOCK_STATS_ENABLED */
