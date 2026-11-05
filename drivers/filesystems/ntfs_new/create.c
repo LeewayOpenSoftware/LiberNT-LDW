@@ -3349,7 +3349,16 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
          Disposition == FILE_OVERWRITE ||
          Disposition == FILE_OVERWRITE_IF))
     {
+        /*
+         * Truncating frees the stream's clusters. A paging write that already
+         * looked up its extent holds PagingIoResource shared, so take it
+         * exclusive first, as every other path that frees clusters does.
+         * Order: Main -> PagingIo -> Metadata. The cached sizes are refreshed
+         * before PagingIo is dropped so no paging write sees the old size.
+         */
         KeEnterCriticalRegion();
+        ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
+        ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
         NtfsAcquireMetadata(VolCB);
         Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, FileCB->RequestedType, FileCB->RequestedStream, 0);
         if (NT_SUCCESS(Status) && !FileCB->RequestedStream)
@@ -3362,6 +3371,16 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             Status = NtfsFileRecordSetBasicInformation(FileCB->FileRec, &OverwriteBasic);
         }
         NtfsReleaseMetadata(VolCB);
+        if (NT_SUCCESS(Status))
+        {
+            if (FileCB->StreamCB)
+                FileCB->StreamCB->SizePending = FALSE;
+            NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
+        }
+        ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
+        if (NT_SUCCESS(Status))
+            NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
+        ExReleaseResourceLite(NtfsGetMainResource(FileCB));
         KeLeaveCriticalRegion();
         if (!NT_SUCCESS(Status))
         {
@@ -3380,10 +3399,6 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                             Status);
         }
 
-        if (FileCB->StreamCB)
-            FileCB->StreamCB->SizePending = FALSE;
-        NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
-        NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
         FileObject->Flags |= FO_FILE_MODIFIED | FO_FILE_SIZE_CHANGED;
         Overwritten = TRUE;
     }
