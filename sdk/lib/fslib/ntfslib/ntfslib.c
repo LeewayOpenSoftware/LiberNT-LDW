@@ -552,6 +552,18 @@ NtfsCheckReport(
         case NtfsCheckAttributeListRemoved:
             NtfsFormatReport(Check->Callback, "Removed the unneeded attribute list of file %I64X.\n", Argument1);
             break;
+        case NtfsCheckRecordBeyondMft:
+            NtfsFormatReport(Check->Callback,
+                             "File record segments %I64X to %I64X (%I64u) are marked in use in the MFT bitmap "
+                             "but lie past the end of the MFT data, so they read as zeros.\n",
+                             Argument1, Argument1 + Argument2 - 1, Argument2);
+            break;
+        case NtfsCheckRecordBeyondMftInUse:
+            NtfsFormatReport(Check->Callback,
+                             "File record segment %I64X is in use but lies past the end of the MFT data. "
+                             "It was left unchanged.\n",
+                             Argument1);
+            break;
     }
 }
 
