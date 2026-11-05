@@ -481,9 +481,10 @@ FileRecord::ApplyListedSecurityId(
     {
         PAttribute First = reinterpret_cast<PAttribute>(
             Owner->Data + Owner->Header->AttributeOffset);
+        BOOLEAN Emptied = First->AttributeType == TypeAttributeEndMarker;
         NTSTATUS CleanupStatus;
 
-        if (First->AttributeType == TypeAttributeEndMarker)
+        if (Emptied)
             CleanupStatus = DiskVolume->MFT->DeallocateExtensionFileRecord(Owner);
         else
             CleanupStatus = DiskVolume->MFT->WriteFileRecordToMFT(Owner);
@@ -495,6 +496,8 @@ FileRecord::ApplyListedSecurityId(
                     CleanupStatus);
         }
         ClearExtentCacheExcept(NULL);
+        if (Emptied && NT_SUCCESS(CleanupStatus))
+            (void)CollapseUnneededAttributeList();
     }
     goto Done;
 
