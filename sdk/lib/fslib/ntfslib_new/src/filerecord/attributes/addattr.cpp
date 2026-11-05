@@ -1528,15 +1528,52 @@ FileRecord::DropUnneededAttributeList(
     ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
     if (!ListAttribute)
         return STATUS_FILE_CORRUPT_ERROR;
+    /* Cached extension records stay valid without the list, and callers may
+     * still hold them, so only the list data is dropped here. */
     Status = RemoveAttributeRecord(ListAttribute);
     delete[] AttributeListData;
     AttributeListData = NULL;
     AttributeListLength = 0;
-    ClearExtentCache();
-    ClearDataRunCache();
     if (!NT_SUCCESS(Status))
         return Status;
     return DiskVolume->MFT->WriteFileRecordToMFT(this);
+}
+
+/*
+ * Called where an operation has just emptied and freed an extension record,
+ * so the attribute list may now name only the base record. Nothing journals
+ * this, so the order is what keeps it safe: the base record is written
+ * without the list first, and only then are the clusters of a non-resident
+ * list released. A crash in between leaves lost clusters, which the volume
+ * check reclaims, never a list whose clusters were freed.
+ */
+NTSTATUS
+FileRecord::CollapseUnneededAttributeList()
+{
+    PAttribute ListAttribute;
+    PDataRun ListRuns = NULL;
+    BOOLEAN Unneeded;
+    NTSTATUS Status;
+
+    Status = DropUnneededAttributeList(FALSE, &Unneeded);
+    if (!NT_SUCCESS(Status) || !Unneeded)
+        return Status;
+
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_FILE_CORRUPT_ERROR;
+    if (ListAttribute->IsNonResident)
+    {
+        ListRuns = FindNonResidentData(ListAttribute);
+        if (!ListRuns)
+            return STATUS_FILE_CORRUPT_ERROR;
+    }
+
+    Status = DropUnneededAttributeList(TRUE, &Unneeded);
+    if (NT_SUCCESS(Status) && ListRuns)
+        Status = DiskVolume->ReleaseClusters(ListRuns);
+    FreeDataRun(ListRuns);
+    return Status;
 }
 
 NTSTATUS
@@ -1655,6 +1692,8 @@ FileRecord::RemoveListedAttribute(
     if (NT_SUCCESS(Status))
         Status = ReplaceAttributeList(NewList, NewLength);
     delete[] NewList;
+    if (NT_SUCCESS(Status) && Owner != this)
+        (void)CollapseUnneededAttributeList();
     return Status;
 }
 
@@ -4027,6 +4066,10 @@ FileRecord::CommitNonResidentMappingUpdate(
            : NULL);
     BaseRecord->ClearExtentCacheExcept(
         CacheRecordToKeep);
+
+    /* A mapping that shrank back into the base record can leave a list that
+     * names only the base record once its extension records are freed. */
+    (void)BaseRecord->CollapseUnneededAttributeList();
 
     while (Update->NewExtents)
     {

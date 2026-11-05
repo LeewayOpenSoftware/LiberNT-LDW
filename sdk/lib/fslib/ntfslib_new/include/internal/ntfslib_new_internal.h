@@ -912,6 +912,9 @@ public:
         _In_ BOOLEAN Commit,
         _Out_ PBOOLEAN Unneeded);
 
+    NTSTATUS
+    CollapseUnneededAttributeList();
+
     NTSTATUS ReadSecurityDescriptor(
         _In_opt_ PUCHAR Buffer,
         _Inout_ PULONG BufferLength);
