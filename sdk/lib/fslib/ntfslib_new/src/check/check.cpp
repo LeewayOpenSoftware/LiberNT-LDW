@@ -84,6 +84,7 @@ public:
         delete[] NameKeys;
         delete[] ExtensionOwner;
         delete[] AttrListMap;
+        delete[] LiveBeyondMap;
     }
 
     NTSTATUS Run(_In_ BOOLEAN Repair);
@@ -122,6 +123,12 @@ private:
     BOOLEAN NameKeysIncomplete = FALSE;
     PULONG ExtensionOwner = NULL;
     PUCHAR AttrListMap = NULL;
+
+    /* MFT bitmap bits past the end of the $MFT data (CheckRecordsBeyondMft). */
+    ULONGLONG BitmapBits = 0;
+    PUCHAR LiveBeyondMap = NULL;
+    ULONG BeyondRanges = 0;
+
     DanglingEntry* Dangling = NULL;
     ULONG DanglingCount = 0;
     ULONG DanglingCapacity = 0;
@@ -200,6 +207,9 @@ private:
     NTSTATUS LoadMftBitmap();
     NTSTATUS ReadRecords(_In_ ULONGLONG First, _In_ ULONG Count);
     void CheckRecord(_In_ ULONGLONG Number, _Inout_ PUCHAR Record);
+    NTSTATUS CheckRecordsBeyondMft();
+    void ReportBeyondRange(_In_ ULONGLONG First, _In_ ULONGLONG Count);
+    BOOLEAN IsLiveBeyondMft(_In_ ULONGLONG Number);
     void CheckAttributes(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PUCHAR Record);
     void CheckRunList(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PAttribute Attr);
     struct ClusterRange
@@ -501,6 +511,92 @@ VolumeCheck::CheckRecord(_In_ ULONGLONG Number, _Inout_ PUCHAR Record)
         Out->FileRecords--;
         RememberCorrupt(Number, RecordFaults - Faults, TRUE);
     }
+}
+
+void
+VolumeCheck::ReportBeyondRange(_In_ ULONGLONG First, _In_ ULONGLONG Count)
+{
+    if (!Count)
+        return;
+    Event(NtfsCheckRecordBeyondMft, First, Count);
+    BeyondRanges++;
+}
+
+/*
+ * The record scan stops at the end of the $MFT data, but the MFT bitmap can
+ * name records past it. Nothing exists there for a reader: the data size is
+ * the end of the file, so such a record reads as zeros. A crash that writes
+ * the bitmap but not the $MFT record that grew the data leaves exactly this,
+ * and so far the check never looked. Records that are readable and in use
+ * there are kept as they are (a later repair could extend the $MFT data to
+ * cover them), and index entries that name them are not treated as dangling.
+ */
+NTSTATUS
+VolumeCheck::CheckRecordsBeyondMft()
+{
+    PUCHAR Record;
+    PFileRecordHeader Header;
+    ULONGLONG RangeStart = 0, RangeCount = 0;
+
+    BitmapBits = (ULONGLONG)MftBitmapLength * 8;
+    if (BitmapBits <= RecordCount)
+        return STATUS_SUCCESS;
+
+    LiveBeyondMap = AllocateMap(BitmapBits - RecordCount);
+    Record = new(PagedPool, TAG_NTFS) UCHAR[RecordSize];
+    if (!LiveBeyondMap || !Record)
+    {
+        delete[] Record;
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    Header = reinterpret_cast<PFileRecordHeader>(Record);
+
+    for (ULONGLONG Number = RecordCount; Number < BitmapBits; Number++)
+    {
+        ULONGLONG DiskOffset;
+        BOOLEAN Live;
+
+        if (!TestBit(MftBitmap, Number))
+            continue;
+
+        Live = NT_SUCCESS(V->MFT->GetFileRecordDiskOffset(Number, &DiskOffset)) &&
+               NT_SUCCESS(V->ReadVolume(DiskOffset, RecordSize, Record)) &&
+               RtlCompareMemory(Header->Header.TypeID, "FILE", 4) == 4 &&
+               NT_SUCCESS(NtfsApplyFixup(&Header->Header, RecordSize, V->BytesPerSector)) &&
+               (Header->Flags & FR_IN_USE) != 0 &&
+               (Header->Header.UpdateSequenceOffset < FIELD_OFFSET(FileRecordHeader, MFTRecordNumber) + sizeof(UINT32) ||
+                Header->MFTRecordNumber == (UINT32)Number);
+        if (Live)
+        {
+            ReportBeyondRange(RangeStart, RangeCount);
+            RangeCount = 0;
+            SetBit(LiveBeyondMap, Number - RecordCount);
+            Event(NtfsCheckRecordBeyondMftInUse, Number, 0);
+            continue;
+        }
+
+        if (RangeCount && RangeStart + RangeCount == Number)
+        {
+            RangeCount++;
+        }
+        else
+        {
+            ReportBeyondRange(RangeStart, RangeCount);
+            RangeStart = Number;
+            RangeCount = 1;
+        }
+    }
+    ReportBeyondRange(RangeStart, RangeCount);
+
+    delete[] Record;
+    return STATUS_SUCCESS;
+}
+
+BOOLEAN
+VolumeCheck::IsLiveBeyondMft(_In_ ULONGLONG Number)
+{
+    return LiveBeyondMap && Number >= RecordCount && Number < BitmapBits &&
+           TestBit(LiveBeyondMap, Number - RecordCount);
 }
 
 void
@@ -1459,6 +1555,11 @@ VolumeCheck::CheckIndexEntries(_In_ ULONGLONG Directory,
                 Fixed++;
             }
         }
+        else if (IsLiveBeyondMft(Ordinal))
+        {
+            /* The file exists but lies past the $MFT data; keep its name. */
+            Event(NtfsCheckIndexBadEntry, Directory, Target);
+        }
         else
         {
             Event(NtfsCheckIndexBadEntry, Directory, Target);
@@ -1697,6 +1798,10 @@ VolumeCheck::Run(_In_ BOOLEAN Repair)
         for (ULONG Index = 0; Index < Count; Index++)
             CheckRecord(First + Index, Records + Index * RecordSize);
     }
+
+    Status = CheckRecordsBeyondMft();
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     if (RepairRecords)
         RepairRecordsPass();

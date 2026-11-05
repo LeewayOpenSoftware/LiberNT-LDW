@@ -1091,7 +1091,9 @@ typedef enum NtfsCheckEvent
     NtfsCheckIndexNameMissing,
     NtfsCheckLostNameRemoved,
     NtfsCheckAttributeListUnneeded,
-    NtfsCheckAttributeListRemoved
+    NtfsCheckAttributeListRemoved,
+    NtfsCheckRecordBeyondMft,
+    NtfsCheckRecordBeyondMftInUse
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
