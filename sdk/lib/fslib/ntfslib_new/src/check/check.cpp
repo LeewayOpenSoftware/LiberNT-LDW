@@ -330,9 +330,25 @@ VolumeCheck::CheckRunList(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PAtt
             Event(NtfsCheckBadRunList, Number, Attr->AttributeType);
             return;
         }
+        /*
+         * A run length is a signed value: a top bit in its last byte makes
+         * it negative, and readers reject the whole mapping. Decoding it
+         * unsigned would accept, say, 161 clusters written as the single
+         * byte 0xA1, which every reader takes as -95.
+         */
+        if (Run[LengthBytes - 1] & 0x80)
+        {
+            Event(NtfsCheckBadRunList, Number, Attr->AttributeType);
+            return;
+        }
         for (ULONG Index = 0; Index < LengthBytes; Index++)
             Length |= (ULONGLONG)Run[Index] << (Index * 8);
         Run += LengthBytes;
+        if (Length == 0)
+        {
+            Event(NtfsCheckBadRunList, Number, Attr->AttributeType);
+            return;
+        }
         if (OffsetBytes)
         {
             for (ULONG Index = 0; Index < OffsetBytes; Index++)
