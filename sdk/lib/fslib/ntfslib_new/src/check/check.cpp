@@ -191,7 +191,7 @@ private:
             Kind != NtfsCheckLostAndFound && Kind != NtfsCheckFileRecovered &&
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
             Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved &&
-            Kind != NtfsCheckIndexEntryNotRemoved)
+            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckMftBitmapNotWritten)
         {
             Out->Errors++;
         }
@@ -925,8 +925,17 @@ VolumeCheck::CommitMftBitmap(_In_ BOOLEAN IndexesRepaired)
             MftBitmapChanged = TRUE;
     }
 
-    if (!MftBitmapChanged || !NT_SUCCESS(WriteMftBitmap()))
+    if (!MftBitmapChanged)
         return;
+    {
+        NTSTATUS WriteStatus = WriteMftBitmap();
+
+        if (!NT_SUCCESS(WriteStatus))
+        {
+            Event(NtfsCheckMftBitmapNotWritten, (ULONG)WriteStatus, MftBitmapLength);
+            return;
+        }
+    }
 
     Out->Errors -= MftBitmapFixes;
     if (BeyondFixes)

@@ -584,6 +584,12 @@ NtfsCheckReport(
                              "the record it names is kept in use.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckMftBitmapNotWritten:
+            NtfsFormatReport(Check->Callback,
+                             "The corrected MFT bitmap (%I64u bytes) could not be written (status 0x%08lx); "
+                             "the records it frees stay marked in use.\n",
+                             Argument2, (ULONG)Argument1);
+            break;
     }
 }
 
