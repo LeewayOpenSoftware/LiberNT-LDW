@@ -555,6 +555,15 @@ public:
     BOOLEAN DirtyTracking = FALSE;
     BOOLEAN DirtyMarked = FALSE;
     BOOLEAN DirtyRetained = FALSE;
+    /*
+     * Set once the volume was marked clean for shutdown. The system can still
+     * write after the file systems are told to shut down (the paging file
+     * closing, the last lazy writes); those writes no longer mark the volume
+     * dirty, since nothing would clear it again, and are written through to
+     * the medium instead.
+     */
+    BOOLEAN ShutdownClean = FALSE;
+    ULONG LateWrites = 0;
 
     /*
      * Where to begin the free-cluster search. Without it every allocation
@@ -752,6 +761,11 @@ public:
     /* Writes everything back and clears a dirty flag this mount set. */
     NTSTATUS
     MarkClean();
+
+    /* MarkClean, then keeps the volume clean for the rest of the session:
+     * later writes are written through instead of marking it dirty. */
+    NTSTATUS
+    MarkCleanForShutdown();
 
     /* TRUE when the on-disk dirty flag only means "being written now". */
     BOOLEAN

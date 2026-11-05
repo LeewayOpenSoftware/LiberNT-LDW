@@ -269,6 +269,16 @@ Volume::MarkClean()
     return Status;
 }
 
+NTSTATUS
+Volume::MarkCleanForShutdown()
+{
+    NTSTATUS Status = MarkClean();
+
+    if (NT_SUCCESS(Status) && DirtyTracking && !IsReadOnly)
+        ShutdownClean = TRUE;
+    return Status;
+}
+
 BOOLEAN
 Volume::IsDirtyTransient()
 {

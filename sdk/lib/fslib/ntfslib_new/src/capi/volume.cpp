@@ -292,6 +292,13 @@ NtfsVolumeMarkClean(
     return reinterpret_cast<PVolume>(DiskVolume)->MarkClean();
 }
 
+NTSTATUS
+NtfsVolumeMarkCleanForShutdown(
+    _In_ PNtfsVolume DiskVolume)
+{
+    return reinterpret_cast<PVolume>(DiskVolume)->MarkCleanForShutdown();
+}
+
 BOOLEAN
 NtfsVolumeIsDirtyTransient(
     _In_ PNtfsVolume DiskVolume)

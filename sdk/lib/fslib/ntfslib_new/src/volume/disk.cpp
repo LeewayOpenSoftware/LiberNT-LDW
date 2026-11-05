@@ -52,18 +52,31 @@ Volume::WriteVolume(_In_    ULONGLONG Offset,
         return STATUS_DISK_FULL;
 
     /* The first write since the volume was last clean marks it dirty. */
-    if (DirtyTracking && !DirtyMarked)
+    if (DirtyTracking && !DirtyMarked && !ShutdownClean)
     {
         Status = MarkDirtyBeforeWrite();
         if (!NT_SUCCESS(Status))
             return Status;
     }
 
-    return NtfsWriteVolumeContext(IoContext,
-                                  BytesPerSector,
-                                  Offset,
-                                  Length,
-                                  Buffer);
+    Status = NtfsWriteVolumeContext(IoContext,
+                                    BytesPerSector,
+                                    Offset,
+                                    Length,
+                                    Buffer);
+
+    /* After the shutdown clean point nothing flushes again: write through. */
+    if (ShutdownClean && NT_SUCCESS(Status))
+    {
+        if (LateWrites < 8)
+        {
+            DPRINT1("Write after the shutdown clean point at offset 0x%I64x (%lu bytes), written through\n",
+                    Offset, Length);
+        }
+        LateWrites++;
+        Status = FlushVolume();
+    }
+    return Status;
 }
 
 NTSTATUS

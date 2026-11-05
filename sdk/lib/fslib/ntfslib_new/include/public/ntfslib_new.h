@@ -1151,6 +1151,12 @@ NTSTATUS
 NtfsVolumeMarkClean(
     _In_ PNtfsVolume DiskVolume);
 
+/* NtfsVolumeMarkClean for system shutdown: the volume then stays clean for
+ * the rest of the session, and any later write is written through. */
+NTSTATUS
+NtfsVolumeMarkCleanForShutdown(
+    _In_ PNtfsVolume DiskVolume);
+
 /* TRUE when the dirty flag on disk was set by tracking, not by a crash or a
  * request: the volume is being written, it does not need a check. */
 BOOLEAN

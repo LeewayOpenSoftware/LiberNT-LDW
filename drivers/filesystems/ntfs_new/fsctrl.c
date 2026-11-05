@@ -1309,6 +1309,39 @@ NtfsMarkVolumeClean(_In_ PVolumeContextBlock VolCB)
     return Status;
 }
 
+/*
+ * Shutdown: the file systems are told to shut down before the system stops
+ * writing (the paging file is released and the lazy writer finishes later),
+ * and nothing tells them again afterwards. Write back the cached streams,
+ * mark the volume clean, and keep it clean: a later write is written through
+ * instead of marking it dirty again, which no one would clear.
+ */
+static
+NTSTATUS
+NtfsMarkVolumeCleanForShutdown(_In_ PVolumeContextBlock VolCB)
+{
+    NTSTATUS Status;
+
+    if (!VolCB->DiskVolume || NtfsVolumeIsReadOnly(VolCB->DiskVolume))
+        return STATUS_SUCCESS;
+
+    Status = NtfsFlushVolume(VolCB, FALSE);
+    if (!NT_SUCCESS(Status))
+        DPRINT1("Shutdown flush failed (Status %lx): the volume stays dirty\n", Status);
+
+    KeEnterCriticalRegion();
+    NtfsAcquireMetadata(VolCB);
+    if (NT_SUCCESS(Status))
+        Status = NtfsVolumeMarkCleanForShutdown(VolCB->DiskVolume);
+    NtfsReleaseMetadata(VolCB);
+    KeLeaveCriticalRegion();
+    if (NT_SUCCESS(Status))
+        DPRINT1("Volume marked clean for shutdown\n");
+    else
+        DPRINT1("The volume stays dirty at shutdown (Status %lx)\n", Status);
+    return Status;
+}
+
 /* Volume contexts are never freed (see NtfsReleaseDismountedVolume), so the
  * list only grows; dismounted volumes are skipped. */
 NTSTATUS
@@ -1334,7 +1367,7 @@ NtfsMarkMountedVolumesClean(VOID)
         if (!Active)
             continue;
 
-        VolumeStatus = NtfsMarkVolumeClean(VolCB);
+        VolumeStatus = NtfsMarkVolumeCleanForShutdown(VolCB);
         if (!NT_SUCCESS(VolumeStatus) && NT_SUCCESS(Status))
             Status = VolumeStatus;
     }
