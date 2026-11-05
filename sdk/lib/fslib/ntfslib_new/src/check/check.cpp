@@ -179,7 +179,7 @@ private:
             Kind != NtfsCheckNameRelinked && Kind != NtfsCheckCrossLinkResolved &&
             Kind != NtfsCheckLostAndFound && Kind != NtfsCheckFileRecovered &&
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
-            Kind != NtfsCheckLostNameRemoved)
+            Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved)
         {
             Out->Errors++;
         }
@@ -969,6 +969,7 @@ VolumeCheck::CheckAttributeLists()
         ListFilterContext Filter = { this, Number };
         ULONG Dropped, DroppedNames;
         BOOLEAN DroppedData;
+        BOOLEAN Unneeded;
         PFileRecord File;
         NTSTATUS Status;
 
@@ -989,6 +990,18 @@ VolumeCheck::CheckAttributeLists()
                 Event(NtfsCheckAttributeListFixed, Number, Dropped);
                 if (DroppedData && !(File->Header->Flags & FR_IS_DIRECTORY))
                     Event(NtfsCheckDataAttributeInserted, Number, 0);
+            }
+        }
+
+        /* A list that only names the base record is one Windows rejects */
+        if (NT_SUCCESS(File->DropUnneededAttributeList(FALSE, &Unneeded)) && Unneeded)
+        {
+            Event(NtfsCheckAttributeListUnneeded, Number, 0);
+            if (RepairRecords && NT_SUCCESS(File->DropUnneededAttributeList(TRUE, &Unneeded)))
+            {
+                Out->Errors--;
+                Out->RepairedAttributeLists++;
+                Event(NtfsCheckAttributeListRemoved, Number, 0);
             }
         }
         delete File;

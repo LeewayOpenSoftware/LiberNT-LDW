@@ -545,6 +545,14 @@ NtfsCheckReport(
                              "An index entry in index $I30 of file %I64X names file 0x%I64x, which does not have that name.\n",
                              Argument1, Argument2);
             break;
+        case NtfsCheckAttributeListUnneeded:
+            NtfsFormatReport(Check->Callback,
+                             "The attribute list of file %I64X is not needed: every entry is in the base record.\n",
+                             Argument1);
+            break;
+        case NtfsCheckAttributeListRemoved:
+            NtfsFormatReport(Check->Callback, "Removed the unneeded attribute list of file %I64X.\n", Argument1);
+            break;
     }
 }
 
