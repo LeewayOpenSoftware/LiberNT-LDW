@@ -584,6 +584,12 @@ NtfsCheckReport(
                              "the record it names is kept in use.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckRecordKept:
+            NtfsFormatReport(Check->Callback,
+                             "File record segment %I64X has damaged attributes (%I64u problems). It was not deleted, "
+                             "so no other repair was made; copy its data elsewhere before repairing it.\n",
+                             Argument1, Argument2);
+            break;
         case NtfsCheckMftBitmapNotWritten:
             NtfsFormatReport(Check->Callback,
                              "The corrected MFT bitmap (%I64u bytes) could not be written (status 0x%08lx); "

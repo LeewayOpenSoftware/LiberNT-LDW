@@ -191,7 +191,8 @@ private:
             Kind != NtfsCheckLostAndFound && Kind != NtfsCheckFileRecovered &&
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
             Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved &&
-            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckMftBitmapNotWritten)
+            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckMftBitmapNotWritten &&
+            Kind != NtfsCheckRecordKept)
         {
             Out->Errors++;
         }
@@ -564,15 +565,17 @@ VolumeCheck::CheckRecord(_In_ ULONGLONG Number, _Inout_ PUCHAR Record)
         ExtensionOwner[Number] = (ULONG)Owner + 1;
         Sequence[Number] = Header->SequenceNumber;
     }
+    /*
+     * A file whose record is intact but whose attributes are damaged (a
+     * bad header or run list, clusters outside the volume) still has its
+     * names, and possibly most of its data. Deleting it would lose all of
+     * that. Keep it, and report it: its faults stay structural, so this
+     * check makes no index or bitmap repair and the volume stays dirty
+     * until it is repaired by hand. Only records that cannot be parsed at
+     * all (above) are freed.
+     */
     if (RecordFaults != Faults && Owner == Number && Number >= CHECK_FIRST_USER_RECORD)
-    {
-        InUseMap[Number >> 3] &= (UCHAR)~(1 << (Number & 7));
-        DirectoryMap[Number >> 3] &= (UCHAR)~(1 << (Number & 7));
-        Names[Number].Expected = Names[Number].Found = 0;
-        Names[Number].ExpectedHash = Names[Number].FoundHash = 0;
-        Out->FileRecords--;
-        RememberCorrupt(Number, RecordFaults - Faults, TRUE);
-    }
+        Event(NtfsCheckRecordKept, Number, RecordFaults - Faults);
 }
 
 void
