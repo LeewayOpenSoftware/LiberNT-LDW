@@ -128,6 +128,7 @@ private:
     ULONGLONG BitmapBits = 0;
     PUCHAR LiveBeyondMap = NULL;
     ULONG BeyondRanges = 0;
+    ULONG DanglingFailures = 0;
 
     DanglingEntry* Dangling = NULL;
     ULONG DanglingCount = 0;
@@ -234,6 +235,7 @@ private:
     void RememberCorrupt(_In_ ULONGLONG Number, _In_ ULONG Faults, _In_ BOOLEAN Readable);
     void RememberOrphan(_In_ ULONGLONG Number);
     NTSTATUS WriteMftBitmap();
+    void CommitMftBitmap(_In_ BOOLEAN IndexesRepaired);
     void RepairRecordsPass();
     void RelinkOrphans();
     void RememberLost(_In_ ULONGLONG Number, _In_ const FileNameEx* Name);
@@ -791,12 +793,44 @@ VolumeCheck::RepairRecordsPass()
     }
     delete[] Record;
 
-    if (MftBitmapChanged && NT_SUCCESS(WriteMftBitmap()))
+    /* The MFT bitmap itself is written by CommitMftBitmap, once the index
+     * entries that name these records are gone. */
+}
+
+/*
+ * Index entries first, MFT bitmap second: if the check stops in between,
+ * an index entry can only point at a record that is still marked in use,
+ * never at a free record that a later allocation could hand to another
+ * file. Bits past the end of the $MFT data are cleared only when every
+ * dangling index entry was removed, for the same reason.
+ */
+void
+VolumeCheck::CommitMftBitmap(_In_ BOOLEAN IndexesRepaired)
+{
+    ULONG BeyondFixes = 0;
+
+    if (IndexesRepaired && BeyondRanges && DanglingFailures == 0)
     {
-        Out->Errors -= MftBitmapFixes;
-        if (MftBitmapFixes)
-            Event(NtfsCheckRecordBitmapFixed, MftBitmapFixes, 0);
+        for (ULONGLONG Number = RecordCount; Number < BitmapBits; Number++)
+        {
+            if (TestBit(MftBitmap, Number) && !IsLiveBeyondMft(Number))
+            {
+                MftBitmap[Number >> 3] &= (UCHAR)~(1 << (Number & 7));
+                BeyondFixes++;
+            }
+        }
+        if (BeyondFixes)
+            MftBitmapChanged = TRUE;
     }
+
+    if (!MftBitmapChanged || !NT_SUCCESS(WriteMftBitmap()))
+        return;
+
+    Out->Errors -= MftBitmapFixes;
+    if (BeyondFixes)
+        Out->Errors -= BeyondRanges;
+    if (MftBitmapFixes + BeyondFixes)
+        Event(NtfsCheckRecordBitmapFixed, MftBitmapFixes + BeyondFixes, 0);
 }
 
 void
@@ -1608,7 +1642,10 @@ VolumeCheck::RemoveDangling()
         NTSTATUS Status;
 
         if (!NT_SUCCESS(V->MFT->GetFileRecord((ULONG)Entry->Directory, &File)))
+        {
+            DanglingFailures++;
             continue;
+        }
 
         Name.Buffer = Entry->Name;
         Name.Length = Name.MaximumLength = (USHORT)(Entry->NameLength * sizeof(WCHAR));
@@ -1625,6 +1662,10 @@ VolumeCheck::RemoveDangling()
             Out->RemovedIndexEntries++;
             StructuralErrors--;
             Event(NtfsCheckIndexEntryRemoved, Entry->Directory, Entry->Target);
+        }
+        else
+        {
+            DanglingFailures++;
         }
     }
     if (DanglingCount)
@@ -1830,8 +1871,11 @@ VolumeCheck::Run(_In_ BOOLEAN Repair)
 
     Status = CheckBitmap(Repair);
     if (NT_SUCCESS(Status) && RepairIndexes)
-    {
         RemoveDangling();
+    if (RepairRecords)
+        CommitMftBitmap(NT_SUCCESS(Status) && RepairIndexes);
+    if (NT_SUCCESS(Status) && RepairIndexes)
+    {
         RelinkOrphans();
         RecoverLostFiles();
     }
