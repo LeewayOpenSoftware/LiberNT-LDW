@@ -44,6 +44,9 @@ typedef struct _VolumeContextBlock
      * FILE_TRAVERSE (a process's current directory). They can neither
      * read nor change anything, so they do not block a volume lock. */
     LONG TraverseOnlyHandleCount;
+    /* Set when the shutdown clean pass begins: from then on a paging write
+     * sent outside the metadata lock writes the volume through itself. */
+    LONG ShutdownStarted;
     PFILE_OBJECT VolumeLockOwner;
     PFILE_OBJECT ShrinkOwner;
     ULONGLONG ShrinkVolumeSectors;
@@ -334,6 +337,8 @@ typedef struct _SCB
     BOOLEAN DeletePending;
     BOOLEAN Unlinked;
     LONG UncleanCount;
+    /* A paging write went to the disk without stamping the write times. */
+    LONG PagingWriteUnstamped;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -617,6 +622,21 @@ NtfsMarkVolumeClean(_In_ PVolumeContextBlock VolCB);
 
 NTSTATUS
 NtfsMarkMountedVolumesClean(VOID);
+
+/* Paging writes by outcome (write.c, NtfsPagingWriteOutsideLock). */
+typedef enum _NTFS_PAGING_WRITE_COUNT
+{
+    NtfsPagingWriteDirect,          /* sent outside the metadata lock */
+    NtfsPagingWriteDirectFailed,
+    NtfsPagingWriteUnaligned,       /* the rest took the locked path */
+    NtfsPagingWriteNotEligible,
+    NtfsPagingWritePastInitialized,
+    NtfsPagingWriteNoExtent,
+    NtfsPagingWriteSplit,
+    NtfsPagingWriteCountMax
+} NTFS_PAGING_WRITE_COUNT;
+
+extern volatile LONG NtfsPagingWriteCounts[NtfsPagingWriteCountMax];
 
 /*
  * Metadata lock statistics (debug builds, or NTFS_LOCK_STATS): for the

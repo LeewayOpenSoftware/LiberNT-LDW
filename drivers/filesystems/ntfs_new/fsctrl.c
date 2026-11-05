@@ -1325,6 +1325,9 @@ NtfsMarkVolumeCleanForShutdown(_In_ PVolumeContextBlock VolCB)
     if (!VolCB->DiskVolume || NtfsVolumeIsReadOnly(VolCB->DiskVolume))
         return STATUS_SUCCESS;
 
+    /* Before the flush: a paging write that lands in the block cache after
+     * it sees this and writes the volume through (see NtfsFsdWrite). */
+    InterlockedExchange(&VolCB->ShutdownStarted, 1);
     Status = NtfsFlushVolume(VolCB, FALSE);
     if (!NT_SUCCESS(Status))
         DPRINT1("Shutdown flush failed (Status %lx): the volume stays dirty\n", Status);

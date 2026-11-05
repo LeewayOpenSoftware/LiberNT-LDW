@@ -21,6 +21,7 @@ INT gDisableLastAccessUpdate;
 BOOLEAN gDisableLfsDowngrade;
 BOOLEAN gDisableLfsUpgrade;
 INT gMftZoneReservation;
+BOOLEAN gPagingWriteOutsideLock;
 
 HANDLE
 OpenRegistryKey()
@@ -253,6 +254,14 @@ GetGlobalSettingsFromRegistry()
     gShowVersionInfo = QueryBooleanRegistryValueEx(RegistryKey,
                                                    L"NtfsShowVersionInfo",
                                                    FALSE);
+
+    /* EXPERIMENTAL. Sends a paging write that only overwrites allocated,
+     * initialized clusters after releasing the volume metadata lock, and
+     * leaves the write times to user writes. Default is OFF (0).
+     */
+    gPagingWriteOutsideLock = QueryBooleanRegistryValueEx(RegistryKey,
+                                                          L"NtfsPagingWriteOutsideLock",
+                                                          FALSE);
 
     CloseRegistryKey(RegistryKey);
 }

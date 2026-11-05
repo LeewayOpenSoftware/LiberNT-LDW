@@ -58,6 +58,7 @@ extern BOOLEAN gShowVersionInfo;
 extern BOOLEAN gBugCheckOnCorrupt;
 extern BOOLEAN gDisable8dot3NameCreation;
 extern INT gDisableLastAccessUpdate;
+extern BOOLEAN gPagingWriteOutsideLock;
 extern BOOLEAN gDisableLfsDowngrade;
 extern BOOLEAN gDisableLfsUpgrade;
 extern INT gMftZoneReservation;

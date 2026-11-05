@@ -949,6 +949,38 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             KeLeaveCriticalRegion();
         }
 
+        /*
+         * Paging writes sent outside the metadata lock do not stamp the
+         * write times (write.c, NtfsPagingWriteOutsideLock), so the times
+         * follow the user writes: stamp them when a handle that wrote is
+         * cleaned up, and once for a stream changed only through a mapped
+         * view.
+         */
+        if (FirstCleanup && FileCB->StreamCB &&
+            (InterlockedExchange(&FileCB->StreamCB->PagingWriteUnstamped, 0) != 0 ||
+             (gPagingWriteOutsideLock && FileCB->WriteTimesStamped &&
+              BooleanFlagOn(IrpSp->FileObject->Flags, FO_FILE_MODIFIED))) &&
+            !FileCB->StreamCB->Deleted &&
+            !FileCB->DeletePending && !(FileCB->CreateOptions & FILE_DELETE_ON_CLOSE) &&
+            VolCB->DiskVolume && !NtfsVolumeIsReadOnly(VolCB->DiskVolume))
+        {
+            NTSTATUS StampStatus;
+
+            KeEnterCriticalRegion();
+            ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
+            NtfsAcquireMetadata(VolCB);
+            StampStatus = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+            if (NT_SUCCESS(StampStatus))
+                StampStatus = NtfsFileRecordUpdateAutomaticTimestamps(
+                    FileCB->FileRec,
+                    NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME);
+            if (NT_SUCCESS(StampStatus))
+                InterlockedIncrement(&VolCB->DirGeneration);
+            NtfsReleaseMetadata(VolCB);
+            ExReleaseResourceLite(NtfsGetMainResource(FileCB));
+            KeLeaveCriticalRegion();
+        }
+
         /* The handle is going away, so a requested delete happens now. */
         if (FirstCleanup &&
             (DeleteLink || (FileCB->StreamCB
@@ -1193,6 +1225,18 @@ NtfsLockStatsMaybeReport(VOID)
                  NtfsLockStatsTicksToUs(Stats->HoldTicks), NtfsLockStatsTicksToUs(Stats->HoldMaxTicks),
                  W[0], W[1], W[2], W[3], W[4], W[5], W[6], W[7],
                  H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7]);
+    }
+    if (gPagingWriteOutsideLock)
+    {
+        DbgPrint("NTFSLOCK paging writes: outside-lock=%ld failed=%ld locked: unaligned=%ld "
+                 "not-eligible=%ld past-initialized=%ld no-extent=%ld split=%ld\n",
+                 NtfsPagingWriteCounts[NtfsPagingWriteDirect],
+                 NtfsPagingWriteCounts[NtfsPagingWriteDirectFailed],
+                 NtfsPagingWriteCounts[NtfsPagingWriteUnaligned],
+                 NtfsPagingWriteCounts[NtfsPagingWriteNotEligible],
+                 NtfsPagingWriteCounts[NtfsPagingWritePastInitialized],
+                 NtfsPagingWriteCounts[NtfsPagingWriteNoExtent],
+                 NtfsPagingWriteCounts[NtfsPagingWriteSplit]);
     }
 }
 

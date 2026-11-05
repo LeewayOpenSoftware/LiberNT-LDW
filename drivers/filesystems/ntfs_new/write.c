@@ -310,6 +310,212 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
     return Handled;
 }
 
+/*
+ * Paging writes sent outside the volume metadata lock (experimental, off
+ * unless NtfsPagingWriteOutsideLock is set).
+ *
+ * A paging write that only overwrites clusters the stream already owns and
+ * has initialized changes no metadata: no allocation, no size, no mapping.
+ * Under the lock only its extent is resolved; the transfer goes out after
+ * the lock is released, as NtfsTryDirectRead does for paging reads. The
+ * caller holds the stream's PagingIoResource shared, and every path that
+ * frees or moves the stream's clusters (truncation, overwrite, delete,
+ * rename or link over it, MOVE_FILE) takes it exclusive, so the extent
+ * stays this stream's until the write completes.
+ *
+ * The write times are left to the user writes that dirtied the pages, as
+ * on Windows. A stream written this way is stamped once at its next
+ * cleanup, so a file changed only through a mapped view still gets a new
+ * write time.
+ */
+volatile LONG NtfsPagingWriteCounts[NtfsPagingWriteCountMax];
+
+static
+VOID
+NtfsCountPagingWrite(_In_ NTFS_PAGING_WRITE_COUNT Which)
+{
+    InterlockedIncrement(&NtfsPagingWriteCounts[Which]);
+}
+
+static
+BOOLEAN
+NtfsTryDirectPagingWrite(
+    _In_ PVolumeContextBlock VolCB,
+    _In_ PFileContextBlock FileCB,
+    _In_ ULONGLONG FileOffset,
+    _In_ ULONG Length,
+    _Out_ PULONGLONG DiskOffset)
+{
+    PAttribute Attribute;
+    NtfsRetrievalExtent Extent;
+    ULONGLONG ReturnedStartingVcn;
+    ULONGLONG StartingVcn;
+    ULONGLONG ClusterSize;
+    ULONGLONG InClusterOffset;
+    ULONGLONG Available;
+    ULONGLONG PhysicalCluster;
+    ULONGLONG Offset;
+    ULONG ExtentCount;
+    NTSTATUS Status;
+
+    *DiskOffset = MAXULONGLONG;
+
+    /* NtfsDiskWriteKm accepts only these sector sizes. */
+    if (!VolCB->StorageDevice ||
+        (VolCB->BytesPerSector != 512 && VolCB->BytesPerSector != 4096) ||
+        FileOffset % VolCB->BytesPerSector != 0 ||
+        Length % VolCB->BytesPerSector != 0 ||
+        FileOffset > ~(ULONGLONG)0 - Length)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteUnaligned);
+        return FALSE;
+    }
+
+    /* System files, and a stream already being deleted, keep the locked
+     * path. So does a reparse point: a WOF-compressed file is materialized
+     * by the library's write. */
+    if (!FileCB->StreamCB ||
+        FileCB->StreamCB->Deleted ||
+        (FileCB->StreamCB->FileReference & 0x0000FFFFFFFFFFFFULL) < 24 ||
+        FileCB->RequestedType != TypeData ||
+        NtfsFileRecordGetAttribute(FileCB->FileRec, TypeReparsePoint, NULL))
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNotEligible);
+        return FALSE;
+    }
+
+    Attribute = NtfsFileRecordGetAttribute(FileCB->FileRec,
+                                           FileCB->RequestedType,
+                                           FileCB->RequestedStream);
+    if (!Attribute ||
+        !Attribute->IsNonResident ||
+        (Attribute->Flags & (ATTR_COMPRESSION_MASK | ATTR_ENCRYPTED | ATTR_SPARSE)))
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNotEligible);
+        return FALSE;
+    }
+
+    /* Writing past the initialized size changes the record. */
+    if (FileOffset + Length > Attribute->NonResident.InitalizedDataSize)
+    {
+        NtfsCountPagingWrite(NtfsPagingWritePastInitialized);
+        return FALSE;
+    }
+
+    ClusterSize = (ULONGLONG)VolCB->BytesPerSector *
+                  NtfsVolumeGetSectorsPerCluster(VolCB->DiskVolume);
+    if (!ClusterSize)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNotEligible);
+        return FALSE;
+    }
+
+    StartingVcn = FileOffset / ClusterSize;
+    InClusterOffset = FileOffset % ClusterSize;
+    ExtentCount = 1;
+    Status = NtfsFileRecordQueryRetrievalPointers(FileCB->FileRec,
+                                                  FileCB->RequestedType,
+                                                  FileCB->RequestedStream,
+                                                  StartingVcn,
+                                                  &ReturnedStartingVcn,
+                                                  &Extent,
+                                                  &ExtentCount);
+    if ((!NT_SUCCESS(Status) && Status != STATUS_BUFFER_OVERFLOW) ||
+        ExtentCount != 1 ||
+        ReturnedStartingVcn > StartingVcn ||
+        Extent.NextVcn <= StartingVcn ||
+        Extent.Lcn < 0)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNoExtent);
+        return FALSE;
+    }
+
+    /* One extent must cover the whole range. */
+    Available = Extent.NextVcn - StartingVcn;
+    if (Available > ~(ULONGLONG)0 / ClusterSize)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNoExtent);
+        return FALSE;
+    }
+    Available *= ClusterSize;
+    if (Available < InClusterOffset ||
+        Available - InClusterOffset < Length)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteSplit);
+        return FALSE;
+    }
+
+    PhysicalCluster = StartingVcn - ReturnedStartingVcn;
+    if ((ULONGLONG)Extent.Lcn > ~(ULONGLONG)0 - PhysicalCluster)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNoExtent);
+        return FALSE;
+    }
+    PhysicalCluster += (ULONGLONG)Extent.Lcn;
+    if (PhysicalCluster > ~(ULONGLONG)0 / ClusterSize)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNoExtent);
+        return FALSE;
+    }
+    Offset = PhysicalCluster * ClusterSize;
+    if (Offset > ~(ULONGLONG)0 - InClusterOffset)
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteNoExtent);
+        return FALSE;
+    }
+
+    *DiskOffset = Offset + InClusterOffset;
+    return TRUE;
+}
+
+static
+NTSTATUS
+NtfsFinishDirectPagingWrite(
+    _In_ PVolumeContextBlock VolCB,
+    _In_ PFileContextBlock FileCB,
+    _In_ PUCHAR Buffer,
+    _In_ ULONG Length,
+    _In_ ULONGLONG DiskOffset)
+{
+    PVOID BounceBuffer;
+    NTSTATUS Status;
+
+    /* As on the locked path: the storage stack must not probe and lock the
+     * section pages Mm already locked for this transfer. */
+    BounceBuffer = ExAllocatePoolUninitialized(NonPagedPoolNx, Length, TAG_NTFS);
+    if (BounceBuffer)
+        RtlCopyMemory(BounceBuffer, Buffer, Length);
+
+    /* Coherent with the library's block cache: held blocks in the range are
+     * committed or updated, so metadata reads never see stale data. */
+    Status = NtfsDiskWriteKm(VolCB->StorageDevice,
+                             VolCB->BytesPerSector,
+                             DiskOffset,
+                             Length,
+                             BounceBuffer ? BounceBuffer : Buffer);
+    if (BounceBuffer)
+        ExFreePoolWithTag(BounceBuffer, TAG_NTFS);
+
+    /* A write the block cache absorbed after the shutdown clean pass began
+     * has no later flush to carry it. */
+    if (NT_SUCCESS(Status) &&
+        InterlockedCompareExchange(&VolCB->ShutdownStarted, 0, 0) != 0)
+    {
+        Status = NtfsDiskFlushVolumeKm(VolCB->StorageDevice);
+    }
+
+    if (NT_SUCCESS(Status))
+    {
+        InterlockedExchange(&FileCB->StreamCB->PagingWriteUnstamped, 1);
+        NtfsCountPagingWrite(NtfsPagingWriteDirect);
+    }
+    else
+    {
+        NtfsCountPagingWrite(NtfsPagingWriteDirectFailed);
+    }
+    return Status;
+}
+
 _Function_class_(IRP_MJ_WRITE)
 _Function_class_(DRIVER_DISPATCH)
 NTSTATUS
@@ -340,6 +546,7 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     PVOID BounceBuffer = NULL;
     PMDL LockMdl = NULL;
     BOOLEAN LockFailed = FALSE;
+    ULONGLONG DirectDiskOffset;
 
     IrpSp = IoGetCurrentIrpStackLocation(Irp);
 
@@ -480,6 +687,31 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         Irp->IoStatus.Information = Length;
         goto Complete;
     }
+    if (PagingIo && Length != 0 && gPagingWriteOutsideLock &&
+        RequestedType == TypeData)
+    {
+        Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+        if (NT_SUCCESS(Status) &&
+            NtfsTryDirectPagingWrite(VolCB,
+                                     FileCB,
+                                     (ULONGLONG)ByteOffset.QuadPart,
+                                     Length,
+                                     &DirectDiskOffset))
+        {
+            NtfsReleaseMetadata(VolCB);
+            Status = NtfsFinishDirectPagingWrite(VolCB,
+                                                 FileCB,
+                                                 Buffer,
+                                                 Length,
+                                                 DirectDiskOffset);
+            goto Written;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            NtfsReleaseMetadata(VolCB);
+            goto Written;
+        }
+    }
     /*
      * A paging write hands us the section's own pages. Passing them straight
      * through means the storage stack probes and locks pages that Mm has
@@ -573,6 +805,7 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
     NtfsReleaseMetadata(VolCB);
 
+Written:
     if (NT_SUCCESS(Status))
     {
         if (!PagingIo)
