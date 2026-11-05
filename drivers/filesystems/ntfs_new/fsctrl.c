@@ -1461,6 +1461,82 @@ NtfsFlushVolume(
     return Status;
 }
 
+#if DBG
+/*
+ * A refused volume lock says how many handles are open; this names them.
+ * Every stream with open handles is printed with its file reference and
+ * the name and file object of each open that has not been cleaned up.
+ * Called with no volume lock held.
+ */
+#define NTFS_REPORT_OPEN_STREAMS 32
+
+static
+VOID
+NtfsReportOpenFiles(
+    _In_ PVolumeContextBlock VolCB)
+{
+    PStreamContextBlock Streams[NTFS_REPORT_OPEN_STREAMS];
+    ULONG Captured = 0, Skipped = 0, Index;
+    PLIST_ENTRY Entry;
+
+    ExAcquireFastMutex(&VolCB->StreamListMutex);
+    for (Entry = VolCB->StreamList.Flink;
+         Entry != &VolCB->StreamList;
+         Entry = Entry->Flink)
+    {
+        PStreamContextBlock StreamCB =
+            CONTAINING_RECORD(Entry, StreamContextBlock, ListEntry);
+
+        if (StreamCB->UncleanCount <= 0)
+            continue;
+        if (Captured == NTFS_REPORT_OPEN_STREAMS)
+        {
+            Skipped++;
+            continue;
+        }
+        StreamCB->ReferenceCount++;
+        Streams[Captured++] = StreamCB;
+    }
+    ExReleaseFastMutex(&VolCB->StreamListMutex);
+
+    /* The per-open list of a stream is kept under the metadata lock. */
+    KeEnterCriticalRegion();
+    NtfsAcquireMetadata(VolCB);
+    for (Index = 0; Index < Captured; Index++)
+    {
+        PStreamContextBlock StreamCB = Streams[Index];
+        PLIST_ENTRY CcbList = &StreamCB->NativeScb.CcbList;
+
+        DPRINT1("Open stream: file 0x%I64x type 0x%lx, %ld open handle(s)\n",
+                StreamCB->FileReference,
+                (ULONG)StreamCB->RequestedType,
+                StreamCB->UncleanCount);
+        for (Entry = CcbList->Flink; Entry != CcbList; Entry = Entry->Flink)
+        {
+            PNTFS_NATIVE_CCB Ccb =
+                CONTAINING_RECORD(Entry, NTFS_NATIVE_CCB, StreamEntry);
+            PFileContextBlock FileCB =
+                CONTAINING_RECORD(Ccb, FileContextBlock, NativeCcb);
+
+            if (FileCB->CleanupComplete)
+                continue;
+            DPRINT1("  open: '%wZ' file object %p, access 0x%lx, options 0x%lx\n",
+                    &Ccb->FileName,
+                    Ccb->FileObject,
+                    FileCB->DesiredAccess,
+                    FileCB->CreateOptions);
+        }
+    }
+    NtfsReleaseMetadata(VolCB);
+    KeLeaveCriticalRegion();
+
+    if (Skipped)
+        DPRINT1("Open stream: %lu more not listed\n", Skipped);
+    for (Index = 0; Index < Captured; Index++)
+        NtfsDereferenceStreamContext(VolCB, Streams[Index]);
+}
+#endif
+
 static
 NTSTATUS
 NtfsLockOrUnlockVolume(
@@ -1491,9 +1567,10 @@ NtfsLockOrUnlockVolume(
         {
             /* chkdsk and autochk can only repair, or clear the dirty
              * flag, on a locked volume: say why the lock was refused. */
-            DPRINT1("Volume lock refused: %s, %ld open handle(s) on the volume\n",
+            DPRINT1("Volume lock refused: %s, %ld open handle(s) on the volume (%ld of them volume opens)\n",
                     VolCB->VolumeLockOwner ? "already locked" : "files are open",
-                    VolCB->OpenHandleCount);
+                    VolCB->OpenHandleCount,
+                    VolCB->VolumeHandleCount);
             Status = STATUS_ACCESS_DENIED;
         }
         else
@@ -1502,6 +1579,10 @@ NtfsLockOrUnlockVolume(
             Status = STATUS_SUCCESS;
         }
         ExReleaseFastMutex(&VolCB->VolumeStateMutex);
+#if DBG
+        if (Status == STATUS_ACCESS_DENIED && !VolCB->VolumeLockOwner)
+            NtfsReportOpenFiles(VolCB);
+#endif
 
         if (NT_SUCCESS(Status))
             Status = NtfsFlushVolume(VolCB, TRUE);
