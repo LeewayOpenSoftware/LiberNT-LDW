@@ -8,6 +8,7 @@ add_subdirectory(example)
 add_subdirectory(fltmgr)
 add_subdirectory(hidparse)
 add_subdirectory(kernel32)
+add_subdirectory(ndis)
 add_subdirectory(nsi)
 add_subdirectory(ntos_cc)
 add_subdirectory(ntos_io)
@@ -539,6 +540,7 @@ list(APPEND KMTEST_SOURCE
     ntos_mm/NtCreateSection_user.c
     ntos_mm/NtUserPhysicalPages.c
     ntos_mm/NtProcessClone.c
+    ndis/NdisSgDma_user.c
     ntos_po/BatteryClassNotify_user.c
     ntos_po/PoIrp_user.c
     ntos_po/PoFxState_user.c
@@ -573,6 +575,7 @@ add_custom_target(kmtest_drivers)
 add_dependencies(kmtest_drivers
     kmtest_drv
     example_drv
+    ndissg_drv
     FltMgrLoad_drv
     fltmgrio_drv
     fltmgr_create
