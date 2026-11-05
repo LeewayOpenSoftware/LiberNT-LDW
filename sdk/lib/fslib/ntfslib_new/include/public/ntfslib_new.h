@@ -1092,7 +1092,8 @@ typedef enum NtfsCheckEvent
     NtfsCheckAttributeMappingMismatch,
     NtfsCheckIndexEntryNotRemoved,
     NtfsCheckClusterRangeNotRepaired,   /* Arg1 = first LCN, Arg2 = (NTSTATUS << 32) | cluster count */
-    NtfsCheckBitmapRepairDeferred       /* Arg1 = structural errors left, Arg2 = ranges not repaired */
+    NtfsCheckBitmapRepairDeferred,      /* Arg1 = structural errors left, Arg2 = ranges not repaired */
+    NtfsCheckMftBitmapNotWritten        /* Arg1 = NTSTATUS, Arg2 = bitmap length in bytes */
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
