@@ -1315,6 +1315,15 @@ Directory::PushDownRoot(
             Status = DiskVolume->MFT->
                 WriteFileRecordToMFT(RootOwner);
         }
+        /*
+         * The attribute list created above for the allocation's mapping
+         * is only needed if the mapping went to an extension record. When
+         * it still fit in the base record, every entry names the base
+         * record and no later path frees an extension record to notice:
+         * remove it now (base record first, then the list's clusters).
+         */
+        if (NT_SUCCESS(Status))
+            (void)DirectoryFile->CollapseUnneededAttributeList();
         if (!NT_SUCCESS(Status))
         {
             RtlCopyMemory(
