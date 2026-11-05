@@ -564,6 +564,19 @@ NtfsCheckReport(
                              "It was left unchanged.\n",
                              Argument1);
             break;
+        case NtfsCheckAttributeSizeInvalid:
+            NtfsFormatReport(Check->Callback,
+                             "Attribute type 0x%I64X of file %I64X has invalid sizes: its data size is larger than "
+                             "its allocated size, its initialized size is larger than its data size, or its "
+                             "allocated size is not a whole number of clusters.\n",
+                             Argument2, Argument1);
+            break;
+        case NtfsCheckAttributeMappingMismatch:
+            NtfsFormatReport(Check->Callback,
+                             "The cluster mapping of attribute type 0x%I64X of file %I64X does not cover "
+                             "exactly its allocated size.\n",
+                             Argument2, Argument1);
+            break;
     }
 }
 
