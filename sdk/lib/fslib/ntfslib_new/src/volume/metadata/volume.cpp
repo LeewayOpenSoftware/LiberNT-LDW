@@ -275,7 +275,7 @@ Volume::IsDirtyTransient()
     return (DirtyTracking && DirtyMarked && !DirtyRetained) ? TRUE : FALSE;
 }
 
-VOID
+void
 Volume::RetainDirty(_In_ BOOLEAN Retain)
 {
     if (!DirtyTracking)

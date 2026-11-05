@@ -758,7 +758,7 @@ public:
     IsDirtyTransient();
 
     /* Records an explicit request to set (Retain) or clear the flag. */
-    VOID
+    void
     RetainDirty(_In_ BOOLEAN Retain);
 
     /**
