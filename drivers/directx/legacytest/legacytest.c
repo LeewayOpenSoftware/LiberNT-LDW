@@ -1528,15 +1528,26 @@ Lt1xDdiPresent(
     if (Pitch == 0)
         return STATUS_SUCCESS;
 
-    /* The shadow and primary live in the CPU-visible aperture, so the
-       present is a CPU blit between the two bus addresses.  Surfaces are
-       unpitched (Width * 4); only 1:1 source/destination mappings occur
-       on the CDD path.  The DMA buffer stays empty: the copy is complete
-       when this returns and dxgkrnl skips the submit. */
+    /* The shadow and primary live in the CPU-visible memory segment, so
+       the present is a CPU blit between the two bus addresses.  Surfaces
+       are unpitched (Width * 4); only 1:1 source/destination mappings
+       occur on the CDD path.  The DMA buffer stays empty: the copy is
+       complete when this returns and dxgkrnl skips the submit. */
     SrcVa = (PUCHAR)Ctx->FrameBufferVa + (SIZE_T)(SrcPa.QuadPart - Ctx->FrameBufferPhys.QuadPart);
     DstVa = (PUCHAR)Ctx->FrameBufferVa + (SIZE_T)(DstPa.QuadPart - Ctx->FrameBufferPhys.QuadPart);
     SrcOriginX = pPresent->SrcRect.left - pPresent->DstRect.left;
     SrcOriginY = pPresent->SrcRect.top - pPresent->DstRect.top;
+
+    /* Cheap liveness probe for the lab: checksum the first source row so
+       the log shows the moment the shadow stops being zeros. */
+    {
+        ULONG Checksum = 0;
+        ULONG Pixel;
+
+        for (Pixel = 0; Pixel < Ctx->ModeWidth; Pixel++)
+            Checksum ^= ((PULONG)SrcVa)[Pixel];
+        DbgPrint("LT1X: present source row0 checksum 0x%08lx\n", Checksum);
+    }
 
     for (i = 0; i < pPresent->SubRectCnt; i++)
     {
