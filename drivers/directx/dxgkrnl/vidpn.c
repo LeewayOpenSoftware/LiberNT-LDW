@@ -3574,6 +3574,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
     PDXGK_CHILD_PDO_EXTENSION MatchingChild = NULL;
     KIRQL ChildOldIrql;
     BOOLEAN NotifyMonitorEvent = FALSE;
+    BOOLEAN CommitAttempted = FALSE;
     NTSTATUS Status;
 
     PAGED_CODE();
@@ -3652,6 +3653,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
         goto Cleanup;
     }
     KeReleaseSpinLock(&Adapter->ChildListLock, ChildOldIrql);
+    CommitAttempted = TRUE;
     Status = DxgkpDisplayCommitVidPnCandidate(Adapter, Candidate, &CommitResult);
     if (!NT_SUCCESS(Status) && CandidateObject->NumPaths > 1 &&
         Status != STATUS_DELETE_PENDING && Status != STATUS_DEVICE_REMOVED)
@@ -3680,6 +3682,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
     {
         KeReleaseSpinLock(&Adapter->ChildListLock, ChildOldIrql);
         KeReleaseMutex(&Adapter->VidPnMutex, FALSE);
+        CommitAttempted = TRUE;
         Status = DxgkpDisplayCommitVidPnCandidate(Adapter, OldVidPn, &RollbackResult);
         if (NT_SUCCESS(Status))
             Status = STATUS_RETRY;
@@ -3773,8 +3776,12 @@ Cleanup:
     KeReleaseMutex(&Adapter->SharedPrimaryMutex, FALSE);
     /* The first VidPn commit attempt is final outside STATUS_RETRY: resolve
        a deferred POST handoff either way (commit the claimant or roll the
-       desktop back to BasicDisplay).  No rebuild lock is held here. */
-    DxgkpCompleteDeferredPostDisplayHandoff(Adapter, Status);
+       desktop back to BasicDisplay).  A pass that never reached a commit
+       (no VidPn yet, stale generation, negotiation failure) leaves the
+       deferral armed: the ownership claim is not a resolution.  No rebuild
+       lock is held here. */
+    if (CommitAttempted)
+        DxgkpCompleteDeferredPostDisplayHandoff(Adapter, Status);
     if (DetachedVidPn != NULL)
         DxgkVidPnDestroy(DetachedVidPn);
     if (OldVidPn != NULL)

@@ -637,8 +637,29 @@ DxgkpCompletePostDisplayHandoff(
     if (Action == DxgkPostDisplayCompletionRollback && FallbackAdapter != NULL)
     {
         Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
-        if (Owner == NULL)
+        if (Owner != NULL && Owner != Claimant)
         {
+            SuppressFallbackUi = TRUE;
+            DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed but "
+                         "adapter %p already owns the boot display; "
+                         "fallback remains stopped\n",
+                         Claimant,
+                         Owner);
+        }
+        else
+        {
+            if (Owner == Claimant)
+            {
+                /* The failed claimant already holds the boot display from
+                   its ownership claim; release it so the restarted
+                   fallback can re-acquire the desktop. */
+                DxgkpClearPostDisplayOwner(Claimant);
+                DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed "
+                             "0x%08lX; releasing the boot display it "
+                             "claimed\n",
+                             Claimant,
+                             StartStatus);
+            }
             DxgkpSetBasicDisplayUiSuppressed(FallbackAdapter, FALSE);
             DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed "
                          "0x%08lX; restarting BasicDisplay adapter %p\n",
@@ -655,15 +676,6 @@ DxgkpCompletePostDisplayHandoff(
                             "restart failed 0x%08lX\n",
                             FallbackAdapter,
                             RollbackStatus);
-        }
-        else
-        {
-            SuppressFallbackUi = TRUE;
-            DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed but "
-                         "adapter %p already owns the boot display; "
-                         "fallback remains stopped\n",
-                         Claimant,
-                         Owner);
         }
         if (OwnerDeviceObject != NULL)
             ObDereferenceObject(OwnerDeviceObject);
