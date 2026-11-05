@@ -1315,13 +1315,41 @@ NtfsDiskUnloadKm(VOID)
     return NtfsCacheFlushAll(NULL);
 }
 
+/*
+ * A completed write has reached the device, which may still hold it in a
+ * volatile write cache. A flush request makes it durable. A device with no
+ * cache to flush may reject the request, which is not a failure.
+ */
+extern "C"
+NTSTATUS
+NtfsDiskFlushDeviceKm(_In_ PDEVICE_OBJECT DeviceObject)
+{
+    NTSTATUS Status;
+
+    if (!DeviceObject)
+        return STATUS_INVALID_PARAMETER;
+    Status = NtfsPerformDiskIo(IRP_MJ_FLUSH_BUFFERS, DeviceObject, 0, 0, NULL);
+    if (Status == STATUS_INVALID_DEVICE_REQUEST ||
+        Status == STATUS_NOT_SUPPORTED ||
+        Status == STATUS_NOT_IMPLEMENTED)
+    {
+        Status = STATUS_SUCCESS;
+    }
+    return Status;
+}
+
 extern "C"
 NTSTATUS
 NtfsDiskFlushVolumeKm(_In_ PDEVICE_OBJECT DeviceObject)
 {
+    NTSTATUS Status;
+
     if (!DeviceObject)
         return STATUS_INVALID_PARAMETER;
-    return NtfsCacheFlushAll(DeviceObject);
+    Status = NtfsCacheFlushAll(DeviceObject);
+    if (NT_SUCCESS(Status))
+        Status = NtfsDiskFlushDeviceKm(DeviceObject);
+    return Status;
 }
 
 extern "C"

@@ -2308,7 +2308,10 @@ NtfsFlushFileMetadata(_In_ PVolumeContextBlock VolCB,
                                      (ULONGLONG)NtfsGetCommonFcbHeader(FileCB)->AllocationSize.QuadPart);
         if (!NT_SUCCESS(Status))
             return Status;
-        return NtfsDiskFlushRangeKm(VolCB->StorageDevice, Offset, Length);
+        Status = NtfsDiskFlushRangeKm(VolCB->StorageDevice, Offset, Length);
+        if (NT_SUCCESS(Status))
+            Status = NtfsDiskFlushDeviceKm(VolCB->StorageDevice);
+        return Status;
     }
 
     Status = NtfsDiskFlushVolumeKm(VolCB->StorageDevice);

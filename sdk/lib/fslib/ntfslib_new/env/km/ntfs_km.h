@@ -30,7 +30,12 @@ NtfsDiskFlushKm(VOID);
 NTSTATUS
 NtfsDiskUnloadKm(VOID);
 
-/* Flush one mounted volume without submitting writes to previous devices. */
+/* Ask the storage device to commit its write cache to the medium. */
+NTSTATUS
+NtfsDiskFlushDeviceKm(_In_ PDEVICE_OBJECT DeviceObject);
+
+/* Flush one mounted volume without submitting writes to previous devices,
+ * then commit the device's write cache. */
 NTSTATUS
 NtfsDiskFlushVolumeKm(_In_ PDEVICE_OBJECT DeviceObject);
 
