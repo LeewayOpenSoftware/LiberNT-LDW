@@ -683,7 +683,19 @@ NtfsChkdsk(
         Status = NtfsVolumeCheck(Volume, Locked, NtfsCheckReport, &Check, &Result);
     }
     if (NT_SUCCESS(Status) && Locked && Dirty && Result.Errors == 0)
+    {
         Status = NtfsVolumeSetFlags(Volume, 0, VOL_DIRTY);
+        if (NT_SUCCESS(Status))
+            NtfsFormatReport(Callback, "The volume was marked clean.\n");
+    }
+    else if (NT_SUCCESS(Status) && Dirty)
+    {
+        /* Only a locked, error-free volume may be marked clean. */
+        NtfsFormatReport(Callback,
+                         !Locked && FixErrors
+                             ? "The volume could not be locked, so it stays marked dirty.\n"
+                             : "The volume stays marked dirty.\n");
+    }
 
     if (Volume)
         NtfsVolumeDestroy(Volume);

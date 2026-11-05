@@ -373,6 +373,8 @@ ChkdskCallback(
     case OUTPUT:
         Output = (PTEXTOUTPUT) Argument;
         PrintString("%s", Output->Output);
+        /* The boot screen is gone by the time anyone looks: keep a copy. */
+        DPRINT1("AUTOCHK: %s", Output->Output);
         break;
 
     case DONE:
@@ -497,6 +499,7 @@ CheckVolume(
 
 Quit:
     PrintString("\r\n\r\n");
+    DPRINT1("AUTOCHK: %wZ done, status 0x%08lx\n", &VolumePathU, Status);
     return Status;
 }
 

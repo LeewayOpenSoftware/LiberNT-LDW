@@ -1488,7 +1488,14 @@ NtfsLockOrUnlockVolume(
             Status = STATUS_VOLUME_DISMOUNTED;
         else if (VolCB->VolumeLockOwner ||
                  VolCB->OpenHandleCount != 1)
+        {
+            /* chkdsk and autochk can only repair, or clear the dirty
+             * flag, on a locked volume: say why the lock was refused. */
+            DPRINT1("Volume lock refused: %s, %ld open handle(s) on the volume\n",
+                    VolCB->VolumeLockOwner ? "already locked" : "files are open",
+                    VolCB->OpenHandleCount);
             Status = STATUS_ACCESS_DENIED;
+        }
         else
         {
             VolCB->VolumeLockOwner = FileObject;

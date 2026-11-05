@@ -68,7 +68,12 @@ Volume::WriteVolume(_In_    ULONGLONG Offset,
     /* After the shutdown clean point nothing flushes again: write through. */
     if (ShutdownClean && NT_SUCCESS(Status))
     {
+#if DBG
+        /* Debug builds name every late write. */
+        if (TRUE)
+#else
         if (LateWrites < 8)
+#endif
         {
             DPRINT1("Write after the shutdown clean point at offset 0x%I64x (%lu bytes), written through\n",
                     Offset, Length);
