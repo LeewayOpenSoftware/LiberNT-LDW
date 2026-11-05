@@ -1276,11 +1276,12 @@ Lt1xDdiOpenAllocation(
     UINT i;
 
     UNREFERENCED_PARAMETER(hDevice);
+    DbgPrint("LT1X: DxgkDdiOpenAllocation\n");
     for (i = 0; i < pOpenAllocation->NumAllocations; i++)
     {
-        pOpenAllocation->pOpenAllocation[i].hAllocation = 0;
+        pOpenAllocation->pOpenAllocation[i].hDeviceSpecificAllocation =
+            (HANDLE)(ULONG_PTR)pOpenAllocation->pOpenAllocation[i].hAllocation;
     }
-    DbgPrint("LT1X: DxgkDdiOpenAllocation\n");
     return STATUS_SUCCESS;
 }
 
