@@ -1245,6 +1245,128 @@ NtfsMarkFileRecordStreamsDeleted(_In_ PVolumeContextBlock VolCB,
     ExReleaseFastMutex(&VolCB->StreamListMutex);
 }
 
+/*
+ * A rename or link that replaces an existing file deletes it, which frees its
+ * clusters. The target has no open handle, but its streams can still carry
+ * paging I/O: a user mapping whose handle was closed, or the cache manager's
+ * section lingering after the last close. Paging I/O synchronizes on the
+ * stream's PagingIoResource, so the delete must hold that exclusive, as every
+ * other path that frees a stream's clusters does.
+ *
+ * Lock order is PagingIo before Metadata and the caller holds the metadata
+ * lock, so when the target has stream state this drops the metadata lock,
+ * refuses a target that is mapped or a running image (Windows refuses those
+ * too), purges the cache, takes each stream's PagingIoResource exclusive and
+ * takes the metadata lock back. *LockDropped then tells the caller to look the
+ * target up again before deleting it, since the namespace may have changed.
+ */
+#define NTFS_REPLACED_STREAMS_MAX 16
+
+typedef struct _NTFS_REPLACED_TARGET
+{
+    ULONGLONG Reference;
+    ULONG Count;
+    BOOLEAN PagingHeld;
+    PStreamContextBlock Streams[NTFS_REPLACED_STREAMS_MAX];
+} NTFS_REPLACED_TARGET, *PNTFS_REPLACED_TARGET;
+
+static
+VOID
+NtfsUnlockReplacedTarget(_In_ PVolumeContextBlock VolCB,
+                         _Inout_ PNTFS_REPLACED_TARGET Target)
+{
+    ULONG Index;
+
+    for (Index = 0; Index < Target->Count; Index++)
+    {
+        if (Target->PagingHeld)
+            ExReleaseResourceLite(&Target->Streams[Index]->PagingIoResource);
+        NtfsDereferenceStreamContext(VolCB, Target->Streams[Index]);
+    }
+    Target->Count = 0;
+    Target->PagingHeld = FALSE;
+    Target->Reference = 0;
+}
+
+static
+NTSTATUS
+NtfsLockReplacedTarget(_In_ PVolumeContextBlock VolCB,
+                       _In_ ULONGLONG Reference,
+                       _Inout_ PNTFS_REPLACED_TARGET Target,
+                       _Out_ PBOOLEAN LockDropped)
+{
+    PLIST_ENTRY Bucket = NtfsStreamHashBucket(VolCB, Reference & 0x0000FFFFFFFFFFFFULL);
+    PLIST_ENTRY Entry;
+    BOOLEAN Overflow = FALSE;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG Index;
+
+    *LockDropped = FALSE;
+    NtfsUnlockReplacedTarget(VolCB, Target);
+    Target->Reference = Reference;
+
+    ExAcquireFastMutex(&VolCB->StreamListMutex);
+    for (Entry = Bucket->Flink; Entry != Bucket; Entry = Entry->Flink)
+    {
+        PStreamContextBlock StreamCB = CONTAINING_RECORD(Entry, StreamContextBlock, HashEntry);
+
+        if (StreamCB->FileReference != Reference)
+            continue;
+        if (Target->Count == NTFS_REPLACED_STREAMS_MAX)
+        {
+            Overflow = TRUE;
+            break;
+        }
+        StreamCB->ReferenceCount++;
+        Target->Streams[Target->Count++] = StreamCB;
+    }
+    ExReleaseFastMutex(&VolCB->StreamListMutex);
+
+    /* No stream state: nothing can be doing paging I/O on the target. */
+    if (Target->Count == 0 && !Overflow)
+        return STATUS_SUCCESS;
+
+    /* The lock can only be given up if this is its outermost hold. */
+    if (Overflow || ExIsResourceAcquiredSharedLite(&VolCB->MetadataResource) != 1)
+    {
+        NtfsUnlockReplacedTarget(VolCB, Target);
+        return STATUS_ACCESS_DENIED;
+    }
+
+    NtfsReleaseMetadata(VolCB);
+    *LockDropped = TRUE;
+
+    for (Index = 0; Index < Target->Count && NT_SUCCESS(Status); Index++)
+    {
+        PSECTION_OBJECT_POINTERS Sections = &Target->Streams[Index]->SectionObjectPointers;
+        LARGE_INTEGER Zero;
+
+        Zero.QuadPart = 0;
+        if ((Sections->ImageSectionObject && !MmFlushImageSection(Sections, MmFlushForDelete)) ||
+            (Sections->DataSectionObject && !MmCanFileBeTruncated(Sections, &Zero)))
+        {
+            Status = STATUS_ACCESS_DENIED;
+        }
+    }
+    if (NT_SUCCESS(Status))
+    {
+        /* Purge before taking PagingIo: a page-in waiting on that resource
+         * would otherwise hold a page the purge has to wait for. */
+        for (Index = 0; Index < Target->Count; Index++)
+            CcPurgeCacheSection(&Target->Streams[Index]->SectionObjectPointers, NULL, 0, FALSE);
+        for (Index = 0; Index < Target->Count; Index++)
+            ExAcquireResourceExclusiveLite(&Target->Streams[Index]->PagingIoResource, TRUE);
+        Target->PagingHeld = TRUE;
+    }
+    else
+    {
+        NtfsUnlockReplacedTarget(VolCB, Target);
+    }
+
+    NtfsAcquireMetadata(VolCB);
+    return Status;
+}
+
 static
 NTSTATUS
 NtfsCheckNamespaceAccess(
@@ -1337,6 +1459,10 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
     BOOLEAN ReplaceIfExists;
     BOOLEAN ExistingIsDirectory;
     BOOLEAN RecordDeleted = FALSE;
+    NTFS_REPLACED_TARGET Replaced;
+    ULONGLONG ExistingReference;
+    ULONG ReplaceAttempts = 0;
+    BOOLEAN LockDropped;
 
     if (BufferLength < FIELD_OFFSET(FILE_LINK_INFORMATION, FileName) || LinkInfo->FileNameLength == 0 ||
         (LinkInfo->FileNameLength & (sizeof(WCHAR) - 1)) != 0 ||
@@ -1415,12 +1541,18 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
     NewName.Buffer[PrefixLength / sizeof(WCHAR)] = L'\\';
     RtlCopyMemory((PUCHAR)NewName.Buffer + PrefixLength + sizeof(WCHAR), LeafName.Buffer, LeafName.Length);
 
+    RtlZeroMemory(&Replaced, sizeof(Replaced));
+LookupTarget:
     Status = NtfsMasterFileTableGetFileRecordFromQueryEx(Mft, NewName.Buffer, NewName.Length / sizeof(WCHAR), TRUE,
                                                          &RemainingNameLength, &ExistingRecord);
     if (NT_SUCCESS(Status) && RemainingNameLength == 0 && ExistingRecord)
     {
         ExistingRecordNumber = NtfsFileRecordGetNumber(ExistingRecord);
+        ExistingReference = NtfsFileRecordGetReference(ExistingRecord);
         ExistingIsDirectory = !!(NtfsFileRecordGetHeader(ExistingRecord)->Flags & FR_IS_DIRECTORY);
+        /* After a restart the name may now be another file. */
+        if (Replaced.Count && Replaced.Reference != ExistingReference)
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
         if (ReplaceIfExists &&
             ExistingRecordNumber != NtfsFileRecordGetNumber(FileCB->FileRec) &&
             !ExistingIsDirectory)
@@ -1429,6 +1561,7 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
                                               ExistingRecord, FILE_DELETE_CHILD, AccessMode);
             if (!NT_SUCCESS(Status))
             {
+                NtfsUnlockReplacedTarget(VolCB, &Replaced);
                 NtfsFileRecordDestroy(ExistingRecord);
                 ExFreePoolWithTag(NewName.Buffer, TAG_NTFS);
                 return Status;
@@ -1439,11 +1572,13 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
 
         if (!ReplaceIfExists)
         {
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
             ExFreePoolWithTag(NewName.Buffer, TAG_NTFS);
             return STATUS_OBJECT_NAME_COLLISION;
         }
         if (ExistingRecordNumber == NtfsFileRecordGetNumber(FileCB->FileRec))
         {
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
             Status = NtfsMasterFileTableRenameFile(Mft, NewName.Buffer, NewName.Length / sizeof(WCHAR),
                                                    NewName.Buffer, NewName.Length / sizeof(WCHAR));
             if (NT_SUCCESS(Status))
@@ -1454,14 +1589,37 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
         }
         if (ExistingIsDirectory || NtfsIsFileRecordOpen(VolCB, ExistingRecordNumber))
         {
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
             ExFreePoolWithTag(NewName.Buffer, TAG_NTFS);
             return STATUS_ACCESS_DENIED;
+        }
+
+        /* The delete frees the target's clusters: hold off its paging I/O. */
+        if (!Replaced.PagingHeld || Replaced.Reference != ExistingReference)
+        {
+            Status = NtfsLockReplacedTarget(VolCB, ExistingReference, &Replaced, &LockDropped);
+            if (!NT_SUCCESS(Status))
+            {
+                ExFreePoolWithTag(NewName.Buffer, TAG_NTFS);
+                return Status;
+            }
+            if (LockDropped)
+            {
+                if (++ReplaceAttempts > 3)
+                {
+                    NtfsUnlockReplacedTarget(VolCB, &Replaced);
+                    ExFreePoolWithTag(NewName.Buffer, TAG_NTFS);
+                    return STATUS_ACCESS_DENIED;
+                }
+                goto LookupTarget;
+            }
         }
 
         Status = NtfsMasterFileTableDeleteFileEx(Mft, NewName.Buffer, NewName.Length / sizeof(WCHAR), FALSE,
                                                 NULL, TRUE, &RecordDeleted);
         if (RecordDeleted)
             NtfsMarkFileRecordStreamsDeleted(VolCB, ExistingRecordNumber);
+        NtfsUnlockReplacedTarget(VolCB, &Replaced);
         NtfsEvictCachedRecord(VolCB, NewName.Buffer, (USHORT)(NewName.Length / sizeof(WCHAR)), RecordDeleted);
         InterlockedIncrement(&VolCB->DirGeneration);
         if (!NT_SUCCESS(Status))
@@ -1474,6 +1632,8 @@ NtfsSetLinkInformation(_In_ PVolumeContextBlock VolCB,
     {
         NtfsFileRecordDestroy(ExistingRecord);
     }
+    /* A target that went away during a restart needs no delete. */
+    NtfsUnlockReplacedTarget(VolCB, &Replaced);
 
     Status = NtfsMasterFileTableCreateHardLink(Mft, FileCB->FileName.Buffer, FileCB->FileName.Length / sizeof(WCHAR),
                                                NewName.Buffer, NewName.Length / sizeof(WCHAR));
@@ -1842,6 +2002,10 @@ NtfsSetRenameInformation(_In_ PVolumeContextBlock VolCB,
     BOOLEAN RecordDeleted = FALSE;
     BOOLEAN IsDirectory;
     BOOLEAN SameParent = FALSE;
+    NTFS_REPLACED_TARGET Replaced = { 0 };
+    ULONGLONG ExistingReference;
+    ULONG ReplaceAttempts = 0;
+    BOOLEAN LockDropped;
     ULONG NameFilter;
 
     if (BufferLength < FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) || RenameInfo->FileNameLength == 0 || (RenameInfo->FileNameLength & (sizeof(WCHAR) - 1)) != 0 || BufferLength - FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) < RenameInfo->FileNameLength)
@@ -1963,11 +2127,16 @@ NtfsSetRenameInformation(_In_ PVolumeContextBlock VolCB,
      * asked for it, and never when it is a directory. Renaming a file onto
      * its own name is a no-op, so it must not reach the delete below.
      */
+LookupTarget:
     Status = NtfsMasterFileTableGetFileRecordFromQueryEx(NtfsVolumeGetMft(VolCB->DiskVolume), NewName.Buffer, NewName.Length / sizeof(WCHAR), TRUE, &RemainingNameLength, &ExistingRecord);
     if (NT_SUCCESS(Status) && RemainingNameLength == 0 && ExistingRecord)
     {
         ExistingRecordNumber = NtfsFileRecordGetNumber(ExistingRecord);
+        ExistingReference = NtfsFileRecordGetReference(ExistingRecord);
         ExistingIsDirectory = !!(NtfsFileRecordGetHeader(ExistingRecord)->Flags & FR_IS_DIRECTORY);
+        /* After a restart the name may now be another file. */
+        if (Replaced.Count && Replaced.Reference != ExistingReference)
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
         if (ReplaceIfExists &&
             ExistingRecordNumber != NtfsFileRecordGetNumber(FileCB->FileRec) &&
             !ExistingIsDirectory)
@@ -2005,10 +2174,27 @@ NtfsSetRenameInformation(_In_ PVolumeContextBlock VolCB,
         }
         else
         {
+            /* The delete frees the target's clusters: hold off its paging I/O. */
+            if (!Replaced.PagingHeld || Replaced.Reference != ExistingReference)
+            {
+                Status = NtfsLockReplacedTarget(VolCB, ExistingReference, &Replaced, &LockDropped);
+                if (!NT_SUCCESS(Status))
+                    goto Finish;
+                if (LockDropped)
+                {
+                    if (++ReplaceAttempts > 3)
+                    {
+                        Status = STATUS_ACCESS_DENIED;
+                        goto Finish;
+                    }
+                    goto LookupTarget;
+                }
+            }
             Status = NtfsMasterFileTableDeleteFileEx(NtfsVolumeGetMft(VolCB->DiskVolume), NewName.Buffer,
                                                     NewName.Length / sizeof(WCHAR), FALSE, NULL, TRUE, &RecordDeleted);
             if (RecordDeleted)
                 NtfsMarkFileRecordStreamsDeleted(VolCB, ExistingRecordNumber);
+            NtfsUnlockReplacedTarget(VolCB, &Replaced);
             NtfsEvictCachedRecord(VolCB, NewName.Buffer, (USHORT)(NewName.Length / sizeof(WCHAR)), RecordDeleted);
             InterlockedIncrement(&VolCB->DirGeneration);
             if (!NT_SUCCESS(Status))
@@ -2129,6 +2315,7 @@ NtfsSetRenameInformation(_In_ PVolumeContextBlock VolCB,
     Status = STATUS_SUCCESS;
 
 Finish:
+    NtfsUnlockReplacedTarget(VolCB, &Replaced);
     NtfsFreeRenameNames(RenamedFiles, RenamedNames, RenamedCount);
     if (NewLeafBuffer)
         ExFreePoolWithTag(NewLeafBuffer, TAG_NTFS);
