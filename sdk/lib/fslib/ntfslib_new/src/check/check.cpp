@@ -213,6 +213,7 @@ private:
     BOOLEAN IsLiveBeyondMft(_In_ ULONGLONG Number);
     void CheckAttributes(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PUCHAR Record);
     void CheckRunList(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PAttribute Attr);
+    void CheckNonResidentSizes(_In_ ULONGLONG Number, _In_ BOOLEAN WholeMapping, _In_ PAttribute Attr);
     struct ClusterRange
     {
         ULONGLONG Lcn;
@@ -368,11 +369,42 @@ VolumeCheck::CheckRunList(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PAtt
         Event(NtfsCheckBadRunList, Number, Attr->AttributeType);
 }
 
+/*
+ * The sizes of a non-resident attribute are only kept in its first segment.
+ * Data size never exceeds allocated size, initialized size never exceeds data
+ * size, and the allocation is whole clusters. When the segment is the whole
+ * attribute (a base record without an attribute list), its mapping must also
+ * cover exactly the allocated size. A data size past the mapping makes the
+ * tail of the stream unreadable. Reported only; nothing is changed.
+ */
+void
+VolumeCheck::CheckNonResidentSizes(_In_ ULONGLONG Number, _In_ BOOLEAN WholeMapping, _In_ PAttribute Attr)
+{
+    ULONGLONG Allocated = Attr->NonResident.AllocatedSize;
+
+    if (Attr->NonResident.FirstVCN != 0)
+        return;
+    if (Attr->NonResident.DataSize > Allocated ||
+        Attr->NonResident.InitalizedDataSize > Attr->NonResident.DataSize ||
+        (ClusterSize != 0 && Allocated % ClusterSize != 0))
+    {
+        Event(NtfsCheckAttributeSizeInvalid, Number, Attr->AttributeType);
+        return;
+    }
+    /* LastVCN + 1 wraps to 0 for an empty mapping, matching an allocation of 0. */
+    if (WholeMapping && ClusterSize != 0 &&
+        (Attr->NonResident.LastVCN + 1) * (ULONGLONG)ClusterSize != Allocated)
+    {
+        Event(NtfsCheckAttributeMappingMismatch, Number, Attr->AttributeType);
+    }
+}
+
 void
 VolumeCheck::CheckAttributes(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ PUCHAR Record)
 {
     PFileRecordHeader Header = reinterpret_cast<PFileRecordHeader>(Record);
     ULONG Offset = Header->AttributeOffset;
+    BOOLEAN HasList = FALSE;
 
     while (Offset + sizeof(ULONG) <= Header->ActualSize)
     {
@@ -390,7 +422,10 @@ VolumeCheck::CheckAttributes(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ P
         }
 
         if (Attr->AttributeType == TypeAttributeList && Owner == Number)
+        {
             SetBit(AttrListMap, Number);
+            HasList = TRUE;
+        }
 
         if (Attr->IsNonResident)
         {
@@ -400,6 +435,7 @@ VolumeCheck::CheckAttributes(_In_ ULONGLONG Number, _In_ ULONGLONG Owner, _In_ P
                 return;
             }
             CheckRunList(Number, Owner, Attr);
+            CheckNonResidentSizes(Number, Owner == Number && !HasList, Attr);
         }
         else
         {
