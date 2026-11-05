@@ -436,6 +436,8 @@ NtfsIsRepairOutcome(
         case NtfsCheckClusterRangeNotRepaired:
         case NtfsCheckBitmapRepairDeferred:
         case NtfsCheckMftBitmapNotWritten:
+        case NtfsCheckIndexRebuilt:
+        case NtfsCheckIndexRebuildFailed:
             return TRUE;
         default:
             return FALSE;
@@ -624,6 +626,16 @@ NtfsCheckReport(
                              "the record it names is kept in use.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckIndexRebuilt:
+            NtfsFormatReport(Check->Callback,
+                             "Rebuilt index $I30 of file %I64X from its %I64u valid entries.\n",
+                             Argument1, Argument2);
+            break;
+        case NtfsCheckIndexRebuildFailed:
+            NtfsFormatReport(Check->Callback,
+                             "Could not rebuild index $I30 of file %I64X (status 0x%08lx).\n",
+                             Argument1, (ULONG)Argument2);
+            break;
         case NtfsCheckMftBitmapNotWritten:
             NtfsFormatReport(Check->Callback,
                              "The corrected MFT bitmap (%I64u bytes) could not be written (status 0x%08lx); "
@@ -794,7 +806,7 @@ NtfsChkdsk(
     Repaired = Result.FreedClusters || Result.ClaimedClusters || Result.FixedIndexEntries ||
                Result.RemovedIndexEntries || Result.RelinkedNames || Result.FreedRecords ||
                Result.ResolvedCrossLinks || Result.RecoveredFiles || Result.RepairedAttributeLists ||
-               Result.RemovedNames || Result.FixedMftBitmapBits;
+               Result.RemovedNames || Result.FixedMftBitmapBits || Result.RebuiltIndexes;
     if (Result.Errors)
     {
         NtfsFormatReport(Callback,

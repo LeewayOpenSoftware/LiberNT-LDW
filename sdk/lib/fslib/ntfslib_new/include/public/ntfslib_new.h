@@ -1093,7 +1093,9 @@ typedef enum NtfsCheckEvent
     NtfsCheckIndexEntryNotRemoved,
     NtfsCheckClusterRangeNotRepaired,   /* Arg1 = first LCN, Arg2 = (NTSTATUS << 32) | cluster count */
     NtfsCheckBitmapRepairDeferred,      /* Arg1 = structural errors left, Arg2 = ranges not repaired */
-    NtfsCheckMftBitmapNotWritten        /* Arg1 = NTSTATUS, Arg2 = bitmap length in bytes */
+    NtfsCheckMftBitmapNotWritten,       /* Arg1 = NTSTATUS, Arg2 = bitmap length in bytes */
+    NtfsCheckIndexRebuilt,              /* Arg1 = directory, Arg2 = entries kept */
+    NtfsCheckIndexRebuildFailed         /* Arg1 = directory, Arg2 = NTSTATUS */
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
@@ -1115,6 +1117,7 @@ typedef struct NtfsCheckResult
     UINT64 RemovedNames;
     UINT64 Errors;
     UINT64 FixedMftBitmapBits;
+    UINT64 RebuiltIndexes;
 } NtfsCheckResult, *PNtfsCheckResult;
 
 typedef void (*PNtfsCheckCallback)(

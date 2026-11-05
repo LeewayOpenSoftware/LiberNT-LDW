@@ -3422,6 +3422,97 @@ Done:
     return Status;
 }
 
+/*
+ * Order matters if this stops half way: the block bitmap is cleared first,
+ * so at worst the root still points at blocks marked free. Those read as
+ * absent, so a later check finds the names missing and relinks them from
+ * the file records. The other order could leave an empty root beside
+ * blocks still marked in use, whose stale entries a check would count as
+ * indexed.
+ */
+NTSTATUS
+Directory::ResetFileNameIndex(
+    _In_ PFileRecord DirectoryFile)
+{
+    const ULONG RootPrefix = FIELD_OFFSET(IndexRootEx, Header);
+    const ULONG EmptyLength = RootPrefix + sizeof(IndexNodeHeader) + FIELD_OFFSET(IndexEntry, IndexStream);
+    PAttribute RootAttribute;
+    PAttribute BitmapAttribute;
+    PIndexRootEx NewRoot;
+    PIndexEntry End;
+    PUCHAR Value;
+    NTSTATUS Status;
+
+    if (!DiskVolume || !DirectoryFile || !DirectoryFile->Header ||
+        !(DirectoryFile->Header->Flags & FR_IS_DIRECTORY) || DiskVolume->IsReadOnly)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    DiskVolume->IndexWorkBufferValid = FALSE;
+
+    RootAttribute = DirectoryFile->GetAttribute(TypeIndexRoot, const_cast<PWSTR>(NtfsI30Name));
+    if (!RootAttribute || RootAttribute->IsNonResident ||
+        RootAttribute->Resident.DataLength < RootPrefix + sizeof(IndexNodeHeader))
+    {
+        return STATUS_FILE_CORRUPT_ERROR;
+    }
+
+    BitmapAttribute = DirectoryFile->GetAttribute(TypeBitmap, const_cast<PWSTR>(NtfsI30Name));
+    if (BitmapAttribute)
+    {
+        ULONGLONG BitmapLength = GetAttributeDataSize(BitmapAttribute);
+        PUCHAR Zeros;
+        ULONG WriteLength;
+        LARGE_INTEGER WriteOffset;
+
+        if (BitmapLength > MAXULONG)
+            return STATUS_FILE_CORRUPT_ERROR;
+        if (BitmapLength)
+        {
+            Zeros = new(PagedPool, TAG_BTREE) UCHAR[(ULONG)BitmapLength];
+            if (!Zeros)
+                return STATUS_INSUFFICIENT_RESOURCES;
+            RtlZeroMemory(Zeros, (ULONG)BitmapLength);
+            WriteLength = (ULONG)BitmapLength;
+            WriteOffset.QuadPart = 0;
+            Status = DirectoryFile->WriteFileData(TypeBitmap,
+                                                  const_cast<PWSTR>(NtfsI30Name),
+                                                  Zeros,
+                                                  &WriteLength,
+                                                  &WriteOffset);
+            delete[] Zeros;
+            if (NT_SUCCESS(Status) && WriteLength != (ULONG)BitmapLength)
+                Status = STATUS_END_OF_FILE;
+            if (!NT_SUCCESS(Status))
+                return Status;
+        }
+    }
+
+    /* The root keeps its type, collation and block size; only its node
+     * becomes an empty leaf. */
+    RootAttribute = DirectoryFile->GetAttribute(TypeIndexRoot, const_cast<PWSTR>(NtfsI30Name));
+    if (!RootAttribute || RootAttribute->IsNonResident)
+        return STATUS_FILE_CORRUPT_ERROR;
+    Value = new(PagedPool, TAG_BTREE) UCHAR[EmptyLength];
+    if (!Value)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    RtlZeroMemory(Value, EmptyLength);
+    RtlCopyMemory(Value, GetResidentDataPointer(RootAttribute), RootPrefix);
+    NewRoot = reinterpret_cast<PIndexRootEx>(Value);
+    NewRoot->Header.IndexOffset = sizeof(IndexNodeHeader);
+    NewRoot->Header.TotalIndexSize = sizeof(IndexNodeHeader) + FIELD_OFFSET(IndexEntry, IndexStream);
+    NewRoot->Header.AllocatedSize = NewRoot->Header.TotalIndexSize;
+    NewRoot->Header.Flags = 0;
+    End = reinterpret_cast<PIndexEntry>(Value + RootPrefix + sizeof(IndexNodeHeader));
+    End->EntryLength = FIELD_OFFSET(IndexEntry, IndexStream);
+    End->StreamLength = 0;
+    End->Flags = INDEX_ENTRY_END;
+
+    Status = ReplaceIndexRootValue(DiskVolume, DirectoryFile, NtfsI30Name, Value, EmptyLength);
+    delete[] Value;
+    return Status;
+}
+
 NTSTATUS
 Directory::RemoveFileFromDirectory(
     _In_ PFileRecord DirectoryFile,

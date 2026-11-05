@@ -1548,6 +1548,12 @@ public:
         _In_ ULONGLONG FileReference,
         _In_ PFileNameEx FileToAdd);
 
+    /* Empty the $I30 index (chkdsk rebuilds it): every index block is
+     * marked free, then the root becomes an empty leaf. */
+    NTSTATUS
+    ResetFileNameIndex(
+        _In_ PFileRecord DirectoryFile);
+
     NTSTATUS
     RemoveFileFromDirectory(
         _In_ PFileRecord DirectoryFile,

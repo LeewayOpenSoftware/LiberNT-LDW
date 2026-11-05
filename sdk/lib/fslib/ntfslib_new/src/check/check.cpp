@@ -12,6 +12,7 @@
 #define CHECK_BITMAP_CHUNK      0x10000
 #define CHECK_FIRST_USER_RECORD 24
 #define CHECK_RETRY_CLUSTERS    0x10000
+#define REBUILD_ENTRY_HEADER    16
 
 namespace
 {
@@ -40,7 +41,14 @@ struct DanglingEntry
     USHORT NameLength;
     BOOLEAN Pending;    /* cut from an index block that is not written yet */
     BOOLEAN Removed;    /* gone from the index on disk */
+    BOOLEAN Failed;     /* removal by name was tried and failed */
     WCHAR Name[255];
+};
+
+struct RebuildDirectory
+{
+    ULONGLONG Number;
+    ULONG CorruptEvents;
 };
 
 struct LostFile
@@ -88,6 +96,7 @@ public:
         delete[] ExtensionOwner;
         delete[] AttrListMap;
         delete[] LiveBeyondMap;
+        delete[] Rebuild;
     }
 
     NTSTATUS Run(_In_ BOOLEAN Repair);
@@ -136,6 +145,12 @@ private:
     DanglingEntry* Dangling = NULL;
     ULONG DanglingCount = 0;
     ULONG PendingCuts = 0;
+
+    /* Directories whose $I30 index is rebuilt from its valid entries. */
+    RebuildDirectory* Rebuild = NULL;
+    ULONG RebuildCount = 0;
+    ULONG RebuildCapacity = 0;
+    ULONG IndexCorruptEvents = 0;
     ULONG DanglingCapacity = 0;
 
     PUCHAR UsedMap = NULL;
@@ -193,7 +208,8 @@ private:
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
             Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved &&
             Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckClusterRangeNotRepaired &&
-            Kind != NtfsCheckBitmapRepairDeferred && Kind != NtfsCheckMftBitmapNotWritten)
+            Kind != NtfsCheckBitmapRepairDeferred && Kind != NtfsCheckMftBitmapNotWritten &&
+            Kind != NtfsCheckIndexRebuilt && Kind != NtfsCheckIndexRebuildFailed)
         {
             Out->Errors++;
         }
@@ -202,6 +218,8 @@ private:
         {
             StructuralErrors++;
         }
+        if (Kind == NtfsCheckIndexCorrupt)
+            IndexCorruptEvents++;
         if (Kind == NtfsCheckRecordCorrupt || Kind == NtfsCheckBadRunList ||
             Kind == NtfsCheckClusterOutOfRange)
         {
@@ -259,6 +277,17 @@ private:
     void RememberCrossLink(_In_ ULONGLONG Owner, _In_ PAttribute Attr, _In_ ULONGLONG Vcn, _In_ ULONGLONG Length);
     void ResolveCrossLinks();
     void RemoveDangling();
+    void RememberRebuild(_In_ ULONGLONG Directory, _In_ ULONG CorruptEvents);
+    RebuildDirectory* FindRebuild(_In_ ULONGLONG Directory);
+    NTSTATUS RebuildIndex(_In_ ULONGLONG Directory, _Out_ PULONG Kept);
+    BOOLEAN CollectRebuildEntries(_In_ ULONGLONG Directory,
+                                  _In_ PIndexNodeHeader Node,
+                                  _In_ ULONG Available,
+                                  _Inout_ PUCHAR* Arena,
+                                  _Inout_ PULONG ArenaUsed,
+                                  _Inout_ PULONG ArenaSize,
+                                  _Inout_ PULONG Count);
+    void RebuildIndexes();
     ULONG CheckIndexEntries(_In_ ULONGLONG Directory,
                             _In_ PIndexNodeHeader Node,
                             _In_ ULONG Available,
@@ -1842,6 +1871,7 @@ VolumeCheck::RememberDangling(_In_ ULONGLONG Directory, _In_ ULONGLONG Target, _
     Dangling[DanglingCount].NameLength = Key->NameLength;
     Dangling[DanglingCount].Pending = FALSE;
     Dangling[DanglingCount].Removed = FALSE;
+    Dangling[DanglingCount].Failed = FALSE;
     RtlCopyMemory(Dangling[DanglingCount].Name, Key->Name, Key->NameLength * sizeof(WCHAR));
     DanglingCount++;
     return TRUE;
@@ -1887,11 +1917,14 @@ VolumeCheck::RemoveDangling()
 
         if (Entry->Removed)
             continue;
+        if (FindRebuild(Entry->Directory))
+            continue;
         Attempted++;
         Status = V->MFT->GetFileRecord((ULONG)Entry->Directory, &File);
         if (!NT_SUCCESS(Status))
         {
             DanglingFailures++;
+            Entry->Failed = TRUE;
             Event(NtfsCheckIndexEntryNotRemoved, Entry->Directory, Entry->Target);
             continue;
         }
@@ -1915,11 +1948,307 @@ VolumeCheck::RemoveDangling()
         else
         {
             DanglingFailures++;
+            Entry->Failed = TRUE;
             Event(NtfsCheckIndexEntryNotRemoved, Entry->Directory, Entry->Target);
         }
     }
     if (Attempted)
         V->FlushVolume();
+}
+
+void
+VolumeCheck::RememberRebuild(_In_ ULONGLONG Directory, _In_ ULONG CorruptEvents)
+{
+    RebuildDirectory* Known = FindRebuild(Directory);
+
+    if (Known)
+    {
+        Known->CorruptEvents += CorruptEvents;
+        return;
+    }
+    if (RebuildCount == RebuildCapacity)
+    {
+        ULONG Capacity = RebuildCapacity ? RebuildCapacity * 2 : 8;
+        RebuildDirectory* Grown = new(PagedPool, TAG_NTFS) RebuildDirectory[Capacity];
+
+        if (!Grown)
+            return;
+        if (Rebuild)
+            RtlCopyMemory(Grown, Rebuild, RebuildCount * sizeof(RebuildDirectory));
+        delete[] Rebuild;
+        Rebuild = Grown;
+        RebuildCapacity = Capacity;
+    }
+    Rebuild[RebuildCount].Number = Directory;
+    Rebuild[RebuildCount].CorruptEvents = CorruptEvents;
+    RebuildCount++;
+}
+
+RebuildDirectory*
+VolumeCheck::FindRebuild(_In_ ULONGLONG Directory)
+{
+    for (ULONG Index = 0; Index < RebuildCount; Index++)
+    {
+        if (Rebuild[Index].Number == Directory)
+            return &Rebuild[Index];
+    }
+    return NULL;
+}
+
+/*
+ * Appends every entry of one index node that names a live file of this
+ * directory to the arena, as [ULONGLONG reference][ULONG key length]
+ * [4 bytes of padding][key], so every key starts 8-byte aligned. A stale sequence number is corrected when the record
+ * still has the name. Entries that are dangling, or whose name the record
+ * does not have, are left out: that is the repair.
+ */
+BOOLEAN
+VolumeCheck::CollectRebuildEntries(_In_ ULONGLONG Directory,
+                                   _In_ PIndexNodeHeader Node,
+                                   _In_ ULONG Available,
+                                   _Inout_ PUCHAR* Arena,
+                                   _Inout_ PULONG ArenaUsed,
+                                   _Inout_ PULONG ArenaSize,
+                                   _Inout_ PULONG Count)
+{
+    PUCHAR Base = reinterpret_cast<PUCHAR>(Node);
+    ULONG Offset = Node->IndexOffset;
+    ULONG End = Node->TotalIndexSize;
+
+    if (End > Available || Offset >= End || (Offset & 7) != 0)
+        return TRUE;
+
+    while (Offset + FIELD_OFFSET(IndexEntry, IndexStream) <= End)
+    {
+        PIndexEntry Entry = reinterpret_cast<PIndexEntry>(Base + Offset);
+        const FileNameEx* Key = reinterpret_cast<const FileNameEx*>(Entry->IndexStream);
+        ULONGLONG Target, Ordinal;
+        ULONG Need;
+
+        if (Entry->EntryLength < FIELD_OFFSET(IndexEntry, IndexStream) || (Entry->EntryLength & 7) != 0 ||
+            Entry->EntryLength > End - Offset ||
+            Entry->StreamLength > Entry->EntryLength - FIELD_OFFSET(IndexEntry, IndexStream))
+        {
+            return TRUE;
+        }
+        if (Entry->Flags & INDEX_ENTRY_END)
+            return TRUE;
+        Offset += Entry->EntryLength;
+        if (Entry->StreamLength < FIELD_OFFSET(FileNameEx, Name) ||
+            Entry->StreamLength < FIELD_OFFSET(FileNameEx, Name) + Key->NameLength * sizeof(WCHAR) ||
+            (Key->ParentFileReference & 0x0000FFFFFFFFFFFFULL) != Directory)
+        {
+            continue;
+        }
+
+        Target = Entry->Data.Directory.IndexedFile;
+        Ordinal = Target & 0x0000FFFFFFFFFFFFULL;
+        if (Ordinal < RecordCount && TestBit(InUseMap, Ordinal))
+        {
+            if (Sequence[Ordinal] == (USHORT)(Target >> 48))
+            {
+                if (!HasNameKey(Ordinal, HashName(Key)))
+                    continue;
+            }
+            else if (RecordHasName(Ordinal, Key, Entry->StreamLength))
+            {
+                Target = Ordinal | ((ULONGLONG)Sequence[Ordinal] << 48);
+            }
+            else
+            {
+                continue;
+            }
+        }
+        else if (!IsLiveBeyondMft(Ordinal))
+        {
+            continue;
+        }
+
+        Need = REBUILD_ENTRY_HEADER + ((Entry->StreamLength + 7) & ~7u);
+        if (*ArenaUsed + Need > *ArenaSize)
+        {
+            ULONG Size = *ArenaSize ? *ArenaSize : 0x10000;
+            PUCHAR Grown;
+
+            while (*ArenaUsed + Need > Size)
+            {
+                if (Size > MAXULONG / 2)
+                    return FALSE;
+                Size *= 2;
+            }
+            Grown = new(PagedPool, TAG_NTFS) UCHAR[Size];
+            if (!Grown)
+                return FALSE;
+            if (*Arena)
+                RtlCopyMemory(Grown, *Arena, *ArenaUsed);
+            delete[] *Arena;
+            *Arena = Grown;
+            *ArenaSize = Size;
+        }
+        *reinterpret_cast<PULONGLONG>(*Arena + *ArenaUsed) = Target;
+        *reinterpret_cast<PULONG>(*Arena + *ArenaUsed + sizeof(ULONGLONG)) = Entry->StreamLength;
+        RtlCopyMemory(*Arena + *ArenaUsed + REBUILD_ENTRY_HEADER, Key, Entry->StreamLength);
+        *ArenaUsed += Need;
+        (*Count)++;
+    }
+    return TRUE;
+}
+
+/*
+ * Rebuilds the $I30 index of one directory from its valid entries: the
+ * root and every readable index block marked in use are read, the entries
+ * that name a live file with that name are kept, the index is emptied and
+ * they are inserted again through the normal B+ tree path. Names that were
+ * only in unreadable blocks are relinked later by RelinkOrphans from the
+ * file records.
+ */
+NTSTATUS
+VolumeCheck::RebuildIndex(_In_ ULONGLONG DirNumber, _Out_ PULONG Kept)
+{
+    PFileRecord File;
+    PAttribute RootAttr, AllocationAttr, BitmapAttr;
+    PIndexRootEx Root;
+    PUCHAR Allocation = NULL, Bitmap = NULL, Arena = NULL;
+    ULONG AllocationLength = 0, BitmapLength = 0, ArenaUsed = 0, ArenaSize = 0, Count = 0;
+    ULONGLONG DirectoryReference;
+    NTSTATUS Status;
+
+    *Kept = 0;
+    Status = V->MFT->GetFileRecord((ULONG)DirNumber, &File);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    RootAttr = File->GetAttribute(TypeIndexRoot, const_cast<PWSTR>(L"$I30"));
+    if (!RootAttr || RootAttr->IsNonResident || RootAttr->Resident.DataLength < sizeof(IndexRootEx))
+    {
+        delete File;
+        return STATUS_FILE_CORRUPT_ERROR;
+    }
+    Root = reinterpret_cast<PIndexRootEx>(reinterpret_cast<PUCHAR>(RootAttr) + RootAttr->Resident.DataOffset);
+    if (!CollectRebuildEntries(DirNumber, &Root->Header,
+                               RootAttr->Resident.DataLength - FIELD_OFFSET(IndexRootEx, Header),
+                               &Arena, &ArenaUsed, &ArenaSize, &Count))
+    {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    AllocationAttr = File->GetAttribute(TypeIndexAllocation, const_cast<PWSTR>(L"$I30"));
+    BitmapAttr = File->GetAttribute(TypeBitmap, const_cast<PWSTR>(L"$I30"));
+    /*
+     * Entries the directory pass found in readable blocks are not orphans,
+     * so nothing would relink them: if the blocks cannot be read now, the
+     * index is left as it is.
+     */
+    if (NT_SUCCESS(Status) && AllocationAttr &&
+        (!BitmapAttr ||
+         !NT_SUCCESS(File->ReadAttributeAlloc(AllocationAttr, &Allocation, &AllocationLength)) ||
+         !NT_SUCCESS(File->ReadAttributeAlloc(BitmapAttr, &Bitmap, &BitmapLength))))
+    {
+        Status = STATUS_FILE_CORRUPT_ERROR;
+    }
+    if (NT_SUCCESS(Status) && Allocation && Bitmap)
+    {
+        ULONG BlockSize = Root->BytesPerIndexRec;
+        ULONG VcnSize = BlockSize >= ClusterSize ? ClusterSize : 512;
+        ULONG Blocks = BlockSize >= sizeof(IndexBuffer) ? AllocationLength / BlockSize : 0;
+
+        for (ULONG Block = 0; NT_SUCCESS(Status) && Block < Blocks && Block < BitmapLength * 8; Block++)
+        {
+            PIndexBuffer Buffer = reinterpret_cast<PIndexBuffer>(Allocation + Block * BlockSize);
+
+            if (!TestBit(Bitmap, Block) ||
+                RtlCompareMemory(Buffer->RecordHeader.TypeID, "INDX", 4) != 4 ||
+                !NT_SUCCESS(NtfsApplyFixup(&Buffer->RecordHeader, BlockSize, V->BytesPerSector)) ||
+                Buffer->VCN != (ULONGLONG)Block * BlockSize / VcnSize)
+            {
+                continue;
+            }
+            if (!CollectRebuildEntries(DirNumber, &Buffer->IndexHeader,
+                                       BlockSize - FIELD_OFFSET(IndexBuffer, IndexHeader),
+                                       &Arena, &ArenaUsed, &ArenaSize, &Count))
+            {
+                Status = STATUS_INSUFFICIENT_RESOURCES;
+            }
+        }
+    }
+    delete[] Allocation;
+    delete[] Bitmap;
+
+    if (NT_SUCCESS(Status))
+    {
+        Directory Index(V);
+
+        Status = Index.ResetFileNameIndex(File);
+    }
+    DirectoryReference = DirNumber | ((ULONGLONG)File->Header->SequenceNumber << 48);
+
+    for (ULONG Used = 0; NT_SUCCESS(Status) && Used < ArenaUsed;)
+    {
+        ULONGLONG Target = *reinterpret_cast<PULONGLONG>(Arena + Used);
+        ULONG KeyLength = *reinterpret_cast<PULONG>(Arena + Used + sizeof(ULONGLONG));
+        PFileNameEx Key = reinterpret_cast<PFileNameEx>(Arena + Used + REBUILD_ENTRY_HEADER);
+        NTSTATUS AddStatus;
+
+        Used += REBUILD_ENTRY_HEADER + ((KeyLength + 7) & ~7u);
+        Key->ParentFileReference = DirectoryReference;
+        {
+            Directory Index(V);
+
+            AddStatus = Index.AddFileToDirectory(File, Target, Key);
+        }
+        /* The same entry can survive in a stale block and a live one. */
+        if (AddStatus == STATUS_OBJECT_NAME_COLLISION)
+            continue;
+        if (!NT_SUCCESS(AddStatus))
+            Status = AddStatus;
+        else
+            (*Kept)++;
+    }
+
+    delete[] Arena;
+    delete File;
+    V->FlushVolume();
+    return Status;
+}
+
+void
+VolumeCheck::RebuildIndexes()
+{
+    /* A directory where removal by name failed is rebuilt too. */
+    for (ULONG Index = 0; Index < DanglingCount; Index++)
+    {
+        if (Dangling[Index].Failed && !Dangling[Index].Removed)
+            RememberRebuild(Dangling[Index].Directory, 0);
+    }
+
+    for (ULONG Index = 0; Index < RebuildCount; Index++)
+    {
+        ULONGLONG Directory = Rebuild[Index].Number;
+        ULONG Kept;
+        NTSTATUS Status = RebuildIndex(Directory, &Kept);
+
+        if (!NT_SUCCESS(Status))
+        {
+            Event(NtfsCheckIndexRebuildFailed, Directory, (ULONG)Status);
+            continue;
+        }
+
+        Out->Errors -= Rebuild[Index].CorruptEvents;
+        Out->RebuiltIndexes++;
+        Event(NtfsCheckIndexRebuilt, Directory, Kept);
+        for (ULONG Entry = 0; Entry < DanglingCount; Entry++)
+        {
+            DanglingEntry* Dead = &Dangling[Entry];
+
+            if (Dead->Directory != Directory || Dead->Removed)
+                continue;
+            Dead->Removed = TRUE;
+            if (Dead->Failed && DanglingFailures)
+                DanglingFailures--;
+            Out->Errors--;
+            Out->RemovedIndexEntries++;
+        }
+    }
 }
 
 void
@@ -1934,6 +2263,8 @@ VolumeCheck::CheckDirectory(_In_ ULONGLONG Directory)
     ULONG Fixed;
     BOOLEAN RootInBase, Written;
     NTSTATUS Status;
+
+    ULONG CorruptBefore = IndexCorruptEvents;
 
     Out->Directories++;
     Status = V->MFT->GetFileRecord((ULONG)Directory, &File);
@@ -2042,6 +2373,10 @@ VolumeCheck::CheckDirectory(_In_ ULONGLONG Directory)
     delete[] Allocation;
     delete[] Bitmap;
     delete File;
+
+    /* Damaged index blocks cannot be edited entry by entry: rebuild it. */
+    if (RepairIndexes && IndexCorruptEvents != CorruptBefore)
+        RememberRebuild(Directory, IndexCorruptEvents - CorruptBefore);
 }
 
 NTSTATUS
@@ -2131,7 +2466,10 @@ VolumeCheck::Run(_In_ BOOLEAN Repair)
      * entry naming a free record or a record whose clusters are free.
      */
     if (RepairIndexes)
+    {
         RemoveDangling();
+        RebuildIndexes();
+    }
     if (RepairRecords)
     {
         RepairRecordsPass();
@@ -2173,7 +2511,7 @@ NtfsVolumeCheck(
     if (!NT_SUCCESS(Status) || !Repair ||
         !(Result->RemovedIndexEntries || Result->RelinkedNames || Result->FreedRecords ||
           Result->ResolvedCrossLinks || Result->RecoveredFiles || Result->RepairedAttributeLists ||
-          Result->RemovedNames))
+          Result->RemovedNames || Result->RebuiltIndexes))
     {
         return Status;
     }
@@ -2196,6 +2534,7 @@ NtfsVolumeCheck(
         Pass.RepairedAttributeLists += Result->RepairedAttributeLists;
         Pass.RemovedNames += Result->RemovedNames;
         Pass.FixedMftBitmapBits += Result->FixedMftBitmapBits;
+        Pass.RebuiltIndexes += Result->RebuiltIndexes;
         *Result = Pass;
     }
     return Status;
