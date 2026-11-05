@@ -436,7 +436,9 @@ Lt1xDdiStartDevice(
         Ctx->FrameBufferSize = 8 * 1024 * 1024;
         if (BarMask != 0 && (BarMask & 0x1) == 0)
         {
-            SIZE_T BarSize = (SIZE_T)(~(BarMask & 0xFFFFFFFEu) + 1);
+            /* Mask the whole flag nibble before sizing: a prefetchable BAR
+               reports 0x8 there and skewed the window size by that offset. */
+            SIZE_T BarSize = (SIZE_T)(~(BarMask & ~(ULONG)0xFul) + 1);
 
             if (BarSize >= 4 * 1024 * 1024 && BarSize <= LT1X_FB_MAX_MAP_SIZE)
                 Ctx->FrameBufferSize = BarSize;
