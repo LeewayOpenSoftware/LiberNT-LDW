@@ -573,6 +573,10 @@ DxgkpShouldRegisterDisplayBridge(
         if (OwnerDeviceObject != NULL)
             ObDereferenceObject(OwnerDeviceObject);
         KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
+        /* Keep the fallback stopped until the first VidPn commit validates
+           the claimant; DxgkpCompleteAdapterStart defers the completion and
+           the hot-plug rebuild resolves it either way. */
+        Claimant->PostDisplayHandoffCompletionDeferred = TRUE;
     }
 
     if (!RegisterDisplayBridge)
@@ -675,6 +679,22 @@ DxgkpCompletePostDisplayHandoff(
         ExReleaseRundownProtection(&FallbackAdapter->RemoveRundownRef);
     if (FallbackDeviceObject != NULL)
         ObDereferenceObject(FallbackDeviceObject);
+}
+
+/* Resolve a deferred take-over handoff from the first VidPn commit attempt.
+ * A success commits the handoff (BasicDisplay stays retired); a failure
+ * rolls it back and BasicDisplay restarts with the desktop.  STATUS_RETRY
+ * outcomes leave the deferral in place for the requeued rebuild. */
+VOID
+DxgkpCompleteDeferredPostDisplayHandoff(
+    _In_ PDXGKRNL_ADAPTER Adapter,
+    _In_ NTSTATUS CommitStatus)
+{
+    if (Adapter == NULL || CommitStatus == STATUS_RETRY)
+        return;
+    if (InterlockedExchange(&Adapter->PostDisplayHandoffCompletionDeferred, 0) == 0)
+        return;
+    DxgkpCompletePostDisplayHandoff(Adapter, CommitStatus, TRUE);
 }
 
 static NTSTATUS
@@ -13304,7 +13324,18 @@ DxgkpCompleteAdapterStart(
         KeSetEvent(&Adapter->AdapterStartCompletedEvent, IO_NO_INCREMENT, FALSE);
     }
     KeReleaseMutex(&Adapter->AdapterMutex, FALSE);
-    DxgkpCompletePostDisplayHandoff(Adapter, Status, Restartable);
+    /* A successful take-over from the BasicDisplay fallback completes only
+       when the first VidPn commit proves the claimant can drive the desktop
+       (DxgkpCompleteDeferredPostDisplayHandoff from the rebuild worker).  A
+       failure here resolves immediately: the fallback must come back. */
+    if (NT_SUCCESS(Status) && InterlockedCompareExchange(&Adapter->PostDisplayHandoffCompletionDeferred, 0, 0) != 0)
+    {
+        DXGKRNL_TRACE("DxgkAdapterStart: POST handoff completion deferred until first VidPn commit\n");
+    }
+    else
+    {
+        DxgkpCompletePostDisplayHandoff(Adapter, Status, Restartable);
+    }
     if (QueueHotPlug)
     {
         (VOID)DxgkGpuVaInitializePageTablePool(Adapter);

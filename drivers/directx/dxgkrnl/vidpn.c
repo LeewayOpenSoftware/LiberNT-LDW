@@ -3771,6 +3771,10 @@ Cleanup:
     }
     DxgkpEndSharedSurfaceMutationLocked(Adapter);
     KeReleaseMutex(&Adapter->SharedPrimaryMutex, FALSE);
+    /* The first VidPn commit attempt is final outside STATUS_RETRY: resolve
+       a deferred POST handoff either way (commit the claimant or roll the
+       desktop back to BasicDisplay).  No rebuild lock is held here. */
+    DxgkpCompleteDeferredPostDisplayHandoff(Adapter, Status);
     if (DetachedVidPn != NULL)
         DxgkVidPnDestroy(DetachedVidPn);
     if (OldVidPn != NULL)

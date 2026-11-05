@@ -774,6 +774,10 @@ struct _DXGKRNL_ADAPTER
     PDXGKRNL_ADAPTER           PostDisplayFallbackAdapter;
     PDEVICE_OBJECT             PostDisplayFallbackDeviceObject;
     BOOLEAN                    PostDisplayFallbackRemoveRundownHeld;
+    /* The take-over handoff completes only after the first VidPn commit
+       proves the claimant can drive the desktop; until then BasicDisplay
+       stays stopped and one failed commit rolls the desktop back. */
+    LONG                       PostDisplayHandoffCompletionDeferred;
 
     /*
      * Native dxgkrnl disables its Basic Display fallback while a real
@@ -2574,6 +2578,13 @@ DxgkAdapterStart(
     _In_ PDXGKRNL_ADAPTER Adapter,
     _In_ PCM_RESOURCE_LIST AllocatedResources,
     _In_ PCM_RESOURCE_LIST TranslatedResources);
+
+/* Resolve a POST take-over handoff deferred by DxgkAdapterStart; called from
+   the hot-plug rebuild worker once the first VidPn commit attempt is final. */
+VOID
+DxgkpCompleteDeferredPostDisplayHandoff(
+    _In_ PDXGKRNL_ADAPTER Adapter,
+    _In_ NTSTATUS CommitStatus);
 
 NTSTATUS
 DxgkAdapterStop(
