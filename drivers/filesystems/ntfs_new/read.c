@@ -212,7 +212,8 @@ NtfsTryDirectRead(
     _Inout_ PIRP Irp,
     _In_ ULONGLONG FileOffset,
     _In_ ULONG Length,
-    _Out_ PBOOLEAN Handled)
+    _Out_ PBOOLEAN Handled,
+    _Out_ PULONGLONG SubmitDiskOffset)
 {
     PAttribute Attribute;
     NtfsRetrievalExtent Extent;
@@ -227,6 +228,7 @@ NtfsTryDirectRead(
     NTSTATUS Status;
 
     *Handled = FALSE;
+    *SubmitDiskOffset = MAXULONGLONG;
     if (!Irp->MdlAddress &&
         !Irp->AssociatedIrp.SystemBuffer)
     {
@@ -310,7 +312,22 @@ NtfsTryDirectRead(
         return STATUS_SUCCESS;
     DiskOffset += InClusterOffset;
 
+    /* The caller sends the read with NtfsFinishDirectRead. */
     *Handled = TRUE;
+    *SubmitDiskOffset = DiskOffset;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+NtfsFinishDirectRead(
+    _In_ PVolumeContextBlock VolCB,
+    _Inout_ PIRP Irp,
+    _In_ ULONGLONG DiskOffset,
+    _In_ ULONG Length)
+{
+    NTSTATUS Status;
+
     /* Small file writes may still be in the library's block cache. Paging
      * and unbuffered reads bypass it, so commit only the overlapping blocks
      * before sending this IRP directly to the storage device. */
@@ -410,6 +427,7 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     BOOLEAN ResourceAcquired = FALSE;
     BOOLEAN PagingIo = FALSE;
     BOOLEAN DirectRead;
+    ULONGLONG DirectDiskOffset = MAXULONGLONG;
 
     IrpSp = IoGetCurrentIrpStackLocation(Irp);
     FileObject = IrpSp->FileObject;
@@ -512,8 +530,25 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                    Irp,
                                    (ULONGLONG)ReadOffset.QuadPart,
                                    RequestedLength,
-                                   &DirectRead);
+                                   &DirectRead,
+                                   &DirectDiskOffset);
+        /*
+         * The transfer itself needs no metadata, only the extent resolved
+         * above. A paging read holds PagingIoResource shared, and every path
+         * that frees or moves a stream's clusters takes it exclusive, so the
+         * extent stays this stream's until the read completes: send it
+         * after dropping the volume lock. Other reads hold only
+         * MainResource and keep sending it under the lock.
+         */
+        if (DirectRead && NT_SUCCESS(Status) &&
+            (!PagingIo || (FileCB->StreamCB && FileCB->StreamCB->Deleted)))
+        {
+            Status = NtfsFinishDirectRead(VolCB, Irp, DirectDiskOffset, RequestedLength);
+            DirectDiskOffset = MAXULONGLONG;
+        }
         NtfsReleaseMetadata(VolCB);
+        if (DirectRead && NT_SUCCESS(Status) && DirectDiskOffset != MAXULONGLONG)
+            Status = NtfsFinishDirectRead(VolCB, Irp, DirectDiskOffset, RequestedLength);
         if (DirectRead)
         {
             if (NT_SUCCESS(Status))
