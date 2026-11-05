@@ -249,10 +249,15 @@ Lt1xAssignCofuncModality(
         Status = SourceModeSetInterface->pfnCreateNewModeInfo(hSourceModeSet, &SourceMode);
         if (NT_SUCCESS(Status))
         {
+            D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID SourceModeId;
+
             Lt1xFillSourceMode(Ctx, SourceMode);
+            /* pfnAddMode consumes the pending mode info, so pin by the id
+               captured here and never touch the mode info afterwards. */
+            SourceModeId = SourceMode->Id;
             Status = SourceModeSetInterface->pfnAddMode(hSourceModeSet, SourceMode);
             if (NT_SUCCESS(Status))
-                Status = SourceModeSetInterface->pfnPinMode(hSourceModeSet, SourceMode->Id);
+                Status = SourceModeSetInterface->pfnPinMode(hSourceModeSet, SourceModeId);
             SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
         }
         if (NT_SUCCESS(Status))
@@ -268,10 +273,14 @@ Lt1xAssignCofuncModality(
         Status = TargetModeSetInterface->pfnCreateNewModeInfo(hTargetModeSet, &TargetMode);
         if (NT_SUCCESS(Status))
         {
+            D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID TargetModeId;
+
             Lt1xFillTargetMode(Ctx, TargetMode);
+            /* pfnAddMode consumes the pending mode info; pin by the saved id. */
+            TargetModeId = TargetMode->Id;
             Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
             if (NT_SUCCESS(Status))
-                Status = TargetModeSetInterface->pfnPinMode(hTargetModeSet, TargetMode->Id);
+                Status = TargetModeSetInterface->pfnPinMode(hTargetModeSet, TargetModeId);
             TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
         }
         if (NT_SUCCESS(Status))
