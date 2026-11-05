@@ -1008,7 +1008,10 @@ VolumeCheck::RelinkOrphans()
                 Failed = TRUE;
                 continue;
             }
-            if (!NT_SUCCESS(V->MFT->GetFileRecord((ULONG)Parent, &ParentFile)))
+            /* Stopgap (CV2): no B+ tree insert into a directory with an
+             * attribute list from /f yet; see RemoveDangling. */
+            if (TestBit(AttrListMap, Parent) ||
+                !NT_SUCCESS(V->MFT->GetFileRecord((ULONG)Parent, &ParentFile)))
             {
                 Failed = TRUE;
                 OtherFailures = TRUE;
@@ -1859,6 +1862,19 @@ VolumeCheck::RemoveDangling()
 
         if (Entry->Removed)
             continue;
+        /*
+         * Stopgap (CV2): a B+ tree edit of a directory whose attributes
+         * span extension records (it has an attribute list) is not trusted
+         * in /f yet. Its entry is reported and the record it names stays
+         * in use. Leaf entries in its index blocks were already cut in
+         * place, which writes nothing but the block.
+         */
+        if (Entry->Directory < RecordCount && TestBit(AttrListMap, Entry->Directory))
+        {
+            DanglingFailures++;
+            Event(NtfsCheckIndexEntryNotRemoved, Entry->Directory, Entry->Target);
+            continue;
+        }
         Attempted++;
         Status = V->MFT->GetFileRecord((ULONG)Entry->Directory, &File);
         if (!NT_SUCCESS(Status))
