@@ -846,7 +846,13 @@ Lt1xDdiQueryAdapterInfo(
             SegmentOut->pSegmentDescriptor[0].Size = Ctx->FrameBufferSize;
             SegmentOut->pSegmentDescriptor[0].NbOfBanks = 1;
             SegmentOut->pSegmentDescriptor[0].CommitLimit = Ctx->FrameBufferSize;
-            SegmentOut->pSegmentDescriptor[0].Flags.Aperture = 1;
+            /* A memory segment, not an aperture: with Aperture=1 dxgkrnl
+               backs every allocation with system RAM and expects the
+               miniport to map those pages in (DXGK_OPERATION_MAP_APERTURE_
+               SEGMENT), which this driver never did - the aperture stayed
+               aliasable-to-nothing and every present copied zeros over
+               zeros.  As CPU-visible VRAM the allocations live in the
+               framebuffer itself and the blit and dispi scanout are real. */
             SegmentOut->pSegmentDescriptor[0].Flags.CpuVisible = 1;
             SegmentOut->pSegmentDescriptor[0].Flags.CacheCoherent = 1;
             return STATUS_SUCCESS;
