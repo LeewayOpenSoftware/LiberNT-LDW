@@ -630,6 +630,7 @@ NtfsChkdsk(
     ULONG DirtyMask = 0;
     USHORT Flags = 0;
     BOOLEAN Locked = FALSE;
+    BOOLEAN Repaired;
     BOOLEAN Dirty;
     NTSTATUS Status;
 
@@ -731,13 +732,21 @@ NtfsChkdsk(
         NtfsFormatReport(Callback, "%I64u clusters in use were marked allocated.\n", Result.ClaimedClusters);
     if (Result.FreedClusters)
         NtfsFormatReport(Callback, "%I64u clusters were returned to free space.\n", Result.FreedClusters);
+    Repaired = Result.FreedClusters || Result.ClaimedClusters || Result.FixedIndexEntries ||
+               Result.RemovedIndexEntries || Result.RelinkedNames || Result.FreedRecords ||
+               Result.ResolvedCrossLinks || Result.RecoveredFiles || Result.RepairedAttributeLists ||
+               Result.RemovedNames;
     if (Result.Errors)
     {
-        NtfsFormatReport(Callback, "Problems were found on the volume.\n");
+        NtfsFormatReport(Callback,
+                         Repaired ? "Problems were found on the volume. Some were corrected; others remain.\n"
+                                  : "Problems were found on the volume.\n");
         return TRUE;
     }
 
-    NtfsFormatReport(Callback, "No problems were found on the volume.\n");
+    NtfsFormatReport(Callback,
+                     Repaired ? "Problems were found on the volume and corrected.\n"
+                              : "No problems were found on the volume.\n");
     *ExitStatus = (ULONG)STATUS_SUCCESS;
     return TRUE;
 }

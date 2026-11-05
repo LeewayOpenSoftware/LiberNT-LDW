@@ -1234,7 +1234,9 @@ VolumeCheck::CheckAttributeLists()
         if (NT_SUCCESS(File->DropUnneededAttributeList(FALSE, &Unneeded)) && Unneeded)
         {
             Event(NtfsCheckAttributeListUnneeded, Number, 0);
-            if (RepairRecords && NT_SUCCESS(File->DropUnneededAttributeList(TRUE, &Unneeded)))
+            /* Collapse, not a bare drop: it also releases the clusters of
+             * a nonresident list (after the base record is written). */
+            if (RepairRecords && NT_SUCCESS(File->CollapseUnneededAttributeList()))
             {
                 Out->Errors--;
                 Out->RepairedAttributeLists++;
