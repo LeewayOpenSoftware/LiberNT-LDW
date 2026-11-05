@@ -1083,7 +1083,16 @@ Lt1xDdiRecommendFunctionalVidPn(
         return Status;
     Path->VidPnSourceId = 0;
     Path->VidPnTargetId = 0;
+    Path->ImportanceOrdinal = D3DKMDT_VPPI_PRIMARY;
+    Path->ContentTransformation.Scaling = D3DKMDT_VPPS_IDENTITY;
+    Path->ContentTransformation.ScalingSupport.Identity = 1;
+    Path->ContentTransformation.Rotation = D3DKMDT_VPPR_IDENTITY;
+    Path->ContentTransformation.RotationSupport.Identity = 1;
+    Path->GammaRamp.Type = D3DDDI_GAMMARAMP_DEFAULT;
+    Path->VidPnTargetColorBasis = D3DKMDT_CB_SRGB;
     Path->Content = D3DKMDT_VPPC_GRAPHICS;
+    Path->CopyProtection.CopyProtectionType = D3DKMDT_VPPMT_NOPROTECTION;
+    Path->CopyProtection.CopyProtectionSupport.NoProtection = 1;
     Status = TopologyInterface->pfnAddPath(hTopology, Path);
     TopologyInterface->pfnReleasePathInfo(hTopology, Path);
     if (!NT_SUCCESS(Status))
