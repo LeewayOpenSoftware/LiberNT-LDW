@@ -16284,11 +16284,16 @@ DxgkpMiniportPnpDispatch(
                 IoCompleteRequest(Irp, IO_NO_INCREMENT);
                 return STATUS_SUCCESS;
             }
-            if (InterlockedCompareExchange(&Adapter->MiniportStartFailed, 0, 0) != 0)
-            {
-                Irp->IoStatus.Information |= PNP_DEVICE_FAILED;
-                Irp->IoStatus.Status = STATUS_SUCCESS;
-            }
+            /* A miniport start failure is recoverable: dxgkrnl converts the
+               start IRP to success (see IRP_MN_START_DEVICE above) and the
+               BasicDisplay fallback keeps serving the desktop.  Do NOT report
+               PNP_DEVICE_FAILED here - this pnpmgr couples that flag to
+               DeviceNodeAwaitingQueuedRemoval (see devaction.c), which
+               surprise-removes the display device, tears the whole stack
+               down and leaves the session headless.  Windows keeps a
+               start-failed display device with problem code 10 instead;
+               revisit the problem code when pnpmgr distinguishes it from
+               removal. */
             return DxgkpForwardIrp(Adapter, Irp);
         }
 
