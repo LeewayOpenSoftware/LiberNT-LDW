@@ -2834,7 +2834,8 @@ RestoreResident:
              * while the record still has headroom. A reactive retry backs
              * up a first failure inside the remaining window.
              */
-            BOOLEAN ListCreated;
+            BOOLEAN ListCreated = FALSE;
+            BOOLEAN ListCreatedHere = FALSE;
 
             if (AttributeOwner == this &&
                 Header->AllocatedSize >=
@@ -2851,6 +2852,7 @@ RestoreResident:
                         &ListCreated);
                 if (!NT_SUCCESS(Status))
                     return Status;
+                ListCreatedHere = ListCreated;
             }
 
             Status = AttributeOwner->
@@ -2870,6 +2872,7 @@ RestoreResident:
                         &ListCreated);
                 if (NT_SUCCESS(Status) && ListCreated)
                 {
+                    ListCreatedHere = TRUE;
                     Status = AttributeOwner->
                         ExtendNonResidentData(
                         TargetAttribute,
@@ -2884,6 +2887,16 @@ RestoreResident:
                         STATUS_BUFFER_TOO_SMALL;
                 }
             }
+            /*
+             * The list made for the growth is only needed if a mapping
+             * segment actually went to an extension record. When the
+             * grown mapping still fit in the base record every entry names
+             * the base record, so remove the list again (base record
+             * first, then the list's clusters); Windows treats a record
+             * with such a list as corrupt.
+             */
+            if (NT_SUCCESS(Status) && ListCreatedHere)
+                (void)CollapseUnneededAttributeList();
             if (NT_SUCCESS(Status))
             {
                 *Length = RequestedLength;
@@ -6644,6 +6657,7 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
     ULONG Fill = 0;
     ULONG ChunkUnits = NTFS_COMPRESSED_WRITE_UNITS;
     BOOLEAN ListCreated;
+    BOOLEAN ListCreatedHere = FALSE;
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!TargetAttribute || !Buffer || !Length || *Length == 0)
@@ -6774,6 +6788,8 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
         }
         if (!NT_SUCCESS(Status))
             break;
+        if (ListCreated)
+            ListCreatedHere = TRUE;
         if (AttributeOwner != this || ListCreated)
             ChunkUnits = NTFS_COMPRESSED_WRITE_UNITS;
 
@@ -6789,6 +6805,9 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
         }
     }
 
+    /* As in WriteFileData: drop a list the growth turned out not to need. */
+    if (NT_SUCCESS(Status) && ListCreatedHere)
+        (void)CollapseUnneededAttributeList();
     delete[] Zeroes;
     return Status;
 }
@@ -6931,6 +6950,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
     ULONGLONG OldSize;
     ULONG Fill;
     BOOLEAN ListCreated;
+    BOOLEAN ListCreatedHere = FALSE;
     NTSTATUS Status;
 
     TargetAttribute = GetAttribute(TypeData, StreamName);
@@ -6994,6 +7014,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
                                                      &ListCreated);
         if (!NT_SUCCESS(Status))
             return Status;
+        ListCreatedHere = ListCreated;
     }
     Status = AttributeOwner->WriteCompressedUnits(&TargetAttribute,
                                                   NULL,
@@ -7014,6 +7035,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
                                                      &ListCreated);
         if (NT_SUCCESS(Status) && ListCreated)
         {
+            ListCreatedHere = TRUE;
             Status = AttributeOwner->WriteCompressedUnits(&TargetAttribute,
                                                           NULL,
                                                           0,
@@ -7024,6 +7046,9 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
             Status = STATUS_BUFFER_TOO_SMALL;
         }
     }
+    /* As in WriteFileData: drop a list the growth turned out not to need. */
+    if (NT_SUCCESS(Status) && ListCreatedHere)
+        (void)CollapseUnneededAttributeList();
     return Status;
 }
 
