@@ -439,6 +439,7 @@ NtfsIsRepairOutcome(
         case NtfsCheckMftBitmapNotWritten:
         case NtfsCheckIndexRebuilt:
         case NtfsCheckIndexRebuildFailed:
+        case NtfsCheckRecordKept:
             return TRUE;
         default:
             return FALSE;
@@ -636,6 +637,12 @@ NtfsCheckReport(
             NtfsFormatReport(Check->Callback,
                              "Could not rebuild index $I30 of file %I64X (status 0x%08lx).\n",
                              Argument1, (ULONG)Argument2);
+            break;
+        case NtfsCheckRecordKept:
+            NtfsFormatReport(Check->Callback,
+                             "File record segment %I64X has damaged attributes (%I64u problems). It was not deleted, "
+                             "so no other repair was made; copy its data elsewhere before repairing it.\n",
+                             Argument1, Argument2);
             break;
         case NtfsCheckMftBitmapNotWritten:
             NtfsFormatReport(Check->Callback,

@@ -1095,7 +1095,8 @@ typedef enum NtfsCheckEvent
     NtfsCheckBitmapRepairDeferred,      /* Arg1 = structural errors left, Arg2 = ranges not repaired */
     NtfsCheckMftBitmapNotWritten,       /* Arg1 = NTSTATUS, Arg2 = bitmap length in bytes */
     NtfsCheckIndexRebuilt,              /* Arg1 = directory, Arg2 = entries kept */
-    NtfsCheckIndexRebuildFailed         /* Arg1 = directory, Arg2 = NTSTATUS */
+    NtfsCheckIndexRebuildFailed,        /* Arg1 = directory, Arg2 = NTSTATUS */
+    NtfsCheckRecordKept                 /* Arg1 = file record, Arg2 = faults; not deleted */
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
