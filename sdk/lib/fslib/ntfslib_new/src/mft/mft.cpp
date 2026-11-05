@@ -954,6 +954,24 @@ ScanAgain:
         goto Done;
     RecordWritten = TRUE;
 
+    /*
+     * A record past the old end of the $MFT data means the MFT just grew.
+     * The zero-filled clusters went straight to the disk, but the grown
+     * data size in record 0, the bitmap extension and this record sit in
+     * the write-back cache, which commits blocks in no particular order. A
+     * power cut that kept the bitmap bit set below but lost record 0 would
+     * leave the bit naming a record past the on-disk end, which reads as
+     * zeros, and later index entries pointing at it. Make all of it durable
+     * before the bit is set. MFT growth happens once per growth chunk, so
+     * the extra flush is rare.
+     */
+    if (Candidate >= RecordCount)
+    {
+        Status = DiskVolume->FlushVolume();
+        if (!NT_SUCCESS(Status))
+            goto Done;
+    }
+
     BitmapAttribute =
         MFTFile->GetAttribute(TypeBitmap, NULL);
     if (!BitmapAttribute)
