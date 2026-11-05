@@ -1102,12 +1102,34 @@ Lt1xDdiSetVidPnSourceAddress(
     IN_CONST_HANDLE hAdapter,
     IN_CONST_PDXGKARG_SETVIDPNSOURCEADDRESS pSetVidPnSourceAddress)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
+    PLT1X_CONTEXT Ctx = (PLT1X_CONTEXT)hAdapter;
+    volatile USHORT *Dispi;
+    ULONGLONG Offset;
+    ULONG XOffset, YOffset;
+
     DbgPrint("LT1X: DxgkDdiSetVidPnSourceAddress source=%lu segment=%lu address=0x%I64x alloc=%p\n",
              pSetVidPnSourceAddress->VidPnSourceId,
              pSetVidPnSourceAddress->PrimarySegment,
              pSetVidPnSourceAddress->PrimaryAddress.QuadPart,
              pSetVidPnSourceAddress->hAllocation);
+
+    if (Ctx == NULL || !Ctx->DispiDetected || Ctx->Stride == 0 || Ctx->ModeBpp == 0 ||
+        pSetVidPnSourceAddress->PrimarySegment != 1 ||
+        pSetVidPnSourceAddress->PrimaryAddress.QuadPart < Ctx->FrameBufferPhys.QuadPart)
+        return STATUS_SUCCESS;
+
+    /* Bochs dispi: scanout start byte offset = X_OFFSET * bpp/8 +
+       Y_OFFSET * stride (VBE_DISPI_INDEX_X_OFFSET 0x8, Y_OFFSET 0x9). */
+    Offset = (ULONGLONG)(pSetVidPnSourceAddress->PrimaryAddress.QuadPart - Ctx->FrameBufferPhys.QuadPart);
+    YOffset = (ULONG)(Offset / Ctx->Stride);
+    XOffset = (ULONG)((Offset % Ctx->Stride) / (Ctx->ModeBpp / 8));
+    if (XOffset > 4096 || YOffset > 4096)
+        return STATUS_SUCCESS;
+
+    Dispi = (volatile USHORT *)((PUCHAR)Ctx->FrameBufferVa + 0x400);
+    Dispi[8] = (USHORT)XOffset;
+    Dispi[9] = (USHORT)YOffset;
+    DbgPrint("LT1X: dispi display start x=%lu y=%lu\n", XOffset, YOffset);
     return STATUS_SUCCESS;
 }
 
