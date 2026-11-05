@@ -1276,6 +1276,73 @@ NtfsGetNtfsFileRecord(
     return STATUS_SUCCESS;
 }
 
+VOID
+NtfsRegisterMountedVolume(_In_ PVolumeContextBlock VolCB)
+{
+    KeEnterCriticalRegion();
+    ExAcquireResourceExclusiveLite(&NtfsMountedVolumesResource, TRUE);
+    InsertTailList(&NtfsMountedVolumes, &VolCB->MountedVolumeLink);
+    ExReleaseResourceLite(&NtfsMountedVolumesResource);
+    KeLeaveCriticalRegion();
+}
+
+/*
+ * Clears the dirty flag this mount set, after writing everything back.
+ * Callers have flushed the volume's streams; a failure leaves the volume
+ * dirty, which only costs a check at the next boot.
+ */
+NTSTATUS
+NtfsMarkVolumeClean(_In_ PVolumeContextBlock VolCB)
+{
+    NTSTATUS Status;
+
+    if (!VolCB->DiskVolume || NtfsVolumeIsReadOnly(VolCB->DiskVolume))
+        return STATUS_SUCCESS;
+
+    KeEnterCriticalRegion();
+    NtfsAcquireMetadata(VolCB);
+    Status = NtfsVolumeMarkClean(VolCB->DiskVolume);
+    NtfsReleaseMetadata(VolCB);
+    KeLeaveCriticalRegion();
+    if (!NT_SUCCESS(Status))
+        DPRINT1("The volume stays dirty (Status %lx)\n", Status);
+    return Status;
+}
+
+/* Volume contexts are never freed (see NtfsReleaseDismountedVolume), so the
+ * list only grows; dismounted volumes are skipped. */
+NTSTATUS
+NtfsMarkMountedVolumesClean(VOID)
+{
+    PLIST_ENTRY Entry;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    KeEnterCriticalRegion();
+    ExAcquireResourceSharedLite(&NtfsMountedVolumesResource, TRUE);
+    for (Entry = NtfsMountedVolumes.Flink;
+         Entry != &NtfsMountedVolumes;
+         Entry = Entry->Flink)
+    {
+        PVolumeContextBlock VolCB =
+            CONTAINING_RECORD(Entry, VolumeContextBlock, MountedVolumeLink);
+        BOOLEAN Active;
+        NTSTATUS VolumeStatus;
+
+        ExAcquireFastMutex(&VolCB->VolumeStateMutex);
+        Active = !VolCB->Dismounted && !VolCB->Dismounting;
+        ExReleaseFastMutex(&VolCB->VolumeStateMutex);
+        if (!Active)
+            continue;
+
+        VolumeStatus = NtfsMarkVolumeClean(VolCB);
+        if (!NT_SUCCESS(VolumeStatus) && NT_SUCCESS(Status))
+            Status = VolumeStatus;
+    }
+    ExReleaseResourceLite(&NtfsMountedVolumesResource);
+    KeLeaveCriticalRegion();
+    return Status;
+}
+
 NTSTATUS
 NtfsFlushVolume(
     _In_ PVolumeContextBlock VolCB,
@@ -1399,6 +1466,11 @@ NtfsLockOrUnlockVolume(
         if (NT_SUCCESS(Status))
             Status = NtfsFlushVolume(VolCB, TRUE);
 
+        /* A locked volume is quiet and written back: chkdsk must not find
+         * our own write-in-progress flag. A failure leaves it dirty. */
+        if (NT_SUCCESS(Status))
+            NtfsMarkVolumeClean(VolCB);
+
         ExAcquireFastMutex(&VolCB->VolumeStateMutex);
         if (NT_SUCCESS(Status))
         {
@@ -1494,6 +1566,8 @@ NtfsDismountVolume(
     KeLeaveCriticalRegion();
 
     Status = NtfsFlushVolume(VolCB, TRUE);
+    if (NT_SUCCESS(Status))
+        NtfsMarkVolumeClean(VolCB);
 
     ExAcquireFastMutex(&VolCB->VolumeStateMutex);
     if (NT_SUCCESS(Status))
@@ -1683,6 +1757,9 @@ NtfsIsVolumeDirty(
     KeEnterCriticalRegion();
     NtfsAcquireMetadata(VolCB);
     Status = NtfsVolumeQueryFlags(VolCB->DiskVolume, &Flags);
+    /* Our own write-in-progress flag does not mean the volume needs a check. */
+    if (NT_SUCCESS(Status) && NtfsVolumeIsDirtyTransient(VolCB->DiskVolume))
+        Flags &= ~VOL_DIRTY;
     NtfsReleaseMetadata(VolCB);
     KeLeaveCriticalRegion();
     if (!NT_SUCCESS(Status))

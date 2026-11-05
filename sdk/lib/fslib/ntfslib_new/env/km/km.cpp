@@ -1059,7 +1059,9 @@ NtfsFlushVolumeContext(_In_opt_ void* Context)
     if (!DeviceObject)
         return STATUS_INVALID_PARAMETER;
 
-    return NtfsCacheFlushAll(DeviceObject);
+    /* A library flush means "on the medium", as fsync does for the other
+     * environments: the dirty flag and log recovery depend on it. */
+    return NtfsDiskFlushVolumeKm(DeviceObject);
 }
 
 NTSTATUS

@@ -39,6 +39,7 @@ Volume::WriteVolume(_In_    ULONGLONG Offset,
                     _Inout_ PUCHAR Buffer)
 {
     ULONGLONG VolumeBytes;
+    NTSTATUS Status;
 
     if (BytesPerSector == 0 ||
         SectorsInVolume > (ULONGLONG)-1 / BytesPerSector)
@@ -49,6 +50,14 @@ Volume::WriteVolume(_In_    ULONGLONG Offset,
     VolumeBytes = SectorsInVolume * BytesPerSector;
     if (Offset > VolumeBytes || Length > VolumeBytes - Offset)
         return STATUS_DISK_FULL;
+
+    /* The first write since the volume was last clean marks it dirty. */
+    if (DirtyTracking && !DirtyMarked)
+    {
+        Status = MarkDirtyBeforeWrite();
+        if (!NT_SUCCESS(Status))
+            return Status;
+    }
 
     return NtfsWriteVolumeContext(IoContext,
                                   BytesPerSector,

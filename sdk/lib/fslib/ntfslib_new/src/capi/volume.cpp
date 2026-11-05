@@ -267,7 +267,36 @@ NtfsVolumeSetFlags(
     _In_ USHORT Set,
     _In_ USHORT Clear)
 {
-    return reinterpret_cast<PVolume>(DiskVolume)->SetVolumeFlags(Set, Clear);
+    PVolume Vol = reinterpret_cast<PVolume>(DiskVolume);
+    NTSTATUS Status = Vol->SetVolumeFlags(Set, Clear);
+
+    /* An explicit request owns the flag from now on (FSCTL, chkdsk). */
+    if (NT_SUCCESS(Status) && (Set & VOL_DIRTY))
+        Vol->RetainDirty(TRUE);
+    else if (NT_SUCCESS(Status) && (Clear & VOL_DIRTY))
+        Vol->RetainDirty(FALSE);
+    return Status;
+}
+
+NTSTATUS
+NtfsVolumeEnableDirtyTracking(
+    _In_ PNtfsVolume DiskVolume)
+{
+    return reinterpret_cast<PVolume>(DiskVolume)->EnableDirtyTracking();
+}
+
+NTSTATUS
+NtfsVolumeMarkClean(
+    _In_ PNtfsVolume DiskVolume)
+{
+    return reinterpret_cast<PVolume>(DiskVolume)->MarkClean();
+}
+
+BOOLEAN
+NtfsVolumeIsDirtyTransient(
+    _In_ PNtfsVolume DiskVolume)
+{
+    return reinterpret_cast<PVolume>(DiskVolume)->IsDirtyTransient();
 }
 
 #ifdef __cplusplus

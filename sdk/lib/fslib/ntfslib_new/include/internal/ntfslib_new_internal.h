@@ -546,6 +546,17 @@ public:
     BOOLEAN Generate8dot3Names = FALSE;
 
     /*
+     * Crash detection without a journal. With tracking on, the volume is
+     * marked dirty, durably, before the first write after a read-write
+     * mount or a MarkClean, and MarkClean clears the flag once everything
+     * has reached the medium. A flag found at mount or set on request is
+     * retained: it belongs to chkdsk and MarkClean leaves it alone.
+     */
+    BOOLEAN DirtyTracking = FALSE;
+    BOOLEAN DirtyMarked = FALSE;
+    BOOLEAN DirtyRetained = FALSE;
+
+    /*
      * Where to begin the free-cluster search. Without it every allocation
      * scans the volume bitmap from cluster zero, so creating or extending N
      * files costs N^2. Only a hint: the search still wraps to the start, and
@@ -728,6 +739,27 @@ public:
     NTSTATUS
     SetVolumeFlags(_In_ USHORT Set,
                    _In_ USHORT Clear);
+
+    /* Starts dirty tracking on a read-write volume (see DirtyTracking). */
+    NTSTATUS
+    EnableDirtyTracking();
+
+    /* Marks the volume dirty before its first write since the last clean
+     * point. Called from WriteVolume and before $Volume is rewritten. */
+    NTSTATUS
+    MarkDirtyBeforeWrite();
+
+    /* Writes everything back and clears a dirty flag this mount set. */
+    NTSTATUS
+    MarkClean();
+
+    /* TRUE when the on-disk dirty flag only means "being written now". */
+    BOOLEAN
+    IsDirtyTransient();
+
+    /* Records an explicit request to set (Retain) or clear the flag. */
+    VOID
+    RetainDirty(_In_ BOOLEAN Retain);
 
     /**
      * Copies a specified number of bytes into a buffer from the volume at a

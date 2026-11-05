@@ -69,6 +69,8 @@ NtfsLockVolumeForPnp(
         return Status;
 
     Status = NtfsFlushVolume(VolCB, TRUE);
+    if (NT_SUCCESS(Status))
+        NtfsMarkVolumeClean(VolCB);
     if (!NT_SUCCESS(Status))
         NtfsUnlockVolumeForPnp(VolumeDeviceObject, VolCB);
     return Status;

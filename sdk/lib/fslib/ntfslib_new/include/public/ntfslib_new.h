@@ -1133,6 +1133,26 @@ NtfsVolumeSetFlags(
     _In_ USHORT Set,
     _In_ USHORT Clear);
 
+/*
+ * Dirty tracking for a writer without a journal: once enabled, the volume is
+ * marked dirty (durably) before the first write after mount or after
+ * NtfsVolumeMarkClean, and NtfsVolumeMarkClean clears it after writing
+ * everything back. Callers hold the volume's metadata lock.
+ */
+NTSTATUS
+NtfsVolumeEnableDirtyTracking(
+    _In_ PNtfsVolume DiskVolume);
+
+NTSTATUS
+NtfsVolumeMarkClean(
+    _In_ PNtfsVolume DiskVolume);
+
+/* TRUE when the dirty flag on disk was set by tracking, not by a crash or a
+ * request: the volume is being written, it does not need a check. */
+BOOLEAN
+NtfsVolumeIsDirtyTransient(
+    _In_ PNtfsVolume DiskVolume);
+
 #ifdef __cplusplus
 }
 #endif

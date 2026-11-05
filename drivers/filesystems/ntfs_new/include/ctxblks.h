@@ -49,6 +49,9 @@ typedef struct _VolumeContextBlock
     TUNNEL Tunnel;
     ULONG BytesPerSector;
 
+    /* Entry in NtfsMountedVolumes, so shutdown can mark each volume clean. */
+    LIST_ENTRY MountedVolumeLink;
+
     /* Paths already known not to exist, most recently used first. */
     FAST_MUTEX MissingNameMutex;
     LIST_ENTRY MissingNameList;
@@ -569,6 +572,15 @@ NtfsReportFileChange(_In_ PVolumeContextBlock VolCB,
 NTSTATUS
 NtfsQueryLxMetadata(_In_ PFileContextBlock FileCB,
                     _Inout_ PFILE_STAT_LX_INFORMATION Stat);
+
+VOID
+NtfsRegisterMountedVolume(_In_ PVolumeContextBlock VolCB);
+
+NTSTATUS
+NtfsMarkVolumeClean(_In_ PVolumeContextBlock VolCB);
+
+NTSTATUS
+NtfsMarkMountedVolumesClean(VOID);
 
 static inline
 VOID

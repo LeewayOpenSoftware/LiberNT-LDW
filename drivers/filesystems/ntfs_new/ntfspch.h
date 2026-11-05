@@ -49,6 +49,8 @@ typedef enum _TYPE_OF_OPEN {
 
 extern PDEVICE_OBJECT NtfsDiskFileSystemDeviceObject;
 extern PDRIVER_OBJECT NtfsDriverObject;
+extern LIST_ENTRY NtfsMountedVolumes;
+extern ERESOURCE NtfsMountedVolumesResource;
 extern FAST_IO_DISPATCH FastIoDispatch;
 
 extern BOOLEAN gAllowExtChar8dot3;

@@ -73,6 +73,12 @@ Volume::SetVolumeLabel(_In_ PWSTR VolumeLabel,
     if (IsReadOnly)
         return STATUS_ACCESS_DENIED;
 
+    /* The dirty flag lives in this record: set it before reading the record,
+     * or the label write below would put back the copy without it. */
+    Status = MarkDirtyBeforeWrite();
+    if (!NT_SUCCESS(Status))
+        return Status;
+
     /* Allocate memory for $Volume file record, retrieve the file record, and
      * get a pointer to the $VOLUME_NAME attribute.
      */
@@ -160,6 +166,11 @@ Volume::SetVolumeFlags(_In_ USHORT Set,
     if (IsReadOnly)
         return STATUS_MEDIA_WRITE_PROTECTED;
 
+    /* As in SetVolumeLabel: settle the tracked flag before taking a copy. */
+    Status = MarkDirtyBeforeWrite();
+    if (!NT_SUCCESS(Status))
+        return Status;
+
     Status = MFT->GetFileAttributeFromFileRecordNumber(TypeVolumeInformation,
                                                        NULL,
                                                        _Volume,
@@ -192,4 +203,83 @@ Volume::SetVolumeFlags(_In_ USHORT Set,
 
     delete VolumeFile;
     return Status;
+}
+
+/*
+ * Without a journal, a crash can leave any subset of the cached metadata
+ * writes on the medium, so the volume must say "check me" before the first of
+ * them can land. The flag is made durable (FlushVolume reaches the medium)
+ * before the write that triggered it proceeds. Writes are serialized by the
+ * caller's metadata lock, so the flag cannot be overtaken by a second writer.
+ */
+NTSTATUS
+Volume::EnableDirtyTracking()
+{
+    NTSTATUS Status;
+    USHORT Flags;
+
+    if (IsReadOnly)
+        return STATUS_SUCCESS;
+
+    Status = QueryVolumeFlags(&Flags);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    /* Dirty already: an earlier crash or a chkdsk request. Keep it for chkdsk. */
+    DirtyRetained = (Flags & VOL_DIRTY) ? TRUE : FALSE;
+    DirtyMarked = DirtyRetained;
+    DirtyTracking = TRUE;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+Volume::MarkDirtyBeforeWrite()
+{
+    NTSTATUS Status;
+
+    if (!DirtyTracking || DirtyMarked || IsReadOnly)
+        return STATUS_SUCCESS;
+
+    /* Set first: the flag's own record write comes back through WriteVolume. */
+    DirtyMarked = TRUE;
+    Status = SetVolumeFlags(VOL_DIRTY, 0);
+    if (NT_SUCCESS(Status))
+        Status = FlushVolume();
+    if (!NT_SUCCESS(Status))
+        DirtyMarked = FALSE;
+    return Status;
+}
+
+NTSTATUS
+Volume::MarkClean()
+{
+    NTSTATUS Status;
+
+    if (!DirtyTracking || !DirtyMarked || DirtyRetained || IsReadOnly)
+        return STATUS_SUCCESS;
+
+    /* Everything else reaches the medium before the flag says it has. */
+    Status = FlushVolume();
+    if (NT_SUCCESS(Status))
+        Status = SetVolumeFlags(0, VOL_DIRTY);
+    if (NT_SUCCESS(Status))
+        Status = FlushVolume();
+    if (NT_SUCCESS(Status))
+        DirtyMarked = FALSE;
+    return Status;
+}
+
+BOOLEAN
+Volume::IsDirtyTransient()
+{
+    return (DirtyTracking && DirtyMarked && !DirtyRetained) ? TRUE : FALSE;
+}
+
+VOID
+Volume::RetainDirty(_In_ BOOLEAN Retain)
+{
+    if (!DirtyTracking)
+        return;
+    DirtyRetained = Retain;
+    DirtyMarked = Retain;
 }

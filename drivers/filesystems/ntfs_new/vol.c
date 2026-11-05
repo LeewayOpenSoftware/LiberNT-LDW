@@ -533,6 +533,18 @@ NtfsMountVolume(IN PDEVICE_OBJECT TargetDeviceObject,
                                       FSDeviceObject->Vpb->VolumeLabel,
                                       &FSDeviceObject->Vpb->VolumeLabelLength);
 
+    /*
+     * Nothing journals our own writes, so a crash must leave the volume
+     * dirty for autochk (and for Windows, if the disk moves there).
+     */
+    if (!NtfsVolumeIsReadOnly(DiskVolume))
+    {
+        Status = NtfsVolumeEnableDirtyTracking(DiskVolume);
+        if (!NT_SUCCESS(Status))
+            DPRINT1("Volume dirty tracking is off (Status %lx)\n", Status);
+    }
+    NtfsRegisterMountedVolume(VolCB);
+
     // Mount volume.
     FsRtlNotifyVolumeEvent(VolCB->StreamFileObject, FSRTL_VOLUME_MOUNT);
 

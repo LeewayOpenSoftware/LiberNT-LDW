@@ -32,6 +32,8 @@ NPAGED_LOOKASIDE_LIST IrpContextLookasideList;
 NPAGED_LOOKASIDE_LIST FcbLookasideList;
 NPAGED_LOOKASIDE_LIST AttrCtxtLookasideList;
 PDRIVER_OBJECT NtfsDriverObject;
+LIST_ENTRY NtfsMountedVolumes;
+ERESOURCE NtfsMountedVolumesResource;
 /* FUNCTIONS ****************************************************************/
 NTSTATUS
 NTAPI
@@ -42,6 +44,10 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
     UNICODE_STRING UnicodeString;
     NtfsDriverObject = DriverObject;
     UNREFERENCED_PARAMETER(RegistryPath);
+    InitializeListHead(&NtfsMountedVolumes);
+    Status = ExInitializeResourceLite(&NtfsMountedVolumesResource);
+    if (!NT_SUCCESS(Status))
+        return Status;
     RtlInitUnicodeString(&UnicodeString, L"\\Ntfs");
     Status = IoCreateDevice(DriverObject,
                             0,
@@ -210,6 +216,12 @@ NtfsFsdShutdown (_In_ PDEVICE_OBJECT VolumeDeviceObject,
                  _Inout_ PIRP Irp)
 {
     NTSTATUS Status = NtfsDiskFlushKm();
+    NTSTATUS CleanStatus;
+
+    /* Everything is written back: the volumes may stop saying "check me". */
+    CleanStatus = NtfsMarkMountedVolumesClean();
+    if (NT_SUCCESS(Status))
+        Status = CleanStatus;
 
     /* Overview:
      * Occurs when the system is being shutdown.
