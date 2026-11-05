@@ -29,6 +29,8 @@ typedef struct _LT1X_CONTEXT
     PHYSICAL_ADDRESS FrameBufferPhys;
     PVOID FrameBufferVa;
     SIZE_T FrameBufferSize;
+    PVOID DispiVa;
+    SIZE_T DispiSize;
     ULONG ModeWidth;
     ULONG ModeHeight;
     ULONG ModeBpp;
@@ -125,12 +127,41 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
     return STATUS_SUCCESS;
 }
 
+/* The bochs dispi registers are not in the framebuffer BAR: on the QEMU
+   std display they live in a separate MMIO BAR at +0x500 (16-bit registers
+   at index*2), reachable through I/O ports 0x1CE/0x1CF when no MMIO BAR
+   is mapped. */
+#define LT1X_DISPI_IOPORT_INDEX 0x01CE
+#define LT1X_DISPI_IOPORT_DATA  0x01CF
+#define LT1X_DISPI_MMIO_BASE    0x500
+
+static USHORT
+Lt1xDispiRead(_In_ PLT1X_CONTEXT Ctx, _In_ USHORT Index)
+{
+    if (Ctx->DispiVa != NULL)
+        return *(volatile USHORT *)((PUCHAR)Ctx->DispiVa + LT1X_DISPI_MMIO_BASE + (SIZE_T)Index * 2);
+    WRITE_PORT_USHORT((PUSHORT)LT1X_DISPI_IOPORT_INDEX, Index);
+    return READ_PORT_USHORT((PUSHORT)LT1X_DISPI_IOPORT_DATA);
+}
+
+static VOID
+Lt1xDispiWrite(_In_ PLT1X_CONTEXT Ctx, _In_ USHORT Index, _In_ USHORT Value)
+{
+    if (Ctx->DispiVa != NULL)
+    {
+        *(volatile USHORT *)((PUCHAR)Ctx->DispiVa + LT1X_DISPI_MMIO_BASE + (SIZE_T)Index * 2) = Value;
+        return;
+    }
+    WRITE_PORT_USHORT((PUSHORT)LT1X_DISPI_IOPORT_INDEX, Index);
+    WRITE_PORT_USHORT((PUSHORT)LT1X_DISPI_IOPORT_DATA, Value);
+}
+
 static
 VOID
 Lt1xProbeCurrentMode(_In_ PLT1X_CONTEXT Ctx)
 {
-    volatile USHORT *Dispi;
     ULONG Width, Height, Bpp, VirtWidth, Stride;
+    USHORT Id;
 
     Ctx->ModeWidth = 1024;
     Ctx->ModeHeight = 768;
@@ -138,17 +169,17 @@ Lt1xProbeCurrentMode(_In_ PLT1X_CONTEXT Ctx)
     Ctx->Stride = 1024 * 4;
     Ctx->DispiDetected = FALSE;
 
-    Dispi = (volatile USHORT *)((PUCHAR)Ctx->FrameBufferVa + 0x400);
-    if ((Dispi[0] & 0xFFF0) != 0xB0C0)
+    Id = Lt1xDispiRead(Ctx, 0);
+    if ((Id & 0xFFF0) != 0xB0C0)
     {
-        DbgPrint("LT1X: no dispi signature (0x%04X), defaulting to 1024x768x32\n", Dispi[0]);
+        DbgPrint("LT1X: no dispi signature (0x%04X), defaulting to 1024x768x32\n", Id);
         return;
     }
 
-    Width = Dispi[1];
-    Height = Dispi[2];
-    Bpp = Dispi[3];
-    VirtWidth = Dispi[6];
+    Width = Lt1xDispiRead(Ctx, 1);
+    Height = Lt1xDispiRead(Ctx, 2);
+    Bpp = Lt1xDispiRead(Ctx, 3);
+    VirtWidth = Lt1xDispiRead(Ctx, 6);
     if (Width < 640 || Width > 4096 || Height < 480 || Height > 4096 ||
         (Bpp != 16 && Bpp != 24 && Bpp != 32))
     {
@@ -454,6 +485,74 @@ Lt1xDdiStartDevice(
 
     DbgPrint("LT1X: framebuffer phys 0x%I64x va %p size %Iu\n",
              Ctx->FrameBufferPhys.QuadPart, Ctx->FrameBufferVa, Ctx->FrameBufferSize);
+
+    /* The dispi registers live in their own small MMIO BAR (BAR2 on the
+       QEMU std display), never in the framebuffer BAR.  Prefer the
+       translated resource list over a raw config read. */
+    {
+        PHYSICAL_ADDRESS Bar2Phys;
+        ULONG Bar2Size = 4 * 1024;
+        BOOLEAN Found = FALSE;
+
+        Bar2Phys.QuadPart = 0;
+        {
+            DXGK_DEVICE_INFO DeviceInfo;
+
+            RtlZeroMemory(&DeviceInfo, sizeof(DeviceInfo));
+            if (NT_SUCCESS(Ctx->DxgkInterface.DxgkCbGetDeviceInformation(Ctx->DeviceHandle, &DeviceInfo)) &&
+                DeviceInfo.TranslatedResourceList != NULL)
+            {
+                ULONG ListIndex;
+
+                for (ListIndex = 0; !Found && ListIndex < DeviceInfo.TranslatedResourceList->Count; ListIndex++)
+                {
+                    PCM_PARTIAL_RESOURCE_LIST PartialList =
+                        &DeviceInfo.TranslatedResourceList->List[ListIndex].PartialResourceList;
+                    ULONG ResIndex;
+
+                    for (ResIndex = 0; ResIndex < PartialList->Count; ResIndex++)
+                    {
+                        PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &PartialList->PartialDescriptors[ResIndex];
+
+                        if (Desc->Type != CmResourceTypeMemory)
+                            continue;
+                        if (Desc->u.Memory.Start.QuadPart == Ctx->FrameBufferPhys.QuadPart)
+                            continue;
+                        if (Desc->u.Memory.Length < 0x600)
+                            continue;
+                        Bar2Phys = Desc->u.Memory.Start;
+                        Bar2Size = Desc->u.Memory.Length;
+                        Found = TRUE;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!Found)
+        {
+            ULONG Bar2Low = 0;
+
+            if (NT_SUCCESS(Ctx->DxgkInterface.DxgkCbReadDeviceSpace(
+                    Ctx->DeviceHandle, DXGK_WHICHSPACE_CONFIG, &Bar2Low, 0x18, sizeof(Bar2Low), &BytesRead)) &&
+                BytesRead == sizeof(Bar2Low) && (Bar2Low & 0x1) == 0 && (Bar2Low & ~0xFUL) != 0)
+            {
+                Bar2Phys.QuadPart = (ULONGLONG)(Bar2Low & ~0xFUL);
+            }
+        }
+
+        if (Bar2Phys.QuadPart != 0)
+        {
+            Ctx->DispiVa = MmMapIoSpace(Bar2Phys, Bar2Size, MmNonCached);
+            if (Ctx->DispiVa != NULL)
+            {
+                Ctx->DispiSize = Bar2Size;
+                DbgPrint("LT1X: dispi BAR phys 0x%I64x va %p size %lu\n",
+                         Bar2Phys.QuadPart, Ctx->DispiVa, Bar2Size);
+            }
+        }
+    }
+
     Lt1xProbeCurrentMode(Ctx);
 
     *NumberOfVideoPresentSources = 1;
@@ -468,6 +567,12 @@ Lt1xDdiStopDevice(_In_ PVOID MiniportDeviceContext)
     PLT1X_CONTEXT Ctx = (PLT1X_CONTEXT)MiniportDeviceContext;
 
     DbgPrint("LT1X: DxgkDdiStopDevice ctx=%p\n", Ctx);
+    if (Ctx->DispiVa != NULL)
+    {
+        MmUnmapIoSpace(Ctx->DispiVa, Ctx->DispiSize);
+        Ctx->DispiVa = NULL;
+        Ctx->DispiSize = 0;
+    }
     if (Ctx->FrameBufferVa != NULL)
     {
         MmUnmapIoSpace(Ctx->FrameBufferVa, Ctx->FrameBufferSize);
@@ -1123,7 +1228,6 @@ Lt1xDdiSetVidPnSourceAddress(
     IN_CONST_PDXGKARG_SETVIDPNSOURCEADDRESS pSetVidPnSourceAddress)
 {
     PLT1X_CONTEXT Ctx = (PLT1X_CONTEXT)hAdapter;
-    volatile USHORT *Dispi;
     ULONGLONG Offset;
     ULONG XOffset, YOffset;
 
@@ -1146,9 +1250,8 @@ Lt1xDdiSetVidPnSourceAddress(
     if (XOffset > 4096 || YOffset > 4096)
         return STATUS_SUCCESS;
 
-    Dispi = (volatile USHORT *)((PUCHAR)Ctx->FrameBufferVa + 0x400);
-    Dispi[8] = (USHORT)XOffset;
-    Dispi[9] = (USHORT)YOffset;
+    Lt1xDispiWrite(Ctx, 8, (USHORT)XOffset);
+    Lt1xDispiWrite(Ctx, 9, (USHORT)YOffset);
     DbgPrint("LT1X: dispi display start x=%lu y=%lu\n", XOffset, YOffset);
     return STATUS_SUCCESS;
 }
