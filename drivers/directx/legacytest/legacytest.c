@@ -1418,6 +1418,11 @@ Lt1xDdiCreateContext(
     pCreateContext->hContext = Lt1xRecordCreate(Ctx);
     if (pCreateContext->hContext == NULL)
         return STATUS_INSUFFICIENT_RESOURCES;
+    pCreateContext->ContextInfo.DmaBufferSize = 64 * 1024;
+    pCreateContext->ContextInfo.DmaBufferSegmentSet = 0; /* system memory */
+    pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 0;
+    pCreateContext->ContextInfo.AllocationListSize = 8;
+    pCreateContext->ContextInfo.PatchLocationListSize = 8;
     return STATUS_SUCCESS;
 }
 
