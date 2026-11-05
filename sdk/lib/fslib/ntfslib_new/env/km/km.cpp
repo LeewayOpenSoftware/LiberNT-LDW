@@ -90,9 +90,11 @@ static NTSTATUS WriteDisk(_In_ PDEVICE_OBJECT DeviceObject, _In_ ULONGLONG Offse
 /*
  * Every metadata lookup otherwise costs a synchronous disk round trip, and
  * directory walks revisit the same index and MFT blocks constantly. A small
- * direct-mapped cache of fixed blocks removes the repeats. Writes go straight
- * to the disk and drop whatever they overlap, so the cache never holds data
- * the volume does not.
+ * direct-mapped cache of fixed blocks removes the repeats. It is write-back:
+ * a metadata write may stay dirty in its slot until the lazy worker, the
+ * dirty limit, a flush or volume teardown writes it out, and blocks go out in
+ * slot order rather than in the order they were modified. Nothing journals
+ * these writes, so a crash can leave any subset of them on the disk.
  */
 #define NTFS_CACHE_BLOCK_SHIFT 12
 #define NTFS_CACHE_BLOCK_SIZE  (1UL << NTFS_CACHE_BLOCK_SHIFT)
