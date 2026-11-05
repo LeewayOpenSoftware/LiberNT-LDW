@@ -578,6 +578,12 @@ NtfsCheckReport(
                              "exactly its allocated size.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckIndexEntryNotRemoved:
+            NtfsFormatReport(Check->Callback,
+                             "Could not delete the index entry for file 0x%I64x from index $I30 of file %I64X; "
+                             "the record it names is kept in use.\n",
+                             Argument2, Argument1);
+            break;
     }
 }
 

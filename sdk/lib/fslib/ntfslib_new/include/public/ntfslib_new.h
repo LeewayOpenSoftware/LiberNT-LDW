@@ -1095,7 +1095,8 @@ typedef enum NtfsCheckEvent
     NtfsCheckRecordBeyondMft,
     NtfsCheckRecordBeyondMftInUse,
     NtfsCheckAttributeSizeInvalid,
-    NtfsCheckAttributeMappingMismatch
+    NtfsCheckAttributeMappingMismatch,
+    NtfsCheckIndexEntryNotRemoved
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
