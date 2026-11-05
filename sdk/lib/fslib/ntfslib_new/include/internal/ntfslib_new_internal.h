@@ -907,6 +907,11 @@ public:
         _Out_ PULONG DroppedNames,
         _Out_ PBOOLEAN DroppedUnnamedData);
 
+    NTSTATUS
+    DropUnneededAttributeList(
+        _In_ BOOLEAN Commit,
+        _Out_ PBOOLEAN Unneeded);
+
     NTSTATUS ReadSecurityDescriptor(
         _In_opt_ PUCHAR Buffer,
         _Inout_ PULONG BufferLength);

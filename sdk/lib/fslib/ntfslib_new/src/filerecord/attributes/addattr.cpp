@@ -1484,6 +1484,61 @@ FileRecord::FilterAttributeList(
     return Status;
 }
 
+/*
+ * A file needs an attribute list only while some of its attributes live in
+ * extension records. A list whose entries all name the base record is
+ * vestigial, and Windows treats a record carrying one as corrupt. With Commit
+ * set, the list attribute is removed and the base record written. The
+ * clusters of a non-resident list stay allocated until the caller releases
+ * them after that write; the volume check frees them as lost clusters.
+ */
+NTSTATUS
+FileRecord::DropUnneededAttributeList(
+    _In_ BOOLEAN Commit,
+    _Out_ PBOOLEAN Unneeded)
+{
+    PAttribute ListAttribute;
+    ULONG Offset = 0;
+    NTSTATUS Status;
+
+    *Unneeded = FALSE;
+
+    if (!FindAttributeInRecord(TypeAttributeList, NULL, NULL))
+        return STATUS_SUCCESS;
+
+    Status = LoadAttributeList();
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    while (AttributeListData && Offset < AttributeListLength)
+    {
+        PAttributeListEx Entry = reinterpret_cast<PAttributeListEx>(AttributeListData + Offset);
+
+        if (!IsWritableAttributeListEntryValid(Entry, AttributeListLength - Offset))
+            return STATUS_FILE_CORRUPT_ERROR;
+        if (GetFRNFromFileRef(Entry->BaseFileRef) != RecordNumber)
+            return STATUS_SUCCESS;
+        Offset += Entry->RecordLength;
+    }
+
+    *Unneeded = TRUE;
+    if (!Commit)
+        return STATUS_SUCCESS;
+
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_FILE_CORRUPT_ERROR;
+    Status = RemoveAttributeRecord(ListAttribute);
+    delete[] AttributeListData;
+    AttributeListData = NULL;
+    AttributeListLength = 0;
+    ClearExtentCache();
+    ClearDataRunCache();
+    if (!NT_SUCCESS(Status))
+        return Status;
+    return DiskVolume->MFT->WriteFileRecordToMFT(this);
+}
+
 NTSTATUS
 FileRecord::ReplaceAttributeList(
     _In_reads_bytes_(NewLength) PUCHAR NewList,
