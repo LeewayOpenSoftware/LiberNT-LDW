@@ -1090,7 +1090,8 @@ typedef enum NtfsCheckEvent
     NtfsCheckRecordBeyondMftInUse,
     NtfsCheckAttributeSizeInvalid,
     NtfsCheckAttributeMappingMismatch,
-    NtfsCheckIndexEntryNotRemoved
+    NtfsCheckIndexEntryNotRemoved,
+    NtfsCheckClusterRangeNotRepaired    /* Arg1 = first LCN, Arg2 = (NTSTATUS << 32) | cluster count */
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult

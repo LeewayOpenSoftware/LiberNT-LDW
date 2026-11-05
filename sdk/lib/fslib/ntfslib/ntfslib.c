@@ -583,6 +583,12 @@ NtfsCheckReport(
                              "the record it names is kept in use.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckClusterRangeNotRepaired:
+            NtfsFormatReport(Check->Callback,
+                             "Could not correct the volume bitmap for %lu clusters at %I64X as one range "
+                             "(status 0x%08lx).\n",
+                             (ULONG)Argument2, Argument1, (ULONG)(Argument2 >> 32));
+            break;
     }
 }
 

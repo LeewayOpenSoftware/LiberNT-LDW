@@ -11,6 +11,7 @@
 #define CHECK_RECORD_CHUNK      64
 #define CHECK_BITMAP_CHUNK      0x10000
 #define CHECK_FIRST_USER_RECORD 24
+#define CHECK_RETRY_CLUSTERS    0x10000
 
 namespace
 {
@@ -191,7 +192,7 @@ private:
             Kind != NtfsCheckLostAndFound && Kind != NtfsCheckFileRecovered &&
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
             Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved &&
-            Kind != NtfsCheckIndexEntryNotRemoved)
+            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckClusterRangeNotRepaired)
         {
             Out->Errors++;
         }
@@ -233,7 +234,8 @@ private:
 
     static BOOLEAN AddRange(_Inout_ RangeList* List, _In_ ULONGLONG Lcn);
     NTSTATUS CheckBitmap(_In_ BOOLEAN Repair);
-    NTSTATUS RepairRange(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count);
+    NTSTATUS RepairRange(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count, _In_ BOOLEAN Account);
+    BOOLEAN RepairRangeOrReport(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count);
     BOOLEAN RecordHasName(_In_ ULONGLONG Ordinal, _In_ const FileNameEx* Key, _In_ ULONG KeyLength);
     NTSTATUS WriteStreamRange(_In_ PDataRun Runs, _In_ ULONGLONG Offset, _In_ ULONG Length, _In_ PUCHAR Data);
     BOOLEAN RememberDangling(_In_ ULONGLONG Directory, _In_ ULONGLONG Target, _In_ const FileNameEx* Key);
@@ -1424,7 +1426,7 @@ VolumeCheck::RecoverLostFiles()
 }
 
 NTSTATUS
-VolumeCheck::RepairRange(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count)
+VolumeCheck::RepairRange(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count, _In_ BOOLEAN Account)
 {
     DataRun Run;
     NTSTATUS Status;
@@ -1434,7 +1436,7 @@ VolumeCheck::RepairRange(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG 
     Run.Length = Count;
     Run.IsSparse = FALSE;
     Status = Claim ? V->ClaimClusters(&Run) : V->ReleaseClusters(&Run);
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status) && Account)
     {
         if (Claim)
         {
@@ -1526,17 +1528,70 @@ VolumeCheck::CheckBitmap(_In_ BOOLEAN Repair)
         if (Out->LostClusters)
             Event(NtfsCheckLostClusters, Out->LostClusters, Lost.Count);
 
-        for (ULONG Index = 0; Fix && NT_SUCCESS(Status) && Index < Missing.Count; Index++)
-            Status = RepairRange(TRUE, Missing.Ranges[Index].Lcn, Missing.Ranges[Index].Length);
-        for (ULONG Index = 0; Fix && NT_SUCCESS(Status) && Index < Lost.Count; Index++)
-            Status = RepairRange(FALSE, Lost.Ranges[Index].Lcn, Lost.Ranges[Index].Length);
-        if (Fix && NT_SUCCESS(Status))
-            Out->Errors -= Missing.Count + (Out->LostClusters ? 1 : 0);
+        /*
+         * Each range is repaired on its own: a range that fails is reported
+         * with its status and the rest still run, so one bad range cannot
+         * silently stop the repair (and everything that runs after it).
+         */
+        if (Fix)
+        {
+            ULONG MissingFixed = 0;
+            BOOLEAN LostFixed = TRUE;
+
+            for (ULONG Index = 0; Index < Missing.Count; Index++)
+            {
+                if (RepairRangeOrReport(TRUE, Missing.Ranges[Index].Lcn, Missing.Ranges[Index].Length))
+                    MissingFixed++;
+            }
+            for (ULONG Index = 0; Index < Lost.Count; Index++)
+            {
+                if (!RepairRangeOrReport(FALSE, Lost.Ranges[Index].Lcn, Lost.Ranges[Index].Length))
+                    LostFixed = FALSE;
+            }
+            Out->Errors -= MissingFixed + (Out->LostClusters && LostFixed ? 1 : 0);
+        }
     }
 
     delete[] Lost.Ranges;
     delete[] Missing.Ranges;
     return Status;
+}
+
+/*
+ * Repairs one range. If the volume bitmap refuses the whole range (for
+ * example because part of it is already in the wanted state, which
+ * SetClusterRunBits treats as corruption), the failure is reported and a
+ * range of reasonable size is retried one cluster at a time, so every
+ * cluster that can be fixed is. TRUE when the whole range was fixed.
+ */
+BOOLEAN
+VolumeCheck::RepairRangeOrReport(_In_ BOOLEAN Claim, _In_ ULONGLONG Lcn, _In_ ULONGLONG Count)
+{
+    NTSTATUS Status = RepairRange(Claim, Lcn, Count, TRUE);
+    ULONGLONG Done = 0;
+
+    if (NT_SUCCESS(Status))
+        return TRUE;
+
+    Event(NtfsCheckClusterRangeNotRepaired, Lcn,
+          ((ULONGLONG)(ULONG)Status << 32) | (ULONG)min(Count, (ULONGLONG)MAXULONG));
+    if (Count > 1 && Count <= CHECK_RETRY_CLUSTERS)
+    {
+        for (ULONGLONG Cluster = Lcn; Cluster < Lcn + Count; Cluster++)
+        {
+            if (NT_SUCCESS(RepairRange(Claim, Cluster, 1, FALSE)))
+                Done++;
+        }
+        if (Done)
+        {
+            if (Claim)
+                Out->ClaimedClusters += Done;
+            else
+                Out->FreedClusters += Done;
+            Event(Claim ? NtfsCheckUsedClustersClaimed : NtfsCheckLostClustersFreed, Lcn, Done);
+        }
+    }
+    return FALSE;
 }
 
 BOOLEAN
