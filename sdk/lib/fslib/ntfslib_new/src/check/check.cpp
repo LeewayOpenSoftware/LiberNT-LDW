@@ -192,7 +192,8 @@ private:
             Kind != NtfsCheckLostAndFound && Kind != NtfsCheckFileRecovered &&
             Kind != NtfsCheckAttributeListFixed && Kind != NtfsCheckDataAttributeInserted &&
             Kind != NtfsCheckLostNameRemoved && Kind != NtfsCheckAttributeListRemoved &&
-            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckClusterRangeNotRepaired)
+            Kind != NtfsCheckIndexEntryNotRemoved && Kind != NtfsCheckClusterRangeNotRepaired &&
+            Kind != NtfsCheckBitmapRepairDeferred)
         {
             Out->Errors++;
         }
@@ -865,9 +866,21 @@ VolumeCheck::RepairRecordsPass()
         ULONGLONG DiskOffset;
         BOOLEAN Freed = TRUE;
 
-        if (!RepairIndexes || IsStillReferenced(Number))
+        if (!RepairIndexes)
         {
             StructuralErrors += Corrupt[Index].Faults;
+            continue;
+        }
+        if (IsStillReferenced(Number))
+        {
+            /*
+             * Kept in use while an index entry still names it. A zeroed
+             * record has no attributes, so its clusters can never be
+             * known: it must not keep the volume bitmap from being
+             * corrected. A readable one still might, so it keeps blocking.
+             */
+            if (Corrupt[Index].Readable)
+                StructuralErrors += Corrupt[Index].Faults;
             continue;
         }
         if (Corrupt[Index].Readable)
@@ -1009,10 +1022,7 @@ VolumeCheck::RelinkOrphans()
                 Failed = TRUE;
                 continue;
             }
-            /* Stopgap (CV2): no B+ tree insert into a directory with an
-             * attribute list from /f yet; see RemoveDangling. */
-            if (TestBit(AttrListMap, Parent) ||
-                !NT_SUCCESS(V->MFT->GetFileRecord((ULONG)Parent, &ParentFile)))
+            if (!NT_SUCCESS(V->MFT->GetFileRecord((ULONG)Parent, &ParentFile)))
             {
                 Failed = TRUE;
                 OtherFailures = TRUE;
@@ -1529,6 +1539,9 @@ VolumeCheck::CheckBitmap(_In_ BOOLEAN Repair)
     {
         BOOLEAN Fix = Repair && StructuralErrors == 0 && !V->IsReadOnly;
 
+        if (Repair && !V->IsReadOnly && !Fix && (Missing.Count || Lost.Count))
+            Event(NtfsCheckBitmapRepairDeferred, StructuralErrors, Missing.Count + Lost.Count);
+
         for (ULONG Index = 0; Index < Missing.Count; Index++)
             Event(NtfsCheckUsedClustersFree, Missing.Ranges[Index].Lcn, Missing.Ranges[Index].Length);
         if (Out->LostClusters)
@@ -1865,19 +1878,6 @@ VolumeCheck::RemoveDangling()
 
         if (Entry->Removed)
             continue;
-        /*
-         * Stopgap (CV2): a B+ tree edit of a directory whose attributes
-         * span extension records (it has an attribute list) is not trusted
-         * in /f yet. Its entry is reported and the record it names stays
-         * in use. Leaf entries in its index blocks were already cut in
-         * place, which writes nothing but the block.
-         */
-        if (Entry->Directory < RecordCount && TestBit(AttrListMap, Entry->Directory))
-        {
-            DanglingFailures++;
-            Event(NtfsCheckIndexEntryNotRemoved, Entry->Directory, Entry->Target);
-            continue;
-        }
         Attempted++;
         Status = V->MFT->GetFileRecord((ULONG)Entry->Directory, &File);
         if (!NT_SUCCESS(Status))

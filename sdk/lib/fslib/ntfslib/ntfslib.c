@@ -403,7 +403,43 @@ typedef struct _NTFS_CHECK_CONTEXT
     PFMIFSCALLBACK Callback;
     BOOLEAN Verbose;
     ULONG Reported;
+    ULONG Suppressed;
 } NTFS_CHECK_CONTEXT, *PNTFS_CHECK_CONTEXT;
+
+/*
+ * What /f did, and what it could not do, is always printed. Only the
+ * detection messages are capped when the output is not verbose.
+ */
+static
+BOOLEAN
+NtfsIsRepairOutcome(
+    IN NtfsCheckEvent Event)
+{
+    switch (Event)
+    {
+        case NtfsCheckLostClusters:
+        case NtfsCheckLostClustersFreed:
+        case NtfsCheckUsedClustersClaimed:
+        case NtfsCheckIndexEntryFixed:
+        case NtfsCheckIndexEntryRemoved:
+        case NtfsCheckRecordFreed:
+        case NtfsCheckRecordBitmapFixed:
+        case NtfsCheckNameRelinked:
+        case NtfsCheckCrossLinkResolved:
+        case NtfsCheckLostAndFound:
+        case NtfsCheckFileRecovered:
+        case NtfsCheckAttributeListFixed:
+        case NtfsCheckDataAttributeInserted:
+        case NtfsCheckLostNameRemoved:
+        case NtfsCheckAttributeListRemoved:
+        case NtfsCheckIndexEntryNotRemoved:
+        case NtfsCheckClusterRangeNotRepaired:
+        case NtfsCheckBitmapRepairDeferred:
+            return TRUE;
+        default:
+            return FALSE;
+    }
+}
 
 static
 VOID
@@ -415,9 +451,13 @@ NtfsCheckReport(
 {
     PNTFS_CHECK_CONTEXT Check = (PNTFS_CHECK_CONTEXT)Context;
 
-    if (Event != NtfsCheckLostClusters && !Check->Verbose && Check->Reported >= 32)
+    if (!NtfsIsRepairOutcome(Event) && !Check->Verbose && Check->Reported >= 32)
+    {
+        Check->Suppressed++;
         return;
-    Check->Reported++;
+    }
+    if (!NtfsIsRepairOutcome(Event))
+        Check->Reported++;
 
     switch (Event)
     {
@@ -583,6 +623,12 @@ NtfsCheckReport(
                              "the record it names is kept in use.\n",
                              Argument2, Argument1);
             break;
+        case NtfsCheckBitmapRepairDeferred:
+            NtfsFormatReport(Check->Callback,
+                             "The volume bitmap was not corrected (%I64u cluster range(s)) because %I64u other "
+                             "problem(s) remain that make the cluster use uncertain.\n",
+                             Argument2, Argument1);
+            break;
         case NtfsCheckClusterRangeNotRepaired:
             NtfsFormatReport(Check->Callback,
                              "Could not correct the volume bitmap for %lu clusters at %I64X as one range "
@@ -725,6 +771,12 @@ NtfsChkdsk(
         return FALSE;
     }
 
+    if (Check.Suppressed)
+    {
+        NtfsFormatReport(Callback,
+                         "%lu more problem report(s) were not listed; run the check verbose to list them all.\n",
+                         Check.Suppressed);
+    }
     NtfsFormatReport(Callback, "%I64u file records processed.\n", Result.FileRecords);
     NtfsFormatReport(Callback, "%I64u index entries processed in %I64u directories.\n",
                      Result.IndexEntries, Result.Directories);
