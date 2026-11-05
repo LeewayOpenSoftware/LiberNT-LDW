@@ -1112,6 +1112,7 @@ typedef struct NtfsCheckResult
     UINT64 RepairedAttributeLists;
     UINT64 RemovedNames;
     UINT64 Errors;
+    UINT64 FixedMftBitmapBits;
 } NtfsCheckResult, *PNtfsCheckResult;
 
 typedef void (*PNtfsCheckCallback)(

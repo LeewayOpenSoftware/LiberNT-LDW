@@ -735,7 +735,7 @@ NtfsChkdsk(
     Repaired = Result.FreedClusters || Result.ClaimedClusters || Result.FixedIndexEntries ||
                Result.RemovedIndexEntries || Result.RelinkedNames || Result.FreedRecords ||
                Result.ResolvedCrossLinks || Result.RecoveredFiles || Result.RepairedAttributeLists ||
-               Result.RemovedNames;
+               Result.RemovedNames || Result.FixedMftBitmapBits;
     if (Result.Errors)
     {
         NtfsFormatReport(Callback,

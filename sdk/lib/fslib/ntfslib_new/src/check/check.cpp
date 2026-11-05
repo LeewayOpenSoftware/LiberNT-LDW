@@ -931,6 +931,7 @@ VolumeCheck::CommitMftBitmap(_In_ BOOLEAN IndexesRepaired)
         return;
 
     Out->Errors -= MftBitmapFixes;
+    Out->FixedMftBitmapBits += MftBitmapFixes + BeyondFixes;
     if (BeyondFixes)
         Out->Errors -= BeyondRanges;
     if (MftBitmapFixes + BeyondFixes)
@@ -2185,6 +2186,7 @@ NtfsVolumeCheck(
         Pass.RecoveredFiles += Result->RecoveredFiles;
         Pass.RepairedAttributeLists += Result->RepairedAttributeLists;
         Pass.RemovedNames += Result->RemovedNames;
+        Pass.FixedMftBitmapBits += Result->FixedMftBitmapBits;
         *Result = Pass;
     }
     return Status;
