@@ -323,10 +323,13 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
  * rename or link over it, MOVE_FILE) takes it exclusive, so the extent
  * stays this stream's until the write completes.
  *
- * The write times are left to the user writes that dirtied the pages, as
- * on Windows. A stream written this way is stamped once at its next
- * cleanup, so a file changed only through a mapped view still gets a new
- * write time.
+ * The same switch makes every paging write, locked or not, leave the write
+ * times to the application, as on Windows: a paging write is the cache or
+ * the mapped page writer moving data that a user write (stamped by that
+ * write and at its handle's cleanup) or a mapped view already changed. A
+ * stream with a user-writable mapped view is the exception: Mm cannot say
+ * which pages a view dirtied, so its paging writes stamp the times under
+ * the lock, as the change happened through the view.
  */
 volatile LONG NtfsPagingWriteCounts[NtfsPagingWriteCountMax];
 
@@ -335,6 +338,17 @@ VOID
 NtfsCountPagingWrite(_In_ NTFS_PAGING_WRITE_COUNT Which)
 {
     InterlockedIncrement(&NtfsPagingWriteCounts[Which]);
+}
+
+/* Whether a paging write stamps the last-write and change times. */
+static
+BOOLEAN
+NtfsPagingWriteStampsTimes(_In_ PFileContextBlock FileCB)
+{
+    if (!gPagingWriteOutsideLock)
+        return TRUE;
+    return FileCB->StreamCB &&
+           MmDoesFileHaveUserWritableReferences(&FileCB->StreamCB->SectionObjectPointers) != 0;
 }
 
 static
@@ -505,10 +519,7 @@ NtfsFinishDirectPagingWrite(
     }
 
     if (NT_SUCCESS(Status))
-    {
-        InterlockedExchange(&FileCB->StreamCB->PagingWriteUnstamped, 1);
         NtfsCountPagingWrite(NtfsPagingWriteDirect);
-    }
     else
     {
         NtfsCountPagingWrite(NtfsPagingWriteDirectFailed);
@@ -698,6 +709,15 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                      Length,
                                      &DirectDiskOffset))
         {
+            /* A record update in the block cache, not a disk transfer. */
+            if (NtfsPagingWriteStampsTimes(FileCB) &&
+                NT_SUCCESS(NtfsFileRecordUpdateAutomaticTimestamps(
+                    FileRec,
+                    NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME)))
+            {
+                InterlockedIncrement(&VolCB->DirGeneration);
+                NtfsCountPagingWrite(NtfsPagingWriteMappedStamp);
+            }
             NtfsReleaseMetadata(VolCB);
             Status = NtfsFinishDirectPagingWrite(VolCB,
                                                  FileCB,
@@ -773,7 +793,26 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
     else
     {
+        BOOLEAN TimesSuppressed = FALSE;
+
         Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+        if (NT_SUCCESS(Status) && PagingIo && gPagingWriteOutsideLock)
+        {
+            /* Only for this call: the refresh above sets the handle's own
+             * mask again before any other use of the record. */
+            if (!NtfsPagingWriteStampsTimes(FileCB))
+            {
+                Status = NtfsFileRecordSetAutomaticTimestampMask(
+                    FileRec,
+                    FileCB->AutomaticTimestampMask &
+                        ~(NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME));
+                TimesSuppressed = NT_SUCCESS(Status);
+            }
+            else
+            {
+                NtfsCountPagingWrite(NtfsPagingWriteMappedStamp);
+            }
+        }
         if (NT_SUCCESS(Status))
             Status = NtfsFileRecordWriteFileData(FileRec,
                                                  RequestedType,
@@ -781,6 +820,8 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                                  Buffer,
                                                  &Length,
                                                  &ByteOffset);
+        if (TimesSuppressed)
+            (void)NtfsFileRecordSetAutomaticTimestampMask(FileRec, FileCB->AutomaticTimestampMask);
 
         /* The library updates duplicated $FILE_NAME information through a
          * separate parent record. Invalidate parsed directory snapshots
@@ -812,9 +853,17 @@ Written:
             NtfsRefreshFileSizes(VolCB, FileCB, FileObj);
         if (!PagingIo && Length != 0 && RequestedType == TypeData)
             NtfsPurgeStreamCache(FileCB, FileObj, &ByteOffset, Length);
-        FileObj->Flags |=
-            FO_FILE_MODIFIED |
-            FO_FILE_SIZE_CHANGED;
+        /* A paging write is not a modification by the file object's owner
+         * (it may be any handle's file object backing the cache). */
+        if (!PagingIo || !gPagingWriteOutsideLock)
+        {
+            FileObj->Flags |=
+                FO_FILE_MODIFIED |
+                FO_FILE_SIZE_CHANGED;
+        }
+        /* The library stamped this write; the handle's cleanup stamps again. */
+        if (!PagingIo && Length != 0 && gPagingWriteOutsideLock)
+            FileCB->WriteTimesStamped = TRUE;
         if (!PagingIo)
             FileCB->NotifyFilter |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
 

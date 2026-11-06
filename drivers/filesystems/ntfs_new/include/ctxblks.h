@@ -337,8 +337,6 @@ typedef struct _SCB
     BOOLEAN DeletePending;
     BOOLEAN Unlinked;
     LONG UncleanCount;
-    /* A paging write went to the disk without stamping the write times. */
-    LONG PagingWriteUnstamped;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -633,6 +631,7 @@ typedef enum _NTFS_PAGING_WRITE_COUNT
     NtfsPagingWritePastInitialized,
     NtfsPagingWriteNoExtent,
     NtfsPagingWriteSplit,
+    NtfsPagingWriteMappedStamp,     /* write times stamped: user-writable view */
     NtfsPagingWriteCountMax
 } NTFS_PAGING_WRITE_COUNT;
 

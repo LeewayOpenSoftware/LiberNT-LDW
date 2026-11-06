@@ -950,16 +950,20 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         }
 
         /*
-         * Paging writes sent outside the metadata lock do not stamp the
-         * write times (write.c, NtfsPagingWriteOutsideLock), so the times
-         * follow the user writes: stamp them when a handle that wrote is
-         * cleaned up, and once for a stream changed only through a mapped
-         * view.
+         * With NtfsPagingWriteOutsideLock set, paging writes (lazy writer,
+         * CcFlushCache, mapped page writer) never stamp the write times
+         * (write.c), so the times follow the application, as on Windows:
+         * a handle that wrote data is stamped when it is cleaned up, and so
+         * is a write handle of a stream with a user-writable mapped view (a
+         * reader, such as a time query, never stamps). A time the handle
+         * set itself (or froze with -1) is outside its automatic mask, so
+         * this stamp leaves it alone.
          */
-        if (FirstCleanup && FileCB->StreamCB &&
-            (InterlockedExchange(&FileCB->StreamCB->PagingWriteUnstamped, 0) != 0 ||
-             (gPagingWriteOutsideLock && FileCB->WriteTimesStamped &&
-              BooleanFlagOn(IrpSp->FileObject->Flags, FO_FILE_MODIFIED))) &&
+        if (FirstCleanup && FileCB->StreamCB && gPagingWriteOutsideLock &&
+            ((FileCB->WriteTimesStamped &&
+              BooleanFlagOn(IrpSp->FileObject->Flags, FO_FILE_MODIFIED)) ||
+             ((FileCB->DesiredAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)) &&
+              MmDoesFileHaveUserWritableReferences(&FileCB->StreamCB->SectionObjectPointers) != 0)) &&
             !FileCB->StreamCB->Deleted &&
             !FileCB->DeletePending && !(FileCB->CreateOptions & FILE_DELETE_ON_CLOSE) &&
             VolCB->DiskVolume && !NtfsVolumeIsReadOnly(VolCB->DiskVolume))
@@ -1229,14 +1233,15 @@ NtfsLockStatsMaybeReport(VOID)
     if (gPagingWriteOutsideLock)
     {
         DbgPrint("NTFSLOCK paging writes: outside-lock=%ld failed=%ld locked: unaligned=%ld "
-                 "not-eligible=%ld past-initialized=%ld no-extent=%ld split=%ld\n",
+                 "not-eligible=%ld past-initialized=%ld no-extent=%ld split=%ld mapped-stamp=%ld\n",
                  NtfsPagingWriteCounts[NtfsPagingWriteDirect],
                  NtfsPagingWriteCounts[NtfsPagingWriteDirectFailed],
                  NtfsPagingWriteCounts[NtfsPagingWriteUnaligned],
                  NtfsPagingWriteCounts[NtfsPagingWriteNotEligible],
                  NtfsPagingWriteCounts[NtfsPagingWritePastInitialized],
                  NtfsPagingWriteCounts[NtfsPagingWriteNoExtent],
-                 NtfsPagingWriteCounts[NtfsPagingWriteSplit]);
+                 NtfsPagingWriteCounts[NtfsPagingWriteSplit],
+                 NtfsPagingWriteCounts[NtfsPagingWriteMappedStamp]);
     }
 }
 
