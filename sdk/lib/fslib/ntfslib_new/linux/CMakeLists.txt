@@ -645,6 +645,15 @@ if(BUILD_TESTING AND NTFSLIB_BUILD_FUSE)
        NTFSCP_EXECUTABLE AND
        NTFSCAT_EXECUTABLE)
         add_test(
+            NAME ntfslib_linux_check_crosslink
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_crosslink_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+                "${NTFSCP_EXECUTABLE}"
+                "${NTFSCAT_EXECUTABLE}"
+        )
+        add_test(
             NAME ntfslib_linux_startup_repair
             COMMAND /bin/sh
                 "${CMAKE_CURRENT_LIST_DIR}/tests/startup_repair_smoke.sh"
