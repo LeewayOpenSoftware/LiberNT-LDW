@@ -96,6 +96,8 @@ list(APPEND SOURCE
     NtLoadUnloadKey.c
     NtMapViewOfSection.c
     NtMapViewOfSection_ImageZeroBits.c
+    NtKeDispatcherTransitions.c
+    NtKeHandoff.c
     NtMutant.c
     NtNotifyChangeMultipleKeys.c
     NtOpenKey.c
