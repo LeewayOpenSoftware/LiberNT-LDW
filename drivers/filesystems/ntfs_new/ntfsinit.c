@@ -949,42 +949,6 @@ NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             KeLeaveCriticalRegion();
         }
 
-        /*
-         * With NtfsPagingWriteOutsideLock set, paging writes (lazy writer,
-         * CcFlushCache, mapped page writer) never stamp the write times
-         * (write.c), so the times follow the application, as on Windows:
-         * a handle that wrote data is stamped when it is cleaned up, and so
-         * is a write handle of a stream with a user-writable mapped view (a
-         * reader, such as a time query, never stamps). A time the handle
-         * set itself (or froze with -1) is outside its automatic mask, so
-         * this stamp leaves it alone.
-         */
-        if (FirstCleanup && FileCB->StreamCB && gPagingWriteOutsideLock &&
-            ((FileCB->WriteTimesStamped &&
-              BooleanFlagOn(IrpSp->FileObject->Flags, FO_FILE_MODIFIED)) ||
-             ((FileCB->DesiredAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)) &&
-              MmDoesFileHaveUserWritableReferences(&FileCB->StreamCB->SectionObjectPointers) != 0)) &&
-            !FileCB->StreamCB->Deleted &&
-            !FileCB->DeletePending && !(FileCB->CreateOptions & FILE_DELETE_ON_CLOSE) &&
-            VolCB->DiskVolume && !NtfsVolumeIsReadOnly(VolCB->DiskVolume))
-        {
-            NTSTATUS StampStatus;
-
-            KeEnterCriticalRegion();
-            ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
-            NtfsAcquireMetadata(VolCB);
-            StampStatus = NtfsRefreshDirectoryRecord(VolCB, FileCB);
-            if (NT_SUCCESS(StampStatus))
-                StampStatus = NtfsFileRecordUpdateAutomaticTimestamps(
-                    FileCB->FileRec,
-                    NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME);
-            if (NT_SUCCESS(StampStatus))
-                InterlockedIncrement(&VolCB->DirGeneration);
-            NtfsReleaseMetadata(VolCB);
-            ExReleaseResourceLite(NtfsGetMainResource(FileCB));
-            KeLeaveCriticalRegion();
-        }
-
         /* The handle is going away, so a requested delete happens now. */
         if (FirstCleanup &&
             (DeleteLink || (FileCB->StreamCB
@@ -1240,8 +1204,7 @@ NtfsLockStatsMaybeReport(VOID)
                  NtfsPagingWriteCounts[NtfsPagingWriteNotEligible],
                  NtfsPagingWriteCounts[NtfsPagingWritePastInitialized],
                  NtfsPagingWriteCounts[NtfsPagingWriteNoExtent],
-                 NtfsPagingWriteCounts[NtfsPagingWriteSplit],
-                 NtfsPagingWriteCounts[NtfsPagingWriteMappedStamp]);
+                 NtfsPagingWriteCounts[NtfsPagingWriteSplit]);
     }
 }
 

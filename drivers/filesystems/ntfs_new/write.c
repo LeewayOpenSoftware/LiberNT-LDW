@@ -290,6 +290,25 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
 
     ExReleaseResourceLite(NtfsGetMainResource(FileCB));
 
+    /*
+     * Write times. Default: the first cached write of a handle stamps them
+     * and the lazy writer's paging writes stamp them again. With
+     * NtfsPagingWriteOutsideLock, paging writes never stamp, so every
+     * cached write does, as on Windows (W0, job28: LastWriteTime moves on
+     * each write and not at close), at most once per system time tick per
+     * stream: a write within the same tick would store the same time.
+     */
+    if (Handled && NT_SUCCESS(*Status) && gPagingWriteOutsideLock && FileCB->StreamCB)
+    {
+        LARGE_INTEGER Now;
+
+        KeQuerySystemTime(&Now);
+        if (Now.QuadPart != FileCB->StreamCB->LastWriteStampTime)
+        {
+            FileCB->StreamCB->LastWriteStampTime = Now.QuadPart;
+            FileCB->WriteTimesStamped = FALSE;
+        }
+    }
     if (Handled && NT_SUCCESS(*Status) && !FileCB->WriteTimesStamped)
     {
         FileCB->WriteTimesStamped = TRUE;
@@ -348,17 +367,6 @@ VOID
 NtfsCountPagingWrite(_In_ NTFS_PAGING_WRITE_COUNT Which)
 {
     InterlockedIncrement(&NtfsPagingWriteCounts[Which]);
-}
-
-/* Whether a paging write stamps the last-write and change times. */
-static
-BOOLEAN
-NtfsPagingWriteStampsTimes(_In_ PFileContextBlock FileCB)
-{
-    if (!gPagingWriteOutsideLock)
-        return TRUE;
-    return FileCB->StreamCB &&
-           MmDoesFileHaveUserWritableReferences(&FileCB->StreamCB->SectionObjectPointers) != 0;
 }
 
 static
@@ -721,15 +729,6 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                      Length,
                                      &DirectDiskOffset))
         {
-            /* A record update in the block cache, not a disk transfer. */
-            if (NtfsPagingWriteStampsTimes(FileCB) &&
-                NT_SUCCESS(NtfsFileRecordUpdateAutomaticTimestamps(
-                    FileRec,
-                    NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME)))
-            {
-                InterlockedIncrement(&VolCB->DirGeneration);
-                NtfsCountPagingWrite(NtfsPagingWriteMappedStamp);
-            }
             /* Counted before the lock drops: a volume flush that starts
              * after this point waits for the transfer. */
             InterlockedIncrement(&VolCB->DirectPagingWrites);
@@ -816,18 +815,11 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         {
             /* Only for this call: the refresh above sets the handle's own
              * mask again before any other use of the record. */
-            if (!NtfsPagingWriteStampsTimes(FileCB))
-            {
-                Status = NtfsFileRecordSetAutomaticTimestampMask(
-                    FileRec,
-                    FileCB->AutomaticTimestampMask &
-                        ~(NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME));
-                TimesSuppressed = NT_SUCCESS(Status);
-            }
-            else
-            {
-                NtfsCountPagingWrite(NtfsPagingWriteMappedStamp);
-            }
+            Status = NtfsFileRecordSetAutomaticTimestampMask(
+                FileRec,
+                FileCB->AutomaticTimestampMask &
+                    ~(NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME));
+            TimesSuppressed = NT_SUCCESS(Status);
         }
         if (NT_SUCCESS(Status))
             Status = NtfsFileRecordWriteFileData(FileRec,
@@ -877,9 +869,6 @@ Written:
                 FO_FILE_MODIFIED |
                 FO_FILE_SIZE_CHANGED;
         }
-        /* The library stamped this write; the handle's cleanup stamps again. */
-        if (!PagingIo && Length != 0 && gPagingWriteOutsideLock)
-            FileCB->WriteTimesStamped = TRUE;
         if (!PagingIo)
             FileCB->NotifyFilter |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
 

@@ -343,6 +343,9 @@ typedef struct _SCB
     /* Paging writes of this stream sent outside the metadata lock and not
      * yet finished; FlushFileBuffers waits for them. */
     volatile LONG DirectPagingWrites;
+    /* System time of the last automatic write-time stamp by a cached
+     * write (NtfsPagingWriteOutsideLock). */
+    LONGLONG LastWriteStampTime;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -637,7 +640,6 @@ typedef enum _NTFS_PAGING_WRITE_COUNT
     NtfsPagingWritePastInitialized,
     NtfsPagingWriteNoExtent,
     NtfsPagingWriteSplit,
-    NtfsPagingWriteMappedStamp,     /* write times stamped: user-writable view */
     NtfsPagingWriteCountMax
 } NTFS_PAGING_WRITE_COUNT;
 
