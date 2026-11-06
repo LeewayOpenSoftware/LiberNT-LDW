@@ -97,6 +97,7 @@ extern void func_PackageNames(void);
 extern void func_PixeloramaCompat(void);
 extern void func_ProcessPreferredUILanguages(void);
 extern void func_PseudoConsoleCtrlC(void);
+extern void func_PseudoConsoleVtInput(void);
 extern void func_PssSnapshot(void);
 extern void func_OpenFileByIdRename(void);
 extern void func_PagingFileOpen(void);
@@ -227,6 +228,7 @@ const struct test winetest_testlist[] =
     { "PixeloramaCompat",            func_PixeloramaCompat },
     { "ProcessPreferredUILanguages", func_ProcessPreferredUILanguages },
     { "PseudoConsoleCtrlC",          func_PseudoConsoleCtrlC },
+    { "PseudoConsoleVtInput",        func_PseudoConsoleVtInput },
     { "PssSnapshot",                 func_PssSnapshot },
     { "OpenFileByIdRename",          func_OpenFileByIdRename },
     { "PagingFileOpen",              func_PagingFileOpen },

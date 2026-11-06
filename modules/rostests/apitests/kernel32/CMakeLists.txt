@@ -102,6 +102,7 @@ list(APPEND SOURCE
     PixeloramaCompat.c
     ProcessPreferredUILanguages.c
     PseudoConsoleCtrlC.c
+    PseudoConsoleVtInput.c
     PssSnapshot.c
     PrivMoveFileIdentityW.c
     QueryPerformanceCounter.c
