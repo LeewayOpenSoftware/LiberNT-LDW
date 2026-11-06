@@ -47,6 +47,9 @@ typedef struct _VolumeContextBlock
     /* Set when the shutdown clean pass begins: from then on a paging write
      * sent outside the metadata lock writes the volume through itself. */
     LONG ShutdownStarted;
+    /* Paging writes sent outside the metadata lock and not yet finished;
+     * a volume flush waits for them (NtfsFlushVolume). */
+    volatile LONG DirectPagingWrites;
     PFILE_OBJECT VolumeLockOwner;
     PFILE_OBJECT ShrinkOwner;
     ULONGLONG ShrinkVolumeSectors;
@@ -337,6 +340,9 @@ typedef struct _SCB
     BOOLEAN DeletePending;
     BOOLEAN Unlinked;
     LONG UncleanCount;
+    /* Paging writes of this stream sent outside the metadata lock and not
+     * yet finished; FlushFileBuffers waits for them. */
+    volatile LONG DirectPagingWrites;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -636,6 +642,10 @@ typedef enum _NTFS_PAGING_WRITE_COUNT
 } NTFS_PAGING_WRITE_COUNT;
 
 extern volatile LONG NtfsPagingWriteCounts[NtfsPagingWriteCountMax];
+
+/* Waits until an in-flight count of direct paging writes reaches zero. */
+VOID
+NtfsWaitDirectPagingWrites(_In_ volatile LONG *Count);
 
 /*
  * Metadata lock statistics (debug builds, or NTFS_LOCK_STATS): for the

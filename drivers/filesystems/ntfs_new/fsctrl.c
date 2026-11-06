@@ -1473,6 +1473,11 @@ NtfsFlushVolume(
     if (Streams)
         ExFreePoolWithTag(Streams, TAG_NTFS);
 
+    /* A paging write sent outside the metadata lock before this point may
+     * still be on its way into the block cache: let it land, so the flush
+     * below carries it (write.c, NtfsPagingWriteOutsideLock). */
+    NtfsWaitDirectPagingWrites(&VolCB->DirectPagingWrites);
+
     DiskStatus = NtfsDiskFlushVolumeKm(VolCB->StorageDevice);
     if (!NT_SUCCESS(DiskStatus) && NT_SUCCESS(Status))
         Status = DiskStatus;
@@ -2589,6 +2594,12 @@ NtfsFsdFlushBuffers(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, &IoStatus);
         Status = IoStatus.Status;
     }
+    /* CcFlushCache skips a page the lazy writer or the mapped page writer
+     * is already writing. On the locked path that write held the metadata
+     * lock, so the steps below waited for it; a write sent outside the
+     * lock does not, so wait for it here before flushing the device. */
+    if (NT_SUCCESS(Status) && FileCB->StreamCB)
+        NtfsWaitDirectPagingWrites(&FileCB->StreamCB->DirectPagingWrites);
     if (NT_SUCCESS(Status))
         Status = NtfsPersistPendingSize((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension, FileCB);
 

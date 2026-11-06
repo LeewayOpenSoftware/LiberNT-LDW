@@ -333,6 +333,16 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
  */
 volatile LONG NtfsPagingWriteCounts[NtfsPagingWriteCountMax];
 
+VOID
+NtfsWaitDirectPagingWrites(_In_ volatile LONG *Count)
+{
+    LARGE_INTEGER Delay;
+
+    Delay.QuadPart = -10 * 1000; /* 1 ms; transfers are short */
+    while (InterlockedCompareExchange(Count, 0, 0) != 0)
+        KeDelayExecutionThread(KernelMode, FALSE, &Delay);
+}
+
 static
 VOID
 NtfsCountPagingWrite(_In_ NTFS_PAGING_WRITE_COUNT Which)
@@ -509,6 +519,8 @@ NtfsFinishDirectPagingWrite(
                              BounceBuffer ? BounceBuffer : Buffer);
     if (BounceBuffer)
         ExFreePoolWithTag(BounceBuffer, TAG_NTFS);
+    InterlockedDecrement(&FileCB->StreamCB->DirectPagingWrites);
+    InterlockedDecrement(&VolCB->DirectPagingWrites);
 
     /* A write the block cache absorbed after the shutdown clean pass began
      * has no later flush to carry it. */
@@ -718,6 +730,10 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                 InterlockedIncrement(&VolCB->DirGeneration);
                 NtfsCountPagingWrite(NtfsPagingWriteMappedStamp);
             }
+            /* Counted before the lock drops: a volume flush that starts
+             * after this point waits for the transfer. */
+            InterlockedIncrement(&VolCB->DirectPagingWrites);
+            InterlockedIncrement(&FileCB->StreamCB->DirectPagingWrites);
             NtfsReleaseMetadata(VolCB);
             Status = NtfsFinishDirectPagingWrite(VolCB,
                                                  FileCB,
