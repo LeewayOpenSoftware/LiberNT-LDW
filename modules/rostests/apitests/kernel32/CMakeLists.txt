@@ -13,6 +13,7 @@ list(APPEND SOURCE
     CallbackCallingConventions.c
     Arm64ThreadContext.c
     ConsoleCP.c
+    ConsoleInputSignal.c
     ConsoleDbcsCells.c
     ConsoleProcessInheritance.c
     ConsoleVirtualTerminal.c
