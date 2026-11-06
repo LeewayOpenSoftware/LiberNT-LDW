@@ -660,6 +660,10 @@ DxgkpCompletePostDisplayHandoff(
                              Claimant,
                              StartStatus);
             }
+            /* The claimant registered the win32ss display bridge at start;
+               release it so the restarted fallback can register, and stop
+               the claimant's presents (timer + shadow surface). */
+            DxgkDisplayUnregister(Claimant);
             DxgkpSetBasicDisplayUiSuppressed(FallbackAdapter, FALSE);
             DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed "
                          "0x%08lX; restarting BasicDisplay adapter %p\n",
