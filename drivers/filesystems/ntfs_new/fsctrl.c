@@ -235,6 +235,10 @@ NtfsDeleteExternalBacking(
 
     KeEnterCriticalRegion();
     ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
+    /* Frees or moves the stream's clusters: exclude paging I/O, which may
+     * write an extent it resolved earlier after dropping the metadata lock
+     * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
+    ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
     if (NT_SUCCESS(Status))
@@ -248,6 +252,7 @@ NtfsDeleteExternalBacking(
         }
     }
     NtfsReleaseMetadata(VolCB);
+    ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
     if (NT_SUCCESS(Status))
     {
         NtfsRefreshFileSizes(VolCB,
@@ -457,12 +462,17 @@ NtfsSetCompression(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         if (!NT_SUCCESS(Status))
             goto Done;
     }
+    /* Frees or moves the stream's clusters: exclude paging I/O, which may
+     * write an extent it resolved earlier after dropping the metadata lock
+     * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
+    ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsFileRecordSetCompression(
         FileCB->FileRec,
         IsDirectory ? NULL : FileCB->RequestedStream,
         Format != COMPRESSION_FORMAT_NONE);
     NtfsReleaseMetadata(VolCB);
+    ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
     if (NT_SUCCESS(Status))
     {
         if (!IsDirectory)
@@ -565,6 +575,10 @@ NtfsSetZeroData(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     Status = NtfsPersistPendingSize(VolCB, FileCB);
     if (!NT_SUCCESS(Status))
         goto Done;
+    /* Frees or moves the stream's clusters: exclude paging I/O, which may
+     * write an extent it resolved earlier after dropping the metadata lock
+     * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
+    ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsFileRecordSetZeroData(
         FileCB->FileRec,
@@ -574,6 +588,7 @@ NtfsSetZeroData(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         (ULONGLONG)Input->
             BeyondFinalZero.QuadPart);
     NtfsReleaseMetadata(VolCB);
+    ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
     if (NT_SUCCESS(Status))
     {
         NtfsRefreshFileSizes(VolCB,
