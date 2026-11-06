@@ -14,6 +14,7 @@ extern void func_SetupCommitFileQueue(void);
 extern void func_SetupDiInstallClassExA(void);
 extern void func_SetupDiOpenDeviceInterface(void);
 extern void func_SetupInstallFile(void);
+extern void func_SetupInstallRegisterDlls(void);
 extern void func_UsbInterfaceIds(void);
 
 const struct test winetest_testlist[] =
@@ -30,6 +31,7 @@ const struct test winetest_testlist[] =
     { "SetupDiInstallClassExA", func_SetupDiInstallClassExA},
     { "SetupDiOpenDeviceInterface", func_SetupDiOpenDeviceInterface },
     { "SetupInstallFile", func_SetupInstallFile },
+    { "SetupInstallRegisterDlls", func_SetupInstallRegisterDlls },
     { "UsbInterfaceIds", func_UsbInterfaceIds },
     { 0, 0 }
 };
