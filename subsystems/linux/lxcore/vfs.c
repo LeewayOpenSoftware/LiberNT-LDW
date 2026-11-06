@@ -19,6 +19,7 @@
 #define LX_MAGIC_CGROUP2    0x63677270ULL
 #define LX_MAGIC_DEVPTS     0x00001CD1ULL
 #define LX_MAGIC_MQUEUE     0x19800202ULL
+#define LX_MAGIC_SQUASHFS   0x73717368ULL
 
 LIST_ENTRY LxInstanceList;
 FAST_MUTEX LxInstanceListLock;
@@ -809,6 +810,44 @@ LxInstanceTmpfs(
 }
 
 static
+LONG
+LxInstanceSquashfs(
+    _In_ PLX_PROCESS Process,
+    _In_ PLX_NS Ns,
+    _In_ PCSTR Target,
+    _In_ PCSTR Source,
+    _In_ ULONG Flags,
+    _Out_ PLX_MOUNT *Out)
+{
+    PLX_SQUASHFS Squash;
+    PLX_MOUNT Mount;
+    LONG Error;
+
+    *Out = NULL;
+    Error = LxSquashfsOpen(Process, Source, &Squash);
+    if (Error != 0)
+        return Error;
+    Mount = LxMountAllocate(Target, Source, "squashfs", Flags | LX_MS_RDONLY, LxFsTmpfs, LX_MAGIC_SQUASHFS);
+    Error = (Mount != NULL) ? LxTmpfsCreateSquashfs(Squash, &Mount->Tmpfs) : -LX_ENOMEM;
+    if (Error != 0)
+    {
+        LxSquashfsClose(Squash);
+        if (Mount != NULL)
+        {
+            LxFree(Mount->Target);
+            LxFree(Mount->Source);
+            LxFree(Mount->FsType);
+            LxFree(Mount->Root);
+            LxFree(Mount);
+        }
+        return Error;
+    }
+    LxMountInsert(Ns, Mount, FALSE);
+    *Out = Mount;
+    return 0;
+}
+
+static
 VOID
 LxPopulateDev(
     _In_ PLX_MOUNT Dev)
@@ -832,6 +871,15 @@ LxPopulateDev(
         { "console", LX_S_IFCHR | 0600, 5, 1, NULL },
         { "ptmx", LX_S_IFCHR | 0666, 5, 2, NULL },
         { "lxwin", LX_S_IFCHR | 0666, LX_WIN_DEVICE_MAJOR, LX_WIN_DEVICE_MINOR, NULL },
+        { "loop-control", LX_S_IFCHR | 0600, 10, LX_LOOP_CONTROL_MINOR, NULL },
+        { "loop0", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 0, NULL },
+        { "loop1", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 1, NULL },
+        { "loop2", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 2, NULL },
+        { "loop3", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 3, NULL },
+        { "loop4", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 4, NULL },
+        { "loop5", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 5, NULL },
+        { "loop6", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 6, NULL },
+        { "loop7", LX_S_IFBLK | 0660, LX_LOOP_MAJOR, 7, NULL },
         { "fd", LX_S_IFLNK | 0777, 0, 0, "/proc/self/fd" },
         { "stdin", LX_S_IFLNK | 0777, 0, 0, "/proc/self/fd/0" },
         { "stdout", LX_S_IFLNK | 0777, 0, 0, "/proc/self/fd/1" },
@@ -849,6 +897,9 @@ LxPopulateDev(
 
     for (Index = 0; Index < RTL_NUMBER_OF(Directories); Index++)
         LxTmpfsCreateNode(Dev, Directories[Index], LX_S_IFDIR | ((Index == 1) ? 01777 : 0755), 0, 0, 0, NULL, NULL);
+    LxTmpfsCreateNode(Dev, "dri", LX_S_IFDIR | 0755, 0, 0, 0, NULL, NULL);
+    LxTmpfsCreateNode(Dev, "dri/card0", LX_S_IFCHR | 0666, 0, 0, (ULONG64)LX_DRM_MAJOR << 32, NULL, NULL);
+    LxTmpfsCreateNode(Dev, "dri/renderD128", LX_S_IFCHR | 0666, 0, 0, ((ULONG64)LX_DRM_MAJOR << 32) | 128, NULL, NULL);
 
     UsbCount = LxSysDevUsbNodes(UsbNodes, RTL_NUMBER_OF(UsbNodes));
     for (Index = 0; Index < UsbCount; Index++)
@@ -889,6 +940,7 @@ LxInstanceCreate(
     ExInitializeFastMutex(&Instance->Lock);
     InitializeListHead(&Instance->AllMounts);
     InitializeListHead(&Instance->DevptsList);
+    InitializeListHead(&Instance->Loops);
     Instance->NextMountId = 20;
     Instance->NextPid = 1;
     Instance->Booted = Boot;
@@ -1056,6 +1108,7 @@ LxInstanceDereference(
         LxFree(Mount->NtRoot.Buffer);
         LxFree(Mount);
     }
+    LxLoopFreeAll(Instance);
     LxNsInstanceShutdown(Instance);
     LxVcachePurgeInstance(Instance);
     if (Instance->Console != NULL)
@@ -1265,7 +1318,8 @@ LxMountAdd(
 
     Existing = LxMountFind(Ns, Target, &Relative);
     if ((Existing != NULL) && (Relative[0] == '\0') && (strcmp(Existing->FsType, FsType) == 0) &&
-        (Existing->Kind != LxFsProc) && (Existing->Kind != LxFsCgroup) && (Ns == Ns->Instance->RootNs[LxNsMnt]))
+        (Existing->Kind != LxFsProc) && (Existing->Kind != LxFsCgroup) && (Existing->Magic != LX_MAGIC_SQUASHFS) &&
+        (Ns == Ns->Instance->RootNs[LxNsMnt]))
     {
         return 0;
     }
@@ -1304,6 +1358,8 @@ LxMountAdd(
         Error = LxInstanceMountDevpts(Process, Ns, Target, Source, Flags, Data, &Mount);
     else if (strcmp(FsType, "mqueue") == 0)
         Error = LxInstanceMountSynthetic(Ns, Target, Source, "mqueue", Flags, LxFsMqueue, LX_MAGIC_MQUEUE, &Mount);
+    else if (strcmp(FsType, "squashfs") == 0)
+        Error = LxInstanceSquashfs(Process, Ns, Target, Source, Flags, &Mount);
     else
         return -LX_ENODEV;
     if (Error == 0)
@@ -1486,6 +1542,8 @@ LxMountCreateDetached(
         Error = LxInstanceMountSynthetic(Ns, Target, Source, "mqueue", Flags, LxFsMqueue, LX_MAGIC_MQUEUE, Mount);
     else if ((strcmp(FsType, "tmpfs") == 0) || (strcmp(FsType, "ramfs") == 0) || (strcmp(FsType, "devtmpfs") == 0))
         Error = LxInstanceTmpfs(Ns, Target, FsType, Flags, Mode, Mount);
+    else if (strcmp(FsType, "squashfs") == 0)
+        Error = LxInstanceSquashfs(Process, Ns, Target, Source, Flags, Mount);
     else
         Error = -LX_ENODEV;
 
@@ -1525,7 +1583,7 @@ LxMountClone(
         Mount->Root = LxStrDup(SourceRoot);
     else
         Mount->Root = LxStrPrintf("%s%s%s", SourceRoot, (strcmp(SourceRoot, "/") == 0) ? "" : "/", Relative);
-    Mount->Flags = SetFlags ? Flags : Source->Flags;
+    Mount->Flags = (SetFlags ? Flags : Source->Flags) | ((Source->Magic == LX_MAGIC_SQUASHFS) ? LX_MS_RDONLY : 0);
     Mount->Magic = Source->Magic;
     Mount->Dev = Source->Dev;
     Mount->CgroupRoot = Source->CgroupRoot;
@@ -1714,16 +1772,15 @@ LxMountReceiversLocked(
 
 static
 VOID
-LxMountPropagate(
-    _In_ PLX_MOUNT Mount)
+LxMountPropagateVia(
+    _In_ PLX_MOUNT Mount,
+    _In_opt_ PLX_MOUNT Parent)
 {
     PLX_INSTANCE Instance = Mount->Instance;
     PLX_MOUNT_RECEIVER Receivers = NULL;
-    PLX_MOUNT Parent;
     ULONG Count = 0, Index;
 
     ExAcquireFastMutex(&Instance->Lock);
-    Parent = Mount->Parent;
     if ((Parent != NULL) && (Parent->PeerGroup != 0) && LxMountLive(Parent) && LxMountLive(Mount))
     {
         if (Mount->PeerGroup == 0)
@@ -1731,6 +1788,14 @@ LxMountPropagate(
         Mount->Unbindable = FALSE;
         Count = LxMountReceiversLocked(Instance, Parent, Mount->Target, Mount->PeerGroup, Mount->MasterGroup,
                                        &Receivers);
+        for (Index = 0; Index < Count; Index++)
+        {
+            if ((Receivers[Index].Mount == Mount) || LxMountIsBelow(Receivers[Index].Mount, Mount))
+            {
+                LxFree(Receivers[Index].Target);
+                Receivers[Index].Target = NULL;
+            }
+        }
     }
     ExReleaseFastMutex(&Instance->Lock);
 
@@ -1750,6 +1815,37 @@ LxMountPropagate(
         LxFree(Receivers[Index].Target);
     }
     LxFree(Receivers);
+}
+
+static
+VOID
+LxMountPropagate(
+    _In_ PLX_MOUNT Mount)
+{
+    LxMountPropagateVia(Mount, Mount->Parent);
+}
+
+static
+BOOLEAN
+LxMountBindPrunedLocked(
+    _In_ PLX_NS Ns,
+    _In_ PCSTR SourcePath,
+    _In_ SIZE_T SourceLength,
+    _In_ PLX_MOUNT Mount)
+{
+    PLIST_ENTRY Entry;
+
+    for (Entry = Ns->Mnt.Mounts.Flink; Entry != &Ns->Mnt.Mounts; Entry = Entry->Flink)
+    {
+        PLX_MOUNT Other = CONTAINING_RECORD(Entry, LX_MOUNT, Link);
+
+        if (Other->Unbindable && !Other->Detached && (strncmp(Other->Target, SourcePath, SourceLength) == 0) &&
+            ((Other == Mount) || LxMountIsBelow(Mount, Other)))
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static
@@ -1848,8 +1944,10 @@ LxMountSetPropagation(
             Other->PeerGroup = 0;
         }
         if (Type != LX_MS_SLAVE)
+        {
             Other->MasterGroup = 0;
-        Other->Unbindable = (Type == LX_MS_UNBINDABLE);
+            Other->Unbindable = (Type == LX_MS_UNBINDABLE);
+        }
     }
     ExReleaseFastMutex(&Instance->Lock);
     LxEventSourceSignal(&Ns->Mnt.Events);
@@ -1963,7 +2061,8 @@ LxMountBind(
 
                 if (!Mount->Detached && (strncmp(Mount->Target, Source->Path, SourceLength) == 0) &&
                     (Mount->Target[SourceLength] == '/' || (strcmp(Source->Path, "/") == 0)) &&
-                    (strcmp(Mount->Target, "/") != 0) && (strcmp(Mount->Target, Source->Path) != 0))
+                    (strcmp(Mount->Target, "/") != 0) && (strcmp(Mount->Target, Source->Path) != 0) &&
+                    !LxMountBindPrunedLocked(Ns, Source->Path, SourceLength, Mount))
                 {
                     PCSTR Rest = Mount->Target + ((strcmp(Source->Path, "/") == 0) ? 0 : SourceLength);
 
@@ -1987,7 +2086,7 @@ LxMountBind(
         if ((Error == 0) && (Targets[Index] != NULL) && (Below[Index]->Kind != LxFsNsfs) && !Below[Index]->Unbindable &&
             (LxMountClone(Ns, Below[Index], Targets[Index], NULL, Below[Index]->Flags, FALSE, &Copy) == 0))
         {
-            LxMountPropagate(Copy);
+            LxMountPropagateVia(Copy, Top->Parent);
         }
         LxFree(Targets[Index]);
     }
@@ -2146,7 +2245,7 @@ LxMountSetFlags(
     PLX_INSTANCE Instance = Mount->Instance;
 
     ExAcquireFastMutex(&Instance->Lock);
-    Mount->Flags = (Mount->Flags & ~Clear) | Set;
+    Mount->Flags = (Mount->Flags & ~Clear) | Set | ((Mount->Magic == LX_MAGIC_SQUASHFS) ? LX_MS_RDONLY : 0);
     ExReleaseFastMutex(&Instance->Lock);
     if (Mount->Ns != NULL)
         LxEventSourceSignal(&Mount->Ns->Mnt.Events);
@@ -2374,6 +2473,9 @@ LxMountPivotRoot(
 
     if ((NewMount == NULL) || (OldMount == NULL))
         return -LX_EINVAL;
+    OldMount = LxMountFind(Ns, PutOld->Path, NULL);
+    if (OldMount == NULL)
+        return -LX_EINVAL;
     Root = LxProcessRoot(Process);
     if (Root == NULL)
         return -LX_ENOMEM;
@@ -2423,8 +2525,8 @@ LxMountPivotRoot(
     }
     NewMount->Parent = RootMount->Parent;
     NewMount->ParentId = (NewMount->Parent != NULL) ? NewMount->Parent->Id : 1;
-    RootMount->Parent = NewMount;
-    RootMount->ParentId = NewMount->Id;
+    RootMount->Parent = OldMount;
+    RootMount->ParentId = OldMount->Id;
     for (Entry = Ns->Mnt.Mounts.Flink; Entry != &Ns->Mnt.Mounts;)
     {
         PLX_MOUNT Mount = CONTAINING_RECORD(Entry, LX_MOUNT, Link);

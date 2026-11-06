@@ -566,6 +566,26 @@ if(BUILD_TESTING AND NTFSLIB_BUILD_FUSE)
     endif()
     if(MKNTFS_EXECUTABLE AND
        NTFSCP_EXECUTABLE AND
+       NTFSCAT_EXECUTABLE)
+        add_test(
+            NAME ntfslib_linux_startup_repair
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/startup_repair_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_check_crosslink
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_crosslink_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+                "${NTFSCP_EXECUTABLE}"
+                "${NTFSCAT_EXECUTABLE}"
+        )
+    endif()
+    if(MKNTFS_EXECUTABLE AND
+       NTFSCP_EXECUTABLE AND
        NTFSCAT_EXECUTABLE AND
        NTFSSECAUDIT_EXECUTABLE AND
        FAKEROOT_EXECUTABLE AND
@@ -583,4 +603,10 @@ if(BUILD_TESTING AND NTFSLIB_BUILD_FUSE)
                 "${XXD_EXECUTABLE}"
         )
     endif()
+    add_test(
+        NAME ntfslib_linux_case_sensitive
+        COMMAND /bin/sh
+            "${CMAKE_CURRENT_LIST_DIR}/tests/case_sensitive_smoke.sh"
+            "$<TARGET_FILE:ntfslib_fuse>"
+    )
 endif()

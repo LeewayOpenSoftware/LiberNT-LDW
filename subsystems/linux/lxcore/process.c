@@ -25,6 +25,7 @@ LxProcessInitialize(VOID)
     LxIpcInitialize();
     LxMqInitialize();
     LxWinInitialize();
+    LxDrmInitialize();
 }
 
 PVOID
@@ -431,9 +432,7 @@ LxProcessFork(
     Process->ParentPid = Parent->Pid;
     Process->Pgid = Parent->Pgid;
     Process->Sid = Parent->Sid;
-    Process->Tty = Parent->Tty;
-    if (Process->Tty != NULL)
-        LxTtyReference(Process->Tty);
+    Process->Tty = LxProcessGetTty(Parent);
     Process->Umask = Parent->Umask;
     if (Parent->ExeDeny != NULL)
     {
@@ -1062,6 +1061,9 @@ LxProcessExited(
         {
             PLX_CHILD Child = CONTAINING_RECORD(RemoveHeadList(&Orphans), LX_CHILD, Link);
 
+            /* FIXME: Linux sends the parent-death signal when the creating thread exits, not the whole process */
+            if (!Child->Lx->Exited && (Child->Lx->PdeathSignal != 0))
+                LxSignalSend(Child->Lx, NULL, (LONG)Child->Lx->PdeathSignal, NULL);
             if ((Reaper == NULL) || Reaper->Exited)
             {
                 LxProcessUnregister(Child->Lx);
@@ -1083,6 +1085,7 @@ LxProcessExited(
     }
 
     LxCgroupAttach(Process, NULL);
+    LxTtyDisassociate(Process, TRUE);
 
     if ((Process->Pid != 1) && !LxPidNsIsInit(Process))
         LxJobctlOrphanCheck(Process, NULL);

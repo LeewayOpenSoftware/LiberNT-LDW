@@ -13,6 +13,7 @@ list(APPEND SOURCE
     CallbackCallingConventions.c
     Arm64ThreadContext.c
     ConsoleCP.c
+    ConsoleInputSignal.c
     ConsoleDbcsCells.c
     ConsoleProcessInheritance.c
     ConsoleVirtualTerminal.c
@@ -102,11 +103,13 @@ list(APPEND SOURCE
     PixeloramaCompat.c
     ProcessPreferredUILanguages.c
     PseudoConsoleCtrlC.c
+    PseudoConsoleVtInput.c
     PssSnapshot.c
     PrivMoveFileIdentityW.c
     QueueUserAPC.c
     QueryProcessCycleTime.c
     ReadFile.c
+    RemoteThreadInit.c
     RenameDirectoryOldPath.c
     ResizePseudoConsole.c
     SetComputerNameExW.c
@@ -131,6 +134,7 @@ list(APPEND SOURCE
     WideCharToMultiByte.c
     Wow64GetThreadContext.c
     WriteFile.c
+    WriteFileBadBuffer.c
     WriteFileSeekBack.c
     XState.c
 )

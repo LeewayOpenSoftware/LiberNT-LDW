@@ -51,7 +51,7 @@ typedef struct
     LIST_ENTRY ObjectItemList;
 }CREATE_ITEM_ENTRY, *PCREATE_ITEM_ENTRY;
 
-typedef struct
+typedef struct DECLSPEC_ALIGN(8)
 {
     KSOBJECTTYPE Type;
     PKSDEVICE KsDevice;
@@ -81,6 +81,20 @@ typedef struct
     }FirstChild;
 
 }KSBASIC_HEADER, *PKSBASIC_HEADER;
+
+typedef struct
+{
+    ULONG Size;
+    ULONG TypeSpecificFlags;
+    KSTIME PresentationTime;
+    LONGLONG Duration;
+    ULONG FrameExtent;
+    ULONG DataUsed;
+    ULONG Data;
+    ULONG OptionsFlags;
+} KSSTREAM_HEADER32, *PKSSTREAM_HEADER32;
+
+C_ASSERT(sizeof(KSSTREAM_HEADER32) == 48);
 
 typedef struct
 {
