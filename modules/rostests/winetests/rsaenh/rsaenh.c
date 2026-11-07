@@ -2901,9 +2901,11 @@ static void test_rsa_round_trip(void)
     static const char test_string[] = "Well this is a fine how-do-you-do.";
     HCRYPTPROV prov;
     HCRYPTKEY signKey, keyExchangeKey;
+    HCRYPTHASH hash;
     BOOL result;
-    BYTE data[256], *exportedKey;
-    DWORD dataLen, keyLen;
+    BYTE data[256], signature[256], *exportedKey;
+    DWORD dataLen, keyLen, signatureLen;
+    RSAPUBKEY *rsaPubKey;
 
     CryptAcquireContextA(&prov, szContainer, NULL, PROV_RSA_FULL,
      CRYPT_DELETEKEYSET);
@@ -2912,7 +2914,7 @@ static void test_rsa_round_trip(void)
     result = CryptAcquireContextA(&prov, szContainer, NULL, PROV_RSA_FULL,
      CRYPT_NEWKEYSET);
     ok(result, "CryptAcquireContextA failed: %08lx\n", GetLastError());
-    result = CryptGenKey(prov, CALG_RSA_KEYX, CRYPT_EXPORTABLE, &signKey);
+    result = CryptGenKey(prov, CALG_RSA_KEYX, (2048 << 16) | CRYPT_EXPORTABLE, &signKey);
     ok(result, "CryptGenKey with CALG_RSA_KEYX failed with error %08lx\n", GetLastError());
     result = CryptGetUserKey(prov, AT_KEYEXCHANGE, &keyExchangeKey);
     ok(result, "CryptGetUserKey failed: %08lx\n", GetLastError());
@@ -2936,7 +2938,6 @@ static void test_rsa_round_trip(void)
 
     result = CryptImportKey(prov, exportedKey, keyLen, 0, 0, &keyExchangeKey);
     ok(result, "CryptImportKey failed: %08lx\n", GetLastError());
-    HeapFree(GetProcessHeap(), 0, exportedKey);
 
     /* and decrypt the data encrypted with the original key with the imported
      * key.
@@ -2948,7 +2949,28 @@ static void test_rsa_round_trip(void)
         ok(dataLen == sizeof(test_string), "unexpected size %ld\n", dataLen);
         ok(!memcmp(data, test_string, sizeof(test_string)), "unexpected value\n");
     }
+
+    result = CryptCreateHash(prov, CALG_SHA, 0, 0, &hash);
+    ok(result, "CryptCreateHash failed: %08lx\n", GetLastError());
+    result = CryptHashData(hash, (const BYTE *)test_string, sizeof(test_string), 0);
+    ok(result, "CryptHashData failed: %08lx\n", GetLastError());
+    signatureLen = sizeof(signature);
+    result = CryptSignHashA(hash, AT_KEYEXCHANGE, NULL, 0, signature, &signatureLen);
+    ok(result, "CryptSignHashA failed: %08lx\n", GetLastError());
+    ok(signatureLen == sizeof(signature), "unexpected signature size %ld\n", signatureLen);
+    result = CryptVerifySignatureA(hash, signature, signatureLen, keyExchangeKey, NULL, 0);
+    ok(result, "CryptVerifySignatureA failed: %08lx\n", GetLastError());
+    CryptDestroyHash(hash);
     CryptDestroyKey(keyExchangeKey);
+
+    rsaPubKey = (RSAPUBKEY *)(exportedKey + sizeof(BLOBHEADER));
+    ok(rsaPubKey->bitlen == 2048, "unexpected key size %ld\n", rsaPubKey->bitlen);
+    exportedKey[sizeof(BLOBHEADER) + sizeof(RSAPUBKEY) + rsaPubKey->bitlen / 8 - 1] ^= 1;
+    result = CryptImportKey(prov, exportedKey, keyLen, 0, 0, &keyExchangeKey);
+    ok(result, "CryptImportKey rejected a mismatched private key: %08lx\n", GetLastError());
+    if (result) CryptDestroyKey(keyExchangeKey);
+
+    HeapFree(GetProcessHeap(), 0, exportedKey);
     CryptReleaseContext(prov, 0);
 
     CryptAcquireContextA(&prov, szContainer, NULL, PROV_RSA_FULL,
