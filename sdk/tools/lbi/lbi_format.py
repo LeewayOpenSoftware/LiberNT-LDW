@@ -10,7 +10,7 @@ the single definition of the label grammar; the CMake generator, the allocator,
 the tests and any diagnostic parser must agree with it.
 
     label    = seq "." rev "." arch type "." channel "." stamp
-    seq      = 1*7DIGIT             ; 0 = provisional (not an identity)
+    seq      = 1*7DIGIT             ; never 0 in an allocated label
     rev      = 1*5DIGIT             ; servicing revision, 0 = fresh build
     arch     = "amd64" / "x86" / "arm64" / "riscv64" / "ppc"
     type     = "fre" / "chk"
@@ -26,6 +26,8 @@ import re
 
 ARCHES = ("amd64", "x86", "arm64", "riscv64", "ppc")
 TYPES = ("fre", "chk")
+CHANNELS = ("ldw_dev", "ldw_ci", "ldw_lab", "ldw_rel")
+UNALLOCATED = "unallocated"
 
 _LABEL_RE = re.compile(
     r"^(?P<seq>\d{1,7})\.(?P<rev>\d{1,5})\."
@@ -80,8 +82,16 @@ def parse_label(text):
     out = {"sequence": int(f["seq"]), "revision": int(f["rev"]), "arch": f["arch"],
            "type": f["type"], "channel": f["channel"], "stamp": f["stamp"]}
     validate_fields(out["sequence"], out["revision"], out["arch"], out["type"], out["channel"], out["stamp"])
-    out["provisional"] = out["sequence"] == 0
+    out["known_channel"] = out["channel"] in CHANNELS
     return out
+
+
+def validate_channel(channel):
+    """Allocation-time rule (owner decision 2026-11-07): only the four Leeway
+    channels can be allocated. The grammar stays wider so parsers keep working
+    on labels from other channels."""
+    if channel not in CHANNELS:
+        raise LbiFormatError("channel %r is not one of %s" % (channel, "/".join(CHANNELS)))
 
 
 def parse_buildlab(text):

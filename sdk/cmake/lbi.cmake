@@ -6,14 +6,14 @@
 #              lbi.json (diagnostics, provenance manifest).
 # COPYRIGHT:   Copyright 2026 Leeway Open Software
 #
-# WS-B prototype, spec: shared/libernt/lbi/WS-B-LBI-SPEC.md section 6.
+# Spec: shared/libernt/lbi/WS-B-LBI-SPEC.md section 6.
 #
 # Inputs
-#   LBI_ALLOCATION_FILE  lbi-allocation.cmake written by sdk/tools/lbi/lbi_alloc.py
-#                        before configure (default: ${REACTOS_BINARY_DIR}/lbi-allocation.cmake).
-#                        Absent -> provisional identity (sequence 0, random attempt id).
-#   LBI_CHANNEL          channel for a provisional identity (default ldw_dev)
-#   LBI_REVISION         servicing revision for a provisional identity (default 0)
+#   LBI_ALLOCATION_FILE     lbi-allocation.cmake written by sdk/tools/lbi/lbi_alloc.py
+#                           before configure (default: ${REACTOS_BINARY_DIR}/lbi-allocation.cmake).
+#                           Absent -> the build is UNALLOCATED: LBI_ALLOCATED 0, the identity
+#                           strings read "unallocated", no sequence is fabricated (fail-closed).
+#   LBI_REQUIRE_ALLOCATION  ON makes an unallocated configure a fatal error (CI, lab, release).
 #   WINARCH, DBG, CMAKE_C_COMPILER_ID/VERSION, COMMIT_HASH (from version.cmake when present)
 #
 # Outputs
@@ -35,16 +35,11 @@ endif()
 if(NOT DEFINED LBI_ALLOCATION_FILE)
     set(LBI_ALLOCATION_FILE "${REACTOS_BINARY_DIR}/lbi-allocation.cmake")
 endif()
-if(NOT DEFINED LBI_CHANNEL)
-    set(LBI_CHANNEL "ldw_dev")
-endif()
-if(NOT DEFINED LBI_REVISION)
-    set(LBI_REVISION 0)
-endif()
 if(NOT DEFINED LBI_MANIFEST_SCHEMA)
     # WS-C owns this identifier (WS-C-PROVENANCE.md section 3, pinned 2026-11-07).
     set(LBI_MANIFEST_SCHEMA "lbi-provenance-manifest/1.0")
 endif()
+set(LBI_UNALLOCATED "unallocated")
 
 # ---- arch / type from the configured tree ----------------------------------
 if(NOT DEFINED WINARCH)
@@ -82,7 +77,7 @@ if(LBI_SOURCE_COMMIT STREQUAL "unknown" AND DEFINED COMMIT_HASH AND NOT COMMIT_H
     set(LBI_SOURCE_COMMIT "${COMMIT_HASH}")
 endif()
 
-# ---- allocation (ledger) or provisional ---------------------------------------
+# ---- allocation (ledger) or unallocated -----------------------------------------
 if(EXISTS "${LBI_ALLOCATION_FILE}")
     include("${LBI_ALLOCATION_FILE}")
     if(NOT LBI_ALLOC_ARCH STREQUAL LBI_ARCH OR NOT LBI_ALLOC_TYPE STREQUAL LBI_TYPE)
@@ -91,6 +86,16 @@ if(EXISTS "${LBI_ALLOCATION_FILE}")
     if(NOT LBI_ALLOC_SOURCE_COMMIT STREQUAL LBI_SOURCE_COMMIT)
         message(FATAL_ERROR "lbi.cmake: allocation was made for commit ${LBI_ALLOC_SOURCE_COMMIT}, tree is at ${LBI_SOURCE_COMMIT}; allocate again")
     endif()
+    if(NOT LBI_ALLOC_CHANNEL MATCHES "^(ldw_dev|ldw_ci|ldw_lab|ldw_rel)$")
+        message(FATAL_ERROR "lbi.cmake: channel '${LBI_ALLOC_CHANNEL}' is not one of ldw_dev/ldw_ci/ldw_lab/ldw_rel")
+    endif()
+    if(NOT LBI_ALLOC_SEQUENCE MATCHES "^[0-9]+$" OR NOT LBI_ALLOC_REVISION MATCHES "^[0-9]+$" OR LBI_ALLOC_SEQUENCE EQUAL 0 OR LBI_ALLOC_REVISION EQUAL 0)
+        message(FATAL_ERROR "lbi.cmake: sequence/revision must be decimal and non-zero (got ${LBI_ALLOC_SEQUENCE}.${LBI_ALLOC_REVISION})")
+    endif()
+    if(NOT LBI_ALLOC_STAMP MATCHES "^[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]$")
+        message(FATAL_ERROR "lbi.cmake: stamp '${LBI_ALLOC_STAMP}' is not yymmdd-hhmm")
+    endif()
+    set(LBI_ALLOCATED 1)
     set(LBI_SEQUENCE "${LBI_ALLOC_SEQUENCE}")
     set(LBI_REVISION "${LBI_ALLOC_REVISION}")
     set(LBI_CHANNEL "${LBI_ALLOC_CHANNEL}")
@@ -100,31 +105,37 @@ if(EXISTS "${LBI_ALLOCATION_FILE}")
     set(LBI_MANIFEST_REF "${LBI_ALLOC_MANIFEST_REF}")
     set(LBI_WORKER "${LBI_ALLOC_WORKER}")
     set(LBI_CI_REF "${LBI_ALLOC_CI_REF}")
-    set(LBI_PROVISIONAL "${LBI_ALLOC_PROVISIONAL}")
+    set(LBI_LEDGER_REF "${LBI_ALLOC_LEDGER_REF}")
     if(LBI_ALLOC_SOURCE_DIRTY)
         set(LBI_SOURCE_DIRTY 1)
     endif()
     file(TO_CMAKE_PATH "${LBI_ALLOCATION_FILE}" LBI_ALLOCATION_SOURCE)
+    set(LBI_LABEL      "${LBI_SEQUENCE}.${LBI_REVISION}.${LBI_ARCH}${LBI_TYPE}.${LBI_CHANNEL}.${LBI_STAMP}")
+    set(LBI_BUILDLAB   "${LBI_SEQUENCE}.${LBI_CHANNEL}.${LBI_STAMP}")
+    set(LBI_BUILDLABEX "${LBI_LABEL}")
 else()
+    if(LBI_REQUIRE_ALLOCATION)
+        message(FATAL_ERROR "lbi.cmake: no allocation file at ${LBI_ALLOCATION_FILE} and LBI_REQUIRE_ALLOCATION is ON; run sdk/tools/lbi/lbi_alloc.py --ledger ... before configure")
+    endif()
+    set(LBI_ALLOCATED 0)
     set(LBI_SEQUENCE 0)
-    set(LBI_PROVISIONAL 1)
+    set(LBI_REVISION 0)
+    set(LBI_CHANNEL "")
     string(TIMESTAMP LBI_TIMESTAMP_UTC "%Y-%m-%dT%H:%M:%SZ" UTC)
-    string(TIMESTAMP LBI_STAMP "%y%m%d-%H%M" UTC)
-    string(RANDOM LENGTH 32 ALPHABET 0123456789abcdef _lbi_rand)
-    string(SUBSTRING "${_lbi_rand}" 0 8 _a)
-    string(SUBSTRING "${_lbi_rand}" 8 4 _b)
-    string(SUBSTRING "${_lbi_rand}" 12 4 _c)
-    string(SUBSTRING "${_lbi_rand}" 16 4 _d)
-    string(SUBSTRING "${_lbi_rand}" 20 12 _e)
-    set(LBI_ATTEMPT_ID "${_a}-${_b}-${_c}-${_d}-${_e}")
-    set(LBI_MANIFEST_REF "${LBI_MANIFEST_SCHEMA}:attempt:${LBI_ATTEMPT_ID}")
+    set(LBI_STAMP "")
+    set(LBI_ATTEMPT_ID "")
+    set(LBI_MANIFEST_REF "")
     if(DEFINED ENV{LBI_WORKER})
         set(LBI_WORKER "$ENV{LBI_WORKER}")
     else()
         cmake_host_system_information(RESULT LBI_WORKER QUERY HOSTNAME)
     endif()
     set(LBI_CI_REF "$ENV{GITHUB_RUN_ID}")
-    set(LBI_ALLOCATION_SOURCE "provisional")
+    set(LBI_LEDGER_REF "")
+    set(LBI_ALLOCATION_SOURCE "none")
+    set(LBI_LABEL      "${LBI_UNALLOCATED}")
+    set(LBI_BUILDLAB   "${LBI_UNALLOCATED}")
+    set(LBI_BUILDLABEX "${LBI_UNALLOCATED}")
 endif()
 # JSON safety for the two free-text fields (worker names and paths may carry odd characters)
 foreach(_v LBI_WORKER LBI_ALLOCATION_SOURCE)
@@ -132,27 +143,9 @@ foreach(_v LBI_WORKER LBI_ALLOCATION_SOURCE)
     string(REPLACE "\"" "'" ${_v} "${${_v}}")
 endforeach()
 
-if(NOT LBI_CHANNEL MATCHES "^[a-z][a-z0-9_]*$")
-    message(FATAL_ERROR "lbi.cmake: channel '${LBI_CHANNEL}' is not in the LBI grammar")
-endif()
-string(LENGTH "${LBI_CHANNEL}" _lbi_chlen)
-if(_lbi_chlen GREATER 32)
-    message(FATAL_ERROR "lbi.cmake: channel '${LBI_CHANNEL}' is longer than 32")
-endif()
-if(NOT LBI_SEQUENCE MATCHES "^[0-9]+$" OR NOT LBI_REVISION MATCHES "^[0-9]+$")
-    message(FATAL_ERROR "lbi.cmake: sequence/revision must be decimal")
-endif()
-if(NOT LBI_STAMP MATCHES "^[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]$")
-    message(FATAL_ERROR "lbi.cmake: stamp '${LBI_STAMP}' is not yymmdd-hhmm")
-endif()
-
-# ---- the three identity strings (grammar: sdk/tools/lbi/lbi_format.py) -----------
-set(LBI_LABEL      "${LBI_SEQUENCE}.${LBI_REVISION}.${LBI_ARCH}${LBI_TYPE}.${LBI_CHANNEL}.${LBI_STAMP}")
-set(LBI_BUILDLAB   "${LBI_SEQUENCE}.${LBI_CHANNEL}.${LBI_STAMP}")
-set(LBI_BUILDLABEX "${LBI_LABEL}")
-
 # ---- reproducible-inputs digest (spec section 4) -----------------------------------
-# Same canonical JSON as lbi_format.inputs_digest(): keys sorted, no spaces.
+# Same canonical JSON as lbi_format.inputs_digest(): keys sorted, no spaces. The
+# digest describes the inputs, so it exists for unallocated builds too (channel "").
 set(_lbi_cfg_items "")
 # REACTOS_TARGET_NT is the single source of truth for the NT compatibility identity
 # (WS-A); it enters the digest so two targets of one commit never share a digest.
@@ -189,8 +182,14 @@ string(SUBSTRING "${LBI_INPUTS_DIGEST}" 0 16 LBI_INPUTS_DIGEST_SHORT)
 configure_file("${REACTOS_SOURCE_DIR}/sdk/include/reactos/lbi.h.cmake"
                "${REACTOS_BINARY_DIR}/sdk/include/reactos/lbi.h")
 
+if(LBI_ALLOCATED)
+    set(_lbi_alloc_json "true")
+else()
+    set(_lbi_alloc_json "false")
+endif()
 set(_lbi_json "{
   \"lbi_version\": 1,
+  \"allocated\": ${_lbi_alloc_json},
   \"label\": \"${LBI_LABEL}\",
   \"buildlab\": \"${LBI_BUILDLAB}\",
   \"buildlabex\": \"${LBI_BUILDLABEX}\",
@@ -211,17 +210,16 @@ set(_lbi_json "{
   \"config\": [${_lbi_cfg_json}],
   \"worker\": \"${LBI_WORKER}\",
   \"ci_ref\": \"${LBI_CI_REF}\",
-  \"provisional\": ${LBI_PROVISIONAL},
+  \"ledger_ref\": \"${LBI_LEDGER_REF}\",
   \"allocation_source\": \"${LBI_ALLOCATION_SOURCE}\"
 }
 ")
-string(REPLACE "\"provisional\": 1" "\"provisional\": true" _lbi_json "${_lbi_json}")
-string(REPLACE "\"provisional\": 0" "\"provisional\": false" _lbi_json "${_lbi_json}")
 file(WRITE "${REACTOS_BINARY_DIR}/lbi.json" "${_lbi_json}")
 
 if(NOT LBI_SCRIPT_MODE)
-    message(STATUS "LBI: ${LBI_LABEL} (attempt ${LBI_ATTEMPT_ID}, inputs ${LBI_INPUTS_DIGEST_SHORT}, ${LBI_ALLOCATION_SOURCE})")
-    if(LBI_PROVISIONAL)
-        message(STATUS "LBI: provisional identity (sequence 0) - run sdk/tools/lbi/lbi_alloc.py --ledger ... before configure for an allocated one")
+    if(LBI_ALLOCATED)
+        message(STATUS "LBI: ${LBI_LABEL} (attempt ${LBI_ATTEMPT_ID}, inputs ${LBI_INPUTS_DIGEST_SHORT}, ${LBI_LEDGER_REF})")
+    else()
+        message(STATUS "LBI: unallocated build (inputs ${LBI_INPUTS_DIGEST_SHORT}); run sdk/tools/lbi/lbi_alloc.py --ledger ... before configure for an identity")
     endif()
 endif()

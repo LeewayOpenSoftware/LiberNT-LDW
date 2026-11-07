@@ -5,16 +5,18 @@
 /*
  * Leeway Build Identity (LBI), owner directive domain B. One allocated build
  * ATTEMPT; never reused, never derived from the NT compatibility version.
+ * LBI_ALLOCATED 0 means no ledger allocation existed at configure time: the
+ * strings then read "unallocated" and no sequence is fabricated.
  * Grammar: sdk/tools/lbi/lbi_format.py; spec: shared/libernt/lbi/WS-B-LBI-SPEC.md.
  *
- * Usable from C, C++ and resource scripts (string macros only, plus two integers).
+ * Usable from C, C++ and resource scripts (string macros only, plus integers).
  */
 
 #define LBI_VERSION             1
 
+#define LBI_ALLOCATED           @LBI_ALLOCATED@
 #define LBI_SEQUENCE            @LBI_SEQUENCE@
 #define LBI_REVISION            @LBI_REVISION@
-#define LBI_PROVISIONAL         @LBI_PROVISIONAL@
 
 #define LBI_ARCH                "@LBI_ARCH@"
 #define LBI_TYPE                "@LBI_TYPE@"
