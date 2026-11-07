@@ -154,7 +154,9 @@ set(LBI_BUILDLABEX "${LBI_LABEL}")
 # ---- reproducible-inputs digest (spec section 4) -----------------------------------
 # Same canonical JSON as lbi_format.inputs_digest(): keys sorted, no spaces.
 set(_lbi_cfg_items "")
-foreach(_v DBG KDBG _WINKD CMAKE_BUILD_TYPE ROSCONFIG_PROFILE ENABLE_DXILCONV ENABLE_DXCOMPILER_L2 LBI_SCRIPT_MODE)
+# REACTOS_TARGET_NT is the single source of truth for the NT compatibility identity
+# (WS-A); it enters the digest so two targets of one commit never share a digest.
+foreach(_v REACTOS_TARGET_NT DBG KDBG _WINKD CMAKE_BUILD_TYPE ROSCONFIG_PROFILE ENABLE_DXILCONV ENABLE_DXCOMPILER_L2 LBI_SCRIPT_MODE)
     if(DEFINED ${_v} AND NOT _v STREQUAL "LBI_SCRIPT_MODE")
         list(APPEND _lbi_cfg_items "${_v}=${${_v}}")
     endif()
