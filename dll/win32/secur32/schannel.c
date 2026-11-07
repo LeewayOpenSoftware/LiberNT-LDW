@@ -86,7 +86,6 @@ struct schan_context
     enum control_token control_token;
     unsigned int alert_type;
     unsigned int alert_number;
-    BOOL shutdown_sent;
 };
 
 static struct schan_handle *schan_handle_table;
@@ -1618,12 +1617,6 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
 
     dump_buffer_desc(message);
 
-    if (ctx->shutdown_sent)
-    {
-        WARN("EncryptMessage after close_notify was sent\n");
-        return SEC_E_CONTEXT_EXPIRED;
-    }
-
     data_idx = schan_find_sec_buffer_idx(message, 0, SECBUFFER_DATA);
     if (data_idx == -1)
     {
@@ -1633,6 +1626,20 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
     buffer = &message->pBuffers[data_idx];
 
     data_size = buffer->cbBuffer;
+
+    /* Windows refuses messages above the reported cbMaximumMessage with
+     * SEC_E_ENCRYPT_FAILURE instead of splitting them; match that. */
+    {
+        struct session_params size_params = { ctx->session };
+        unsigned int max_message = GNUTLS_CALL( get_max_message_size, &size_params );
+
+        if (data_size > max_message)
+        {
+            WARN("message of %Iu bytes exceeds the %u-byte maximum\n", data_size, max_message);
+            return SEC_E_ENCRYPT_FAILURE;
+        }
+    }
+
     data = malloc(data_size);
 #ifdef __REACTOS__
     if (!data)
@@ -1680,12 +1687,7 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
     status = GNUTLS_CALL( send, &params );
 
     if (!status)
-    {
         message->pBuffers[buffer_index[output_buffer_idx]].cbBuffer = output_offset;
-        if (params.control_token == CONTROL_TOKEN_SHUTDOWN)
-            ctx->shutdown_sent = TRUE;
-    }
-
     free(data);
 
     TRACE("Returning %#lx.\n", status);

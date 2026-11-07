@@ -534,7 +534,8 @@ SECURITY_STATUS schan_imp_handshake(schan_imp_session session)
             s->verify_chain_error, s->verify_policy_error);
         if (s->verify_policy_error == CERT_E_CN_NO_MATCH)
             return SEC_E_WRONG_PRINCIPAL;
-        if (s->verify_policy_error == CERT_E_EXPIRED)
+        if (s->verify_policy_error == CERT_E_EXPIRED ||
+            (s->verify_chain_error & CERT_TRUST_IS_NOT_TIME_VALID))
             return SEC_E_CERT_EXPIRED;
         if (s->verify_chain_error == CERT_E_UNTRUSTEDROOT)
             return SEC_E_UNTRUSTED_ROOT;
