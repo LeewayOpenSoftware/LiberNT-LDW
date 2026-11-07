@@ -1642,6 +1642,31 @@ PROPSHEET_WizardSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 }
 
 /******************************************************************************
+ *            PROPSHEET_AeroPageSubclassProc
+ *
+ * Flat background for aero wizard pages: the page dialog and its static
+ * children paint the window colour instead of the dialog grey, so the
+ * content area below the header is white on both comctl32 builds.
+ */
+static LRESULT CALLBACK
+PROPSHEET_AeroPageSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uID, DWORD_PTR dwRef)
+{
+  switch (uMsg)
+  {
+    case WM_CTLCOLORDLG:
+      SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+      return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+
+    case WM_CTLCOLORSTATIC:
+      SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
+      SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+      return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+  }
+
+  return DefSubclassProc(hwnd, uMsg, wParam, lParam);
+}
+
+/******************************************************************************
  *            PROPSHEET_CreatePage
  *
  * Creates a page.
@@ -1719,9 +1744,10 @@ static BOOL PROPSHEET_CreatePage(HWND hwndParent,
 #if __WINE_COMCTL32_VERSION == 6
   if (!(psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD))
       EnableThemeDialogTexture (hwndPage, ETDT_ENABLETAB);
-  else if (psInfo->aeroChrome)
-      EnableThemeDialogTexture (hwndPage, ETDT_ENABLEAEROWIZARDTAB);
 #endif
+
+  if (psInfo->aeroChrome)
+      SetWindowSubclass(hwndPage, PROPSHEET_AeroPageSubclassProc, 1, 0);
 
   return TRUE;
 }
@@ -1779,7 +1805,8 @@ static BOOL PROPSHEET_ShowPage(HWND hwndDlg, int index, PropSheetInfo * psInfo)
      PROPSHEET_CreatePage(hwndDlg, index, psInfo, psInfo->proppage[index].hpage);
   }
 
-  if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD)
+  if ((psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) &&
+      !psInfo->aeroChrome)
   {
      PROPSHEET_SetTitleW(hwndDlg, psInfo->ppshheader.dwFlags,
                          psInfo->proppage[index].pszText);
@@ -3990,7 +4017,11 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         PROPSHEET_AdjustSizeWizard(hwnd, psInfo);
         PROPSHEET_AdjustButtonsWizard(hwnd, psInfo);
         if (psInfo->aeroChrome)
+        {
           PROPSHEET_AeroSetupChrome(hwnd, psInfo);
+          PROPSHEET_SetTitleW(hwnd, psInfo->ppshheader.dwFlags,
+                              psInfo->ppshheader.pszCaption);
+        }
         SetFocus(GetDlgItem(hwnd, IDC_NEXT_BUTTON));
       }
       else
