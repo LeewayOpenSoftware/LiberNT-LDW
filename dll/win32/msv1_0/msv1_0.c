@@ -753,7 +753,6 @@ MsvpEnumerateUsers(
     _Out_ PNTSTATUS ProtocolStatus)
 {
     PMSV1_0_ENUMUSERS_REQUEST RequestBuffer;
-    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
     PMSV1_0_ENUMUSERS_RESPONSE LocalBuffer = NULL;
     PVOID ClientBaseAddress = NULL;
     ULONG BufferLength;
@@ -763,6 +762,7 @@ MsvpEnumerateUsers(
     PLUID LuidPtr;
     PULONG EnumPtr;
     NTSTATUS Status = STATUS_SUCCESS;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
 
     TRACE("MsvpEnumerateUsers()\n");
 
@@ -1019,11 +1019,11 @@ MsvpLm20ChallengeRequest(
     _Out_ PNTSTATUS ProtocolStatus)
 {
     PMSV1_0_LM20_CHALLENGE_REQUEST RequestBuffer;
-    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
     PMSV1_0_LM20_CHALLENGE_RESPONSE LocalBuffer = NULL;
     PVOID ClientBaseAddress = NULL;
     ULONG BufferLength;
     NTSTATUS Status = STATUS_SUCCESS;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
 
     TRACE("MsvpLm20ChallengeRequest()\n");
 

@@ -128,9 +128,9 @@ RXactpCommit(
     PRXACT_DATA Data;
     PRXACT_ACTION Action;
     NTSTATUS Status, TmpStatus;
-    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
     HANDLE KeyHandle;
     ULONG i;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
 
     Data = Context->Data;
 
@@ -299,7 +299,6 @@ RtlInitializeRXact(
     PRXACT_CONTEXT *OutContext)
 {
     NTSTATUS Status, TmpStatus;
-    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
     PRXACT_CONTEXT Context;
     PKEY_VALUE_FULL_INFORMATION KeyValueInformation;
     KEY_VALUE_BASIC_INFORMATION KeyValueBasicInfo;
@@ -312,6 +311,7 @@ RtlInitializeRXact(
     ULONG ValueDataLength;
     ULONG Length;
     HANDLE KeyHandle;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
 
     /* Open or create the 'RXACT' key in the root directory */
     RtlInitUnicodeString(&KeyName, L"RXACT");

@@ -942,8 +942,8 @@ BasepGetModuleHandleExW(BOOLEAN NoLock, DWORD dwPublicFlags, LPCWSTR lpwModuleNa
     UNICODE_STRING ModuleNameU;
     DWORD dwValid;
     BOOLEAN Redirected = FALSE; // FIXME
-    DBG_UNREFERENCED_LOCAL_VARIABLE(dwValid);
     DBG_UNREFERENCED_LOCAL_VARIABLE(Status2);
+    DBG_UNREFERENCED_LOCAL_VARIABLE(dwValid);
 
     /* Validate parameters */
     dwValid = BasepGetModuleHandleExParameterValidation(dwPublicFlags, lpwModuleName, phModule);

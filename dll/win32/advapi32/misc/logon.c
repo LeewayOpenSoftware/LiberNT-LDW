@@ -786,7 +786,6 @@ CreateProcessAsUserCommon(
     _Inout_ LPPROCESS_INFORMATION lpProcessInformation)
 {
     NTSTATUS Status = STATUS_SUCCESS, StatusOnExit;
-    DBG_UNREFERENCED_LOCAL_VARIABLE(StatusOnExit);
     BOOL Success;
     TOKEN_TYPE Type;
     SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
@@ -795,6 +794,7 @@ CreateProcessAsUserCommon(
     HANDLE hTokenDup = NULL;
     HANDLE OriginalImpersonationToken = NULL;
     HANDLE NullToken = NULL;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(StatusOnExit);
 
     if (hToken != NULL)
     {
