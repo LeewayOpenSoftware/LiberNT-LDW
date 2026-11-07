@@ -13360,20 +13360,58 @@ DxgkpCompleteAdapterStart(
             !Adapter->IsBasicDisplayFallback)
         {
             /* The claimant failed before claiming the POST display, so no
-               handoff transaction ran and the rollback above was a no-op;
-               but its StartDevice may already have poked the shared boot
+               handoff transaction ran and the rollback above was a no-op.
+               Its StartDevice may still have poked the shared boot
                framebuffer (BAR sizing, dispi registers) while the
                BasicDisplay fallback was scanning the desktop, leaving it
-               invisible.  Re-assert the fallback's scanout. */
+               invisible - and a restartable failure has just cleared the
+               POST owner, so the owner lookup alone would miss the
+               fallback.  Re-assert the fallback's scanout. */
             PDXGKRNL_ADAPTER Owner;
+            PDXGKRNL_ADAPTER Fallback = NULL;
             PDEVICE_OBJECT OwnerDeviceObject = NULL;
+            PDXGKRNL_MINIPORT_CONTEXT MpCtx = Adapter->MiniportContext;
+            NTSTATUS ReassertStatus = STATUS_UNSUCCESSFUL;
+            PLIST_ENTRY Entry;
+            KIRQL OldIrql;
 
             (VOID)KeWaitForSingleObject(&g_PostDisplayOwnershipMutex,
                                         Executive, KernelMode, FALSE, NULL);
             Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
             if (Owner != NULL && Owner->IsBasicDisplayFallback &&
                 Owner->State == DxgkAdapterStateStarted)
-                (VOID)DxgkVidPnQueueHotPlugRebuild(Owner);
+                Fallback = Owner;
+            if (Fallback == NULL)
+            {
+                /* The owner was cleared with the failure (or never
+                   published): find the started fallback on this miniport's
+                   adapter list. */
+                KeAcquireSpinLock(&MpCtx->AdapterListLock, &OldIrql);
+                for (Entry = MpCtx->AdapterListHead.Flink;
+                     Entry != &MpCtx->AdapterListHead;
+                     Entry = Entry->Flink)
+                {
+                    PDXGKRNL_ADAPTER Candidate =
+                        CONTAINING_RECORD(Entry, DXGKRNL_ADAPTER,
+                                          MiniportAdapterListEntry);
+                    if (Candidate->IsBasicDisplayFallback &&
+                        Candidate->State == DxgkAdapterStateStarted)
+                    {
+                        Fallback = Candidate;
+                        break;
+                    }
+                }
+                KeReleaseSpinLock(&MpCtx->AdapterListLock, OldIrql);
+            }
+            if (Fallback != NULL)
+                ReassertStatus = DxgkVidPnQueueHotPlugRebuild(Fallback);
+            DXGKRNL_INFO("POSTDISPLAY_REASSERT: claimant %p failed 0x%08lX "
+                         "without a claim; owner %p fallback %p -> 0x%08lX\n",
+                         Adapter,
+                         Status,
+                         Owner,
+                         Fallback,
+                         ReassertStatus);
             if (OwnerDeviceObject != NULL)
                 ObDereferenceObject(OwnerDeviceObject);
             KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
