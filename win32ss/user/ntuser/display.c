@@ -553,25 +553,28 @@ UserEnumDisplaySettings(
     PDEVOBJ_vRelease(ppdev);
 
     iFoundMode = 0;
-    for (i = 0; i < pGraphicsDevice->cDevModes; i++)
+    if (pGraphicsDevice->pDevModeList != NULL)
     {
-        pdmentry = &pGraphicsDevice->pDevModeList[i];
-
-        /* FIXME: Consider EDS_RAWMODE */
-#if 0
-        if ((!(dwFlags & EDS_RAWMODE) && (pdmentry->dwFlags & 1)) ||!
-            (dwFlags & EDS_RAWMODE))
-#endif
+        for (i = 0; i < pGraphicsDevice->cDevModes; i++)
         {
-            /* Is this the one we want? */
-            if (iFoundMode == iModeNum)
-            {
-                *ppdm = pdmentry->pdm;
-                return STATUS_SUCCESS;
-            }
+            pdmentry = &pGraphicsDevice->pDevModeList[i];
 
-            /* Increment number of found modes */
-            iFoundMode++;
+            /* FIXME: Consider EDS_RAWMODE */
+#if 0
+            if ((!(dwFlags & EDS_RAWMODE) && (pdmentry->dwFlags & 1)) ||!
+                (dwFlags & EDS_RAWMODE))
+#endif
+            {
+                /* Is this the one we want? */
+                if (iFoundMode == iModeNum)
+                {
+                    *ppdm = pdmentry->pdm;
+                    return STATUS_SUCCESS;
+                }
+
+                /* Increment number of found modes */
+                iFoundMode++;
+            }
         }
     }
 
