@@ -13352,7 +13352,32 @@ DxgkpCompleteAdapterStart(
     }
     else
     {
+        BOOLEAN HadFallbackTransaction = Adapter->PostDisplayHandoffCore.FallbackStopped;
+
         DxgkpCompletePostDisplayHandoff(Adapter, Status, Restartable);
+        if (!HadFallbackTransaction &&
+            Adapter->MiniportContext != NULL &&
+            !Adapter->IsBasicDisplayFallback)
+        {
+            /* The claimant failed before claiming the POST display, so no
+               handoff transaction ran and the rollback above was a no-op;
+               but its StartDevice may already have poked the shared boot
+               framebuffer (BAR sizing, dispi registers) while the
+               BasicDisplay fallback was scanning the desktop, leaving it
+               invisible.  Re-assert the fallback's scanout. */
+            PDXGKRNL_ADAPTER Owner;
+            PDEVICE_OBJECT OwnerDeviceObject = NULL;
+
+            (VOID)KeWaitForSingleObject(&g_PostDisplayOwnershipMutex,
+                                        Executive, KernelMode, FALSE, NULL);
+            Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
+            if (Owner != NULL && Owner->IsBasicDisplayFallback &&
+                Owner->State == DxgkAdapterStateStarted)
+                (VOID)DxgkVidPnQueueHotPlugRebuild(Owner);
+            if (OwnerDeviceObject != NULL)
+                ObDereferenceObject(OwnerDeviceObject);
+            KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
+        }
     }
     if (QueueHotPlug)
     {
