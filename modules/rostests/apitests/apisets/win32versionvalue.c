@@ -76,7 +76,7 @@ query_bits(PISAPISETIMPLEMENTED pfn)
 }
 
 /* Child entry (test name "win32versionvalue_child"): write "bits major minor" to the file in WVV_ENV. */
-void func_win32versionvalue_child(void)
+START_TEST(win32versionvalue_child)
 {
     WCHAR Path[MAX_PATH];
     RTL_OSVERSIONINFOW Ver = { sizeof(Ver) };
@@ -140,7 +140,7 @@ make_patched_copy(PCWSTR Src, PCWSTR Dst)
     return Ok;
 }
 
-void func_win32versionvalue(void)
+START_TEST(win32versionvalue)
 {
     WCHAR Self[MAX_PATH], Dir[MAX_PATH], Copy[MAX_PATH], Out[MAX_PATH], Cmd[2 * MAX_PATH + 64];
     PISAPISETIMPLEMENTED pfn = get_implemented();
