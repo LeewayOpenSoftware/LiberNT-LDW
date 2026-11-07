@@ -577,6 +577,7 @@ DxgkpShouldRegisterDisplayBridge(
            the claimant; DxgkpCompleteAdapterStart defers the completion and
            the hot-plug rebuild resolves it either way. */
         Claimant->PostDisplayHandoffCompletionDeferred = TRUE;
+        InterlockedExchange(&Claimant->PostDisplayHandoffRolledBack, 0);
     }
 
     if (!RegisterDisplayBridge)
@@ -636,6 +637,7 @@ DxgkpCompletePostDisplayHandoff(
 
     if (Action == DxgkPostDisplayCompletionRollback && FallbackAdapter != NULL)
     {
+        InterlockedExchange(&Claimant->PostDisplayHandoffRolledBack, 1);
         Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
         if (Owner != NULL && Owner != Claimant)
         {

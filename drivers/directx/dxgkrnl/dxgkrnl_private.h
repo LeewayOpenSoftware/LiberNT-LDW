@@ -778,6 +778,11 @@ struct _DXGKRNL_ADAPTER
        proves the claimant can drive the desktop; until then BasicDisplay
        stays stopped and one failed commit rolls the desktop back. */
     LONG                       PostDisplayHandoffCompletionDeferred;
+    /* Set when the deferred handoff rolls back to the fallback: the failed
+       claimant keeps its miniport but no longer owns a display, so its
+       hot-plug rebuild can only fail a VidPn commit and is skipped.  Cleared
+       when a fresh handoff claim re-arms the deferral. */
+    volatile LONG              PostDisplayHandoffRolledBack;
 
     /*
      * Native dxgkrnl disables its Basic Display fallback while a real
