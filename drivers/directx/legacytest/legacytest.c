@@ -21,6 +21,10 @@ static ULONG Lt1xPoisonTail = 0;
 static ULONG Lt1xChildCount = 1;
 static ULONG Lt1xFailStart = 0;
 static ULONG Lt1xFailCommit = 0;
+/* L6f K2 arm: keep rejecting the version-sized DRIVERCAPS buffer (the
+   pre-fix behavior) so the lab can force a post-QueryAdapterInfo start
+   failure on purpose and exercise the BasicDisplay-fallback recovery path. */
+static ULONG Lt1xFailCaps = 0;
 
 typedef struct _LT1X_CONTEXT
 {
@@ -122,6 +126,11 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
     Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
     if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
         Lt1xFailCommit = *(PULONG)Info->Data;
+
+    RtlInitUnicodeString(&ValueName, L"FailCaps");
+    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
+    if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
+        Lt1xFailCaps = *(PULONG)Info->Data;
 
     ZwClose(KeyHandle);
     return STATUS_SUCCESS;
@@ -797,6 +806,34 @@ Lt1xDdiQueryDeviceDescriptor(
     return STATUS_SUCCESS;
 }
 
+/* Windows 11 dxgkrnl sizes DXGKQAITYPE_DRIVERCAPS by the admitted DDI
+   version (see dxgkrnl caps_core.h DxgkCapsCoreDriverCapsSize; this table
+   mirrors it): 0x150 bytes for the WDDM 1.x band this driver reports.  A
+   legacy miniport must accept the version-sized buffer and fill only that
+   prefix; demanding the full compiled sizeof(DXGK_DRIVERCAPS) rejects a
+   Windows-faithful dxgkrnl outright. */
+static ULONG
+Lt1xDriverCapsSizeForVersion(ULONG Version)
+{
+    if (Version >= 0xE003)
+        return 0x250;
+    if (Version >= 0x9002)
+        return 0x248;
+    if (Version >= 0x5011)
+        return 0x240;
+    if (Version >= 0x5000 && Version <= 0x5005)
+        return 0;
+    if (Version >= 0x4000)
+        return 0x228;
+    if (Version >= 0x3000)
+        return 0x220;
+    if (Version >= 0x2001)
+        return 0x210;
+    if (Version > 0x104D && Version < 0x2000)
+        return 0x150;
+    return 0;
+}
+
 static DXGKDDI_QUERYADAPTERINFO Lt1xDdiQueryAdapterInfo;
 static NTSTATUS APIENTRY
 Lt1xDdiQueryAdapterInfo(
@@ -813,12 +850,19 @@ Lt1xDdiQueryAdapterInfo(
         case DXGKQAITYPE_DRIVERCAPS:
         {
             PDXGK_DRIVERCAPS Caps;
+            ULONG CapsSize = Lt1xDriverCapsSizeForVersion(Lt1xDdiVersion);
+            ULONG FillSize;
 
             if (pQueryAdapterInfo->pOutputData == NULL ||
+                pQueryAdapterInfo->OutputDataSize < CapsSize)
+                return STATUS_INVALID_PARAMETER;
+            if (Lt1xFailCaps &&
                 pQueryAdapterInfo->OutputDataSize < sizeof(DXGK_DRIVERCAPS))
                 return STATUS_INVALID_PARAMETER;
             Caps = (PDXGK_DRIVERCAPS)pQueryAdapterInfo->pOutputData;
-            RtlZeroMemory(Caps, sizeof(*Caps));
+            FillSize = pQueryAdapterInfo->OutputDataSize < sizeof(*Caps)
+                ? pQueryAdapterInfo->OutputDataSize : sizeof(*Caps);
+            RtlZeroMemory(Caps, FillSize);
             Caps->GpuEngineTopology.NbAsymetricProcessingNodes = 1;
             return STATUS_SUCCESS;
         }
@@ -1700,8 +1744,8 @@ DriverEntry(
 
     Lt1xReadConfig(RegistryPath);
 
-    DbgPrint("LT1X: DriverEntry version=0x%lx poison=%lu children=%lu failStart=%lu failCommit=%lu\n",
-             Lt1xDdiVersion, Lt1xPoisonTail, Lt1xChildCount, Lt1xFailStart, Lt1xFailCommit);
+    DbgPrint("LT1X: DriverEntry version=0x%lx poison=%lu children=%lu failStart=%lu failCommit=%lu failCaps=%lu\n",
+             Lt1xDdiVersion, Lt1xPoisonTail, Lt1xChildCount, Lt1xFailStart, Lt1xFailCommit, Lt1xFailCaps);
 
     RtlZeroMemory(&InitData, sizeof(InitData));
 
