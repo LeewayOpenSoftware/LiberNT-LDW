@@ -2581,6 +2581,199 @@ static void test_schannel_s2_verify_reject(void)
     CertFreeCertificateContext(cert);
 }
 
+static SECURITY_STATUS s2_handshake_to_end(CredHandle *client_cred, CredHandle *server_cred,
+        const char *target, CtxtHandle *client_context, CtxtHandle *server_context,
+        unsigned char *client_tok, ULONG client_tok_size,
+        unsigned char *server_tok, ULONG server_tok_size, SECURITY_STATUS *server_status_out)
+{
+    ULONG attrs, i;
+    SECURITY_STATUS client_status, server_status;
+    SecBufferDesc c_in, c_out, s_in, s_out;
+    SecBuffer c_in_buf, c_out_buf, s_in_buf, s_out_buf;
+    ULONG client_tok_len, server_tok_len;
+
+    c_in.ulVersion = c_out.ulVersion = s_in.ulVersion = s_out.ulVersion = SECBUFFER_VERSION;
+    c_in.cBuffers = c_out.cBuffers = s_in.cBuffers = s_out.cBuffers = 1;
+    c_in.pBuffers = &c_in_buf;
+    c_out.pBuffers = &c_out_buf;
+    s_in.pBuffers = &s_in_buf;
+    s_out.pBuffers = &s_out_buf;
+
+    client_status = server_status = SEC_I_CONTINUE_NEEDED;
+    c_out_buf.BufferType = SECBUFFER_TOKEN;
+    c_out_buf.cbBuffer = client_tok_size;
+    c_out_buf.pvBuffer = client_tok;
+    client_status = InitializeSecurityContextA(client_cred, NULL, (SEC_CHAR *)target,
+                                               ISC_REQ_CONFIDENTIALITY | ISC_REQ_STREAM, 0, 0,
+                                               NULL, 0, client_context, &c_out, &attrs, NULL);
+    client_tok_len = c_out_buf.cbBuffer;
+
+    for (i = 0; i < 16 && (client_status != SEC_E_OK || server_status != SEC_E_OK); i++)
+    {
+        if (server_status != SEC_E_OK && client_tok_len)
+        {
+            s_in_buf.BufferType = SECBUFFER_TOKEN;
+            s_in_buf.cbBuffer = client_tok_len;
+            s_in_buf.pvBuffer = client_tok;
+            s_out_buf.BufferType = SECBUFFER_TOKEN;
+            s_out_buf.cbBuffer = server_tok_size;
+            s_out_buf.pvBuffer = server_tok;
+            server_status = AcceptSecurityContext(server_cred,
+                                                  i ? server_context : NULL, &s_in,
+                                                  ASC_REQ_CONFIDENTIALITY | ASC_REQ_STREAM, 0,
+                                                  server_context, &s_out, &attrs, NULL);
+            server_tok_len = s_out_buf.cbBuffer;
+            client_tok_len = 0;
+        }
+        if (client_status != SEC_E_OK && server_tok_len)
+        {
+            c_in_buf.BufferType = SECBUFFER_TOKEN;
+            c_in_buf.cbBuffer = server_tok_len;
+            c_in_buf.pvBuffer = server_tok;
+            c_out_buf.BufferType = SECBUFFER_TOKEN;
+            c_out_buf.cbBuffer = client_tok_size;
+            c_out_buf.pvBuffer = client_tok;
+            client_status = InitializeSecurityContextA(client_cred, client_context,
+                                                       (SEC_CHAR *)target,
+                                                       ISC_REQ_CONFIDENTIALITY | ISC_REQ_STREAM, 0, 0,
+                                                       &c_in, 0, NULL, &c_out, &attrs, NULL);
+            client_tok_len = c_out_buf.cbBuffer;
+            server_tok_len = 0;
+        }
+        if (client_status != SEC_E_OK && client_status != SEC_I_CONTINUE_NEEDED)
+            break;
+    }
+
+    *server_status_out = server_status;
+    return client_status;
+}
+
+static void s2_setup_fixture(PCCERT_CONTEXT *cert_out, HCRYPTPROV *csp_out, HCRYPTKEY *key_out)
+{
+    PCCERT_CONTEXT cert;
+    HCRYPTPROV csp;
+    HCRYPTKEY key;
+    SECURITY_STATUS status;
+    CRYPT_KEY_PROV_INFO keyProvInfo;
+    WCHAR ms_def_prov_w[MAX_PATH];
+
+    *cert_out = NULL;
+    *csp_out = 0;
+    *key_out = 0;
+
+    lstrcpyW(ms_def_prov_w, MS_DEF_PROV_W);
+    keyProvInfo.pwszContainerName = cspNameW;
+    keyProvInfo.pwszProvName = ms_def_prov_w;
+    keyProvInfo.dwProvType = PROV_RSA_FULL;
+    keyProvInfo.dwFlags = 0;
+    keyProvInfo.cProvParam = 0;
+    keyProvInfo.rgProvParam = NULL;
+    keyProvInfo.dwKeySpec = AT_SIGNATURE;
+
+    cert = CertCreateCertificateContext(X509_ASN_ENCODING, selfSignedCert, sizeof(selfSignedCert));
+    ok(cert != NULL, "CertCreateCertificateContext failed\n");
+    if (!cert) return;
+    status = CertSetCertificateContextProperty(cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &keyProvInfo);
+    ok(status, "CertSetCertificateContextProperty failed: %08lx\n", GetLastError());
+    CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_DELETEKEYSET);
+    status = CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET);
+    ok(status, "CryptAcquireContextW failed: %08lx\n", GetLastError());
+    if (!status) { CertFreeCertificateContext(cert); return; }
+    status = CryptImportKey(csp, privKey, sizeof(privKey), 0, 0, &key);
+    ok(status, "CryptImportKey failed: %08lx\n", GetLastError());
+    if (!status) { CryptReleaseContext(csp, 0); CertFreeCertificateContext(cert); return; }
+
+    *cert_out = cert;
+    *csp_out = csp;
+    *key_out = key;
+}
+
+static void s2_teardown_fixture(PCCERT_CONTEXT cert, HCRYPTPROV csp, HCRYPTKEY key)
+{
+    if (key) CryptDestroyKey(key);
+    if (csp)
+    {
+        CryptReleaseContext(csp, 0);
+        CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_DELETEKEYSET);
+    }
+    if (cert) CertFreeCertificateContext(cert);
+}
+
+/* Trust the fixture root, then verify both sides of the hostname policy:
+ * a wrong target name fails, the certificate's own CN succeeds. Without a
+ * trusted root the trust error would short-circuit the name check (the P2
+ * finding), so the root is installed into ROOT for the duration. */
+static void test_schannel_s2_hostname_mismatch(void)
+{
+    static unsigned char client_tok[8192], server_tok[8192];
+    SECURITY_STATUS status, server_status;
+    CredHandle client_cred_handle, server_cred_handle;
+    CtxtHandle client_context, server_context;
+    SCHANNEL_CRED client_cred, server_cred;
+    PCCERT_CONTEXT cert, root_copy;
+    HCERTSTORE root_store;
+    HCRYPTPROV csp;
+    HCRYPTKEY key;
+
+    s2_setup_fixture(&cert, &csp, &key);
+    if (!cert || !csp || !key) { s2_teardown_fixture(cert, csp, key); return; }
+
+    root_store = CertOpenSystemStoreA(0, "ROOT");
+    ok(root_store != NULL, "CertOpenSystemStoreA(ROOT) failed: %08lx\n", GetLastError());
+    if (!root_store) { s2_teardown_fixture(cert, csp, key); return; }
+    if (!CertAddCertificateContextToStore(root_store, cert, CERT_STORE_ADD_REPLACE_EXISTING, &root_copy))
+    {
+        skip("cannot add the test root to the ROOT store (elevated rights needed)\n");
+        CertCloseStore(root_store, 0);
+        s2_teardown_fixture(cert, csp, key);
+        return;
+    }
+
+    init_cred(&client_cred);
+    init_cred(&server_cred);
+    client_cred.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT;
+    client_cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS;
+    server_cred.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
+    server_cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MANUAL_CRED_VALIDATION;
+    server_cred.cCreds = 1;
+    server_cred.paCred = &cert;
+
+    status = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL,
+                                       &client_cred, NULL, NULL, &client_cred_handle, NULL);
+    ok(status == SEC_E_OK, "client AcquireCredentialsHandleA failed: %08lx\n", status);
+    status = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A, SECPKG_CRED_INBOUND, NULL,
+                                       &server_cred, NULL, NULL, &server_cred_handle, NULL);
+    ok(status == SEC_E_OK, "server AcquireCredentialsHandleA failed: %08lx\n", status);
+
+    /* Wrong name: the fixture CN is "Juan Lang", the target is not. */
+    status = s2_handshake_to_end(&client_cred_handle, &server_cred_handle, "localhost",
+                                 &client_context, &server_context,
+                                 client_tok, sizeof(client_tok), server_tok, sizeof(server_tok),
+                                 &server_status);
+    ok(status == SEC_E_WRONG_PRINCIPAL || broken(status == SEC_E_CERT_UNKNOWN),
+       "hostname mismatch must fail with SEC_E_WRONG_PRINCIPAL, got %08lx\n", status);
+    DeleteSecurityContext(&client_context);
+    if (server_status == SEC_E_OK)
+        DeleteSecurityContext(&server_context);
+
+    /* Right name: the same credentials and trusted root must succeed. */
+    status = s2_handshake_to_end(&client_cred_handle, &server_cred_handle, "Juan Lang",
+                                 &client_context, &server_context,
+                                 client_tok, sizeof(client_tok), server_tok, sizeof(server_tok),
+                                 &server_status);
+    ok(status == SEC_E_OK, "handshake against the fixture CN failed: %08lx\n", status);
+    DeleteSecurityContext(&client_context);
+    if (server_status == SEC_E_OK)
+        DeleteSecurityContext(&server_context);
+
+    FreeCredentialsHandle(&client_cred_handle);
+    FreeCredentialsHandle(&server_cred_handle);
+
+    CertDeleteCertificateFromStore(root_copy);
+    CertCloseStore(root_store, 0);
+    s2_teardown_fixture(cert, csp, key);
+}
+
 START_TEST(schannel)
 {
     WSADATA wsa_data;
@@ -2598,4 +2791,5 @@ START_TEST(schannel)
     test_connection_shutdown();
     test_schannel_s2_loopback();
     test_schannel_s2_verify_reject();
+    test_schannel_s2_hostname_mismatch();
 }
