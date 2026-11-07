@@ -1214,6 +1214,21 @@ EngGetDriverName(_In_ HDEV hdev)
 }
 
 
+static
+VOID
+PDEVOBJ_vVirtualizeDeviceCaps(
+    _In_ PPDEVOBJ ppdev,
+    _Inout_ PDEVCAPS pDevCaps)
+{
+    if (!(ppdev->flFlags & PDEV_DISPLAY) || !UserDpiIsVirtualCaller())
+        return;
+
+    pDevCaps->ulLogPixelsX = USER_SYSTEM_DPI_DEFAULT;
+    pDevCaps->ulLogPixelsY = USER_SYSTEM_DPI_DEFAULT;
+    pDevCaps->ulHorzRes = UserDpiToLogical(pDevCaps->ulHorzRes);
+    pDevCaps->ulVertRes = UserDpiToLogical(pDevCaps->ulVertRes);
+}
+
 INT
 APIENTRY
 NtGdiGetDeviceCaps(
@@ -1233,6 +1248,7 @@ NtGdiGetDeviceCaps(
 
     /* Get the data */
     PDEVOBJ_vGetDeviceCaps(pdc->ppdev, &devcaps);
+    PDEVOBJ_vVirtualizeDeviceCaps(pdc->ppdev, &devcaps);
 
     /* Unlock the DC */
     DC_UnlockDc(pdc);
@@ -1383,6 +1399,7 @@ NtGdiGetDeviceCapsAll(
 
     /* Get the data */
     PDEVOBJ_vGetDeviceCaps(pdc->ppdev, &devcaps);
+    PDEVOBJ_vVirtualizeDeviceCaps(pdc->ppdev, &devcaps);
 
     /* Unlock the DC */
     DC_UnlockDc(pdc);
