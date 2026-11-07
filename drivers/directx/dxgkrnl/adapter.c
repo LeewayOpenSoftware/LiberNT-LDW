@@ -13372,6 +13372,7 @@ DxgkpCompleteAdapterStart(
             PDEVICE_OBJECT OwnerDeviceObject = NULL;
             PDXGKRNL_MINIPORT_CONTEXT MpCtx = Adapter->MiniportContext;
             NTSTATUS ReassertStatus = STATUS_UNSUCCESSFUL;
+            BOOLEAN ReassertInbv = FALSE;
             PLIST_ENTRY Entry;
             KIRQL OldIrql;
 
@@ -13405,13 +13406,26 @@ DxgkpCompleteAdapterStart(
             }
             if (Fallback != NULL)
                 ReassertStatus = DxgkVidPnQueueHotPlugRebuild(Fallback);
+            if (Fallback != NULL && !InbvCheckDisplayOwnership())
+            {
+                /* The claimant took the boot display at the top of its
+                   DxgkAdapterStart and the restartable failure cleared the
+                   POST owner; the BasicDisplay fallback renders through the
+                   inbv virtual framebuffer, so while inbv ownership stays
+                   LOST the screen keeps showing the boot text even though
+                   the fallback is running.  Take the ownership back. */
+                InbvAcquireDisplayOwnership();
+                ReassertInbv = TRUE;
+            }
             DXGKRNL_INFO("POSTDISPLAY_REASSERT: claimant %p failed 0x%08lX "
-                         "without a claim; owner %p fallback %p -> 0x%08lX\n",
+                         "without a claim; owner %p fallback %p rebuild "
+                         "0x%08lX inbv %s\n",
                          Adapter,
                          Status,
                          Owner,
                          Fallback,
-                         ReassertStatus);
+                         ReassertStatus,
+                         ReassertInbv ? "acquired" : "unchanged");
             if (OwnerDeviceObject != NULL)
                 ObDereferenceObject(OwnerDeviceObject);
             KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
