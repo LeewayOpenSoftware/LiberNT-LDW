@@ -9,6 +9,7 @@
 #include "kd.h"
 #include <kdterm.h>
 #include <reactos/buildno.h>
+#include <reactos/lbi.h>
 
 #define KDP_INFO_TEXT_SIZE      0x8000
 #define KDP_INFO_MACHINE_SIZE   768
@@ -409,9 +410,11 @@ KdpInfoBuildSystem(VOID)
     ULONG Length = 0;
 
     KdpInfoAppend(KdpInfoText, sizeof(KdpInfoText), &Length,
-                  "os=LiberNT %s\nbuild=%s\nrevision=%s\nnt=%lu.%lu.%lu\narchitecture=%u\n"
+                  "os=LiberNT %s\nbuild=%s\nbuildlabex=%s\nlbi_attempt=%s\nlbi_inputs=%s\n"
+                  "revision=%s\nnt=%lu.%lu.%lu\narchitecture=%u\n"
                   "processors=%lu\nmemory_mb=%lu\nuptime=%lu\n",
-                  KERNEL_VERSION_STR, NtBuildLab, KERNEL_VERSION_COMMIT_HASH,
+                  KERNEL_VERSION_STR, NtBuildLab, NtBuildLabEx, LBI_ATTEMPT_ID, LBI_INPUTS_DIGEST_SHORT,
+                  KERNEL_VERSION_COMMIT_HASH,
                   SharedUserData->NtMajorVersion, SharedUserData->NtMinorVersion, NtBuildNumber & 0xFFFF,
                   KeProcessorArchitecture, (ULONG)KeNumberProcessors,
                   (ULONG)(((ULONGLONG)MmNumberOfPhysicalPages * PAGE_SIZE) >> 20),

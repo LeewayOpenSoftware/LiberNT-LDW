@@ -11,6 +11,7 @@
 
 #include <ntoskrnl.h>
 #include <reactos/buildno.h>
+#include <reactos/lbi.h>
 
 #define NDEBUG
 #include <debug.h>
@@ -93,6 +94,7 @@ KdpPrintBanner(VOID)
 
     DPRINT1("-----------------------------------------------------\n");
     DPRINT1("LiberNT " KERNEL_VERSION_STR " (Build " KERNEL_VERSION_BUILD_STR ") (Commit " KERNEL_VERSION_COMMIT_HASH ")\n");
+    DPRINT1("Leeway Build " LBI_LABEL " (Attempt " LBI_ATTEMPT_ID ") (Inputs " LBI_INPUTS_DIGEST_SHORT ")\n");
     DPRINT1("%u System Processor [%u MB Memory]\n", KeNumberProcessors, MemSizeMBs);
 
     if (KeLoaderBlock)

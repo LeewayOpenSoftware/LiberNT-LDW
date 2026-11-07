@@ -11,6 +11,7 @@
 
 #include <ntoskrnl.h>
 #include <reactos/buildno.h>
+#include <reactos/lbi.h>
 #include <reactos/smpdbg.h>
 #include "inbv/logo.h"
 
@@ -78,8 +79,17 @@ static WCHAR ExpArm64CsdVersionBuffer[256];
 static WCHAR ExpArm64VersionBuffer[64];
 #endif
 
-CHAR NtBuildLab[] = KERNEL_VERSION_BUILD_STR "."
-                    REACTOS_COMPILER_NAME "_" REACTOS_COMPILER_VERSION;
+/*
+ * Leeway Build Identity (owner directive, domain B). BuildLab and BuildLabEx
+ * carry the allocated build attempt in the NT shapes
+ *   BuildLab   = <sequence>.<channel>.<yymmdd-hhmm>
+ *   BuildLabEx = <sequence>.<revision>.<arch><fre|chk>.<channel>.<yymmdd-hhmm>
+ * (sdk/cmake/lbi.cmake). They never carry the NT compatibility version, and
+ * NtMajorVersion/NtMinorVersion/NtBuildNumber above never carry the LBI.
+ * The toolchain that used to be appended to BuildLab now lives in lbi.json.
+ */
+CHAR NtBuildLab[] = LBI_BUILDLAB;
+CHAR NtBuildLabEx[] = LBI_BUILDLABEX;
 
 /* Init flags and settings */
 ULONG ExpInitializationPhase;
