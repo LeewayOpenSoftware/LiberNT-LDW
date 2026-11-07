@@ -1273,15 +1273,19 @@ LdrpApisetVersion(VOID)
 
     if (CachedApisetVersion == ~0u)
     {
-        PPEB Peb = NtCurrentPeb();
-        DWORD OsVersion = (Peb->OSMajorVersion << 8) | Peb->OSMinorVersion;
+        /* The schema is a property of the system, not of the image: read the
+         * system version from KUSER_SHARED_DATA. The PEB OS fields can be
+         * overridden per process by the image's Win32VersionValue (they feed
+         * RtlGetVersion/GetVersionEx only); Windows does not let that override
+         * change API-set resolution. */
+        DWORD OsVersion = (SharedUserData->NtMajorVersion << 8) | SharedUserData->NtMinorVersion;
 
         if (OsVersion >= _WIN32_WINNT_WIN10)
         {
             CachedApisetVersion = APISET_WIN10;
             /* Windows 11 keeps the 10.0 major.minor; the build number tells it apart.
              * Keep WIN10 set so a contract without a WIN11 bit still resolves. */
-            if (Peb->OSBuildNumber >= 22000)
+            if (SharedUserData->NtBuildNumber >= 22000)
                 CachedApisetVersion |= APISET_WIN11;
         }
         else if (OsVersion >= _WIN32_WINNT_WINBLUE)
