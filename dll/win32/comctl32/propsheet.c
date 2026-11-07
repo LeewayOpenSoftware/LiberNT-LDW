@@ -154,7 +154,7 @@ static const WCHAR PropSheetInfoStr[] = L"PropertySheetInfo";
 #define MAX_TABTEXT_LENGTH 255
 #define MAX_BUTTONTEXT_LENGTH 64
 
-#define INTRNL_ANY_WIZARD (PSH_WIZARD | PSH_WIZARD97_OLD | PSH_WIZARD97_NEW | PSH_WIZARD_LITE)
+#define INTRNL_ANY_WIZARD (PSH_WIZARD | PSH_WIZARD97_OLD | PSH_WIZARD97_NEW | PSH_WIZARD_LITE | PSH_AEROWIZARD)
 
 /* Wizard metrics specified in DLUs */
 #define WIZARD_PADDING 7
@@ -618,7 +618,14 @@ static VOID PROPSHEET_UnImplementedFlags(DWORD dwFlags)
    *  PSH_RTLREADING         0x00000800
    *  PSH_STRETCHWATERMARK   0x00040000
    *  PSH_USEPAGELANG        0x00200000
+   *
+   * recognised but unused by the aero wizard (M0):
+   *  PSH_RESIZABLE          0x04000000
+   *  PSH_HEADERBITMAP       0x08000000
+   *  PSH_NOMARGIN           0x10000000
    */
+
+    dwFlags &= ~(PSH_RESIZABLE | PSH_HEADERBITMAP | PSH_NOMARGIN);
 
     add_flag(PSH_RTLREADING);
     add_flag(PSH_STRETCHWATERMARK);
@@ -2686,6 +2693,116 @@ static void PROPSHEET_SetWizButtons(HWND hwndDlg, DWORD dwFlags)
 }
 
 /******************************************************************************
+ *            PROPSHEET_GetWizButtonByIndex
+ *
+ *     Maps a PSBTN_* index to the matching wizard command-area button.
+ */
+static HWND PROPSHEET_GetWizButtonByIndex(HWND hwndDlg, UINT button)
+{
+  switch (button)
+  {
+    case PSBTN_BACK:   return GetDlgItem(hwndDlg, IDC_BACK_BUTTON);
+    case PSBTN_NEXT:   return GetDlgItem(hwndDlg, IDC_NEXT_BUTTON);
+    case PSBTN_FINISH: return GetDlgItem(hwndDlg, IDC_FINISH_BUTTON);
+    case PSBTN_CANCEL: return GetDlgItem(hwndDlg, IDCANCEL);
+    default:           return NULL;
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_SetNextTextW
+ *
+ *     Sets the label of the Next button (PSM_SETNEXTTEXT, UNICODE only).
+ */
+static void PROPSHEET_SetNextTextW(HWND hwndDlg, LPCWSTR text)
+{
+  HWND hwndNext = GetDlgItem(hwndDlg, IDC_NEXT_BUTTON);
+
+  if (hwndNext)
+    SetWindowTextW(hwndNext, text);
+}
+
+/******************************************************************************
+ *            PROPSHEET_SetWizButtonTextW
+ *
+ *     Sets the label of any wizard command-area button (PSM_SETBUTTONTEXT,
+ *     UNICODE only).
+ */
+static void PROPSHEET_SetWizButtonTextW(HWND hwndDlg, UINT button, LPCWSTR text)
+{
+  HWND hwndButton = PROPSHEET_GetWizButtonByIndex(hwndDlg, button);
+
+  if (hwndButton)
+    SetWindowTextW(hwndButton, text);
+}
+
+/******************************************************************************
+ *            PROPSHEET_ShowWizButtons
+ *
+ *     Shows or hides wizard command-area buttons (PSM_SHOWWIZBUTTONS).
+ *     A button in dwMask is shown only when it is also in dwFlags.
+ */
+static void PROPSHEET_ShowWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask)
+{
+  static const struct
+  {
+    DWORD dwBit;
+    INT nIdButton;
+  } buttons[] =
+  {
+    { PSWIZB_BACK,    IDC_BACK_BUTTON   },
+    { PSWIZB_NEXT,    IDC_NEXT_BUTTON   },
+    { PSWIZB_FINISH,  IDC_FINISH_BUTTON },
+    { PSWIZB_CANCEL,  IDCANCEL          },
+  };
+  UINT i;
+
+  for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+  {
+    if (dwMask & buttons[i].dwBit)
+    {
+      HWND hwndButton = GetDlgItem(hwndDlg, buttons[i].nIdButton);
+
+      if (hwndButton)
+        ShowWindow(hwndButton, (dwFlags & buttons[i].dwBit) ? SW_SHOW : SW_HIDE);
+    }
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_EnableWizButtons
+ *
+ *     Enables or disables wizard command-area buttons (PSM_ENABLEWIZBUTTONS).
+ *     A button in dwMask is enabled only when it is also in dwFlags.
+ */
+static void PROPSHEET_EnableWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask)
+{
+  static const struct
+  {
+    DWORD dwBit;
+    INT nIdButton;
+  } buttons[] =
+  {
+    { PSWIZB_BACK,    IDC_BACK_BUTTON   },
+    { PSWIZB_NEXT,    IDC_NEXT_BUTTON   },
+    { PSWIZB_FINISH,  IDC_FINISH_BUTTON },
+    { PSWIZB_CANCEL,  IDCANCEL          },
+  };
+  UINT i;
+
+  for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+  {
+    if (dwMask & buttons[i].dwBit)
+    {
+      HWND hwndButton = GetDlgItem(hwndDlg, buttons[i].nIdButton);
+
+      if (hwndButton)
+        EnableWindow(hwndButton, (dwFlags & buttons[i].dwBit) != 0);
+    }
+  }
+}
+
+/******************************************************************************
  *            PROPSHEET_SetHeaderTitleW
  */
 static void PROPSHEET_SetHeaderTitleW(HWND hwndDlg, UINT page_index, const WCHAR *title)
@@ -3916,6 +4033,22 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     case PSM_SETWIZBUTTONS:
       PROPSHEET_SetWizButtons(hwnd, (DWORD)lParam);
+      return TRUE;
+
+    case PSM_SETNEXTTEXTW:
+      PROPSHEET_SetNextTextW(hwnd, (LPCWSTR)lParam);
+      return TRUE;
+
+    case PSM_SETBUTTONTEXTW:
+      PROPSHEET_SetWizButtonTextW(hwnd, (UINT)wParam, (LPCWSTR)lParam);
+      return TRUE;
+
+    case PSM_SHOWWIZBUTTONS:
+      PROPSHEET_ShowWizButtons(hwnd, (DWORD)wParam, (DWORD)lParam);
+      return TRUE;
+
+    case PSM_ENABLEWIZBUTTONS:
+      PROPSHEET_EnableWizButtons(hwnd, (DWORD)wParam, (DWORD)lParam);
       return TRUE;
 
     case PSM_SETCURSELID:
