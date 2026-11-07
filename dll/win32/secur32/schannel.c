@@ -481,6 +481,29 @@ static DWORD get_enabled_protocols(const void *credentials)
     }
 }
 
+static DWORD get_cred_flags(const void *credentials)
+{
+    const SCHANNEL_CRED *cred_old;
+    const SCH_CREDENTIALS *cred = credentials;
+
+    if (!cred)
+        return 0;
+
+    switch (cred->dwVersion)
+    {
+    case SCH_CRED_V3:
+    case SCHANNEL_CRED_VERSION:
+        cred_old = credentials;
+        return cred_old->dwFlags;
+
+    case SCH_CREDENTIALS_VERSION:
+        return cred->dwFlags;
+
+    default:
+        return 0;
+    }
+}
+
 static DWORD get_disabled_protocols(const void *credentials)
 {
     const SCH_CREDENTIALS *cred = credentials;
@@ -785,6 +808,7 @@ static SECURITY_STATUS acquire_credentials_handle(ULONG fCredentialUse,
     if (!(creds = malloc(sizeof(*creds)))) return SEC_E_INSUFFICIENT_MEMORY;
     creds->credential_use = fCredentialUse;
     creds->enabled_protocols = enabled_protocols;
+    creds->flags = schanCred ? get_cred_flags(schanCred) : 0;
 
 #ifdef __REACTOS__
     if (cert && !(key_blob = get_key_blob(cert, &key_size))

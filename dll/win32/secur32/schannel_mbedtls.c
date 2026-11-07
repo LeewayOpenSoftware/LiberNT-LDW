@@ -403,14 +403,18 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
         mbedtls_ssl_conf_renegotiation(&s->conf, MBEDTLS_SSL_RENEGOTIATION_ENABLED);
 
     TRACE("MBEDTLS set authmode\n");
-    if (cred->credential_use & SECPKG_CRED_INBOUND)
+    if ((cred->credential_use & SECPKG_CRED_INBOUND) ||
+        (cred->flags & SCH_CRED_MANUAL_CRED_VALIDATION))
+    {
+        /* Server client-certificate policy stays off until the ISC_REQ flags
+         * ask for it; SCH_CRED_MANUAL_CRED_VALIDATION is the documented opt
+         * out that makes the application validate the certificate itself. */
         mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    }
     else
     {
         /* Client: crypt32 is the certificate policy engine; verification is
-         * mandatory and hard-fails (no silent acceptance). Server-side
-         * client-certificate policy stays off until the ISC_REQ flags ask
-         * for it. */
+         * mandatory and hard-fails (no silent acceptance). */
         mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
         mbedtls_ssl_conf_verify(&s->conf, schan_verify_crypt32_cb, s);
     }

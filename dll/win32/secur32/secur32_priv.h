@@ -88,6 +88,7 @@ typedef struct schan_credentials
     ULONG credential_use;
     DWORD enabled_protocols;
     UINT64 credentials;
+    ULONG flags;
 } schan_credentials;
 
 struct session_params
