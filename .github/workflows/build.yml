@@ -70,6 +70,29 @@ jobs:
         echo "CCACHE_MAXSIZE=1G" >> $GITHUB_ENV
         echo "CCACHE_SLOPPINESS=time_macros" >> $GITHUB_ENV
 
+    - name: Allocate the Leeway Build Identity
+      id: lbi
+      env:
+        LBI_LEDGER_DEPLOY_KEY: ${{ secrets.LBI_LEDGER_DEPLOY_KEY }}
+      run: |
+        ENV_NAME=$([ "${{matrix.compiler}}" = "clang" ] && echo Clang || echo GCC)
+        OUTDIR="output-$ENV_NAME-${{matrix.arch}}-debug"
+        if [ -z "$LBI_LEDGER_DEPLOY_KEY" ]; then
+          echo "::notice::LBI: no ledger key in this context; the build stays unallocated"
+          echo "require=OFF" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        printf '%s
+' "$LBI_LEDGER_DEPLOY_KEY" > ~/.ssh/lbi_ledger && chmod 600 ~/.ssh/lbi_ledger
+        ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+        export GIT_SSH_COMMAND="ssh -i ~/.ssh/lbi_ledger -o IdentitiesOnly=yes"
+        python3 -I sdk/tools/lbi/lbi_alloc.py --ledger git@github.com:LeewayOpenSoftware/leeway-lbi-ledger.git \
+          --out "$OUTDIR" --source . --arch ${{matrix.arch}} --type chk --channel ldw_ci \
+          --worker "gha-${{github.run_id}}-${{github.run_attempt}}"
+        rm -f ~/.ssh/lbi_ledger
+        echo "require=ON" >> "$GITHUB_OUTPUT"
+
     - name: Configure
       id: configure
       run: |
@@ -83,7 +106,8 @@ jobs:
           -DREACTOS_TARGET_NT=0xA00 \
           -DDIAGDATA_CHANNEL= \
           -DLIBERNT_BUILD_UPDATE_PENDING=ON \
-          -DENABLE_CCACHE=1
+          -DENABLE_CCACHE=1 \
+          -DLBI_REQUIRE_ALLOCATION=${{ steps.lbi.outputs.require || 'OFF' }}
         ENV_NAME=$([ "${{matrix.compiler}}" = "clang" ] && echo Clang || echo GCC)
         echo "outdir=output-$ENV_NAME-${{matrix.arch}}-debug" >> "$GITHUB_OUTPUT"
 
