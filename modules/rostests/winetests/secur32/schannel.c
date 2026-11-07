@@ -2109,6 +2109,354 @@ static void test_ncrypt_key_credentials(void)
     CertCloseStore(store, 0);
 }
 
+static SECURITY_STATUS s2_encrypt(CtxtHandle *ctx, const SecPkgContext_StreamSizes *sizes,
+                                  const unsigned char *data, ULONG len,
+                                  unsigned char **out, ULONG *out_len)
+{
+    /* One contiguous block: header | data | trailer(s). The data buffer's
+     * cbBuffer carries the logical plaintext length while the physical block
+     * leaves room for the per-record expansion of a multi-record message. */
+    ULONG records = len ? (len + 16382) / 16383 : 1;
+    ULONG block = sizes->cbHeader + len + records * (sizes->cbHeader + sizes->cbTrailer) + 64;
+    unsigned char *buf = malloc(block);
+    SecBufferDesc desc;
+    SecBuffer b[3];
+    SECURITY_STATUS status;
+
+    if (!buf) return SEC_E_INSUFFICIENT_MEMORY;
+    memcpy(buf + sizes->cbHeader, data, len);
+
+    b[0].BufferType = SECBUFFER_STREAM_HEADER;
+    b[0].cbBuffer = sizes->cbHeader;
+    b[0].pvBuffer = buf;
+    b[1].BufferType = SECBUFFER_DATA;
+    b[1].cbBuffer = len;
+    b[1].pvBuffer = buf + sizes->cbHeader;
+    b[2].BufferType = SECBUFFER_STREAM_TRAILER;
+    b[2].cbBuffer = block - sizes->cbHeader - len;
+    b[2].pvBuffer = buf + sizes->cbHeader + len;
+    desc.ulVersion = SECBUFFER_VERSION;
+    desc.cBuffers = 3;
+    desc.pBuffers = b;
+
+    status = EncryptMessage(ctx, 0, &desc, 0);
+    if (status != SEC_E_OK)
+    {
+        free(buf);
+        return status;
+    }
+
+    *out_len = b[0].cbBuffer + b[1].cbBuffer + b[2].cbBuffer;
+    *out = buf;
+    return SEC_E_OK;
+}
+
+/* Decrypt pending_len bytes at pending (growing the pending window from
+ * stream in fragment-sized chunks), appending plaintext to out. Exercises
+ * SEC_E_INCOMPLETE_MESSAGE/SECBUFFER_MISSING and SECBUFFER_EXTRA handling. */
+static SECURITY_STATUS s2_decrypt_all(CtxtHandle *ctx, const unsigned char *stream, ULONG stream_len,
+                                      ULONG fragment, unsigned char *out, ULONG out_cap, ULONG *out_len)
+{
+    static unsigned char pending[262144];
+    ULONG pending_len = 0, stream_off = 0, collected = 0;
+    SECURITY_STATUS status = SEC_E_OK;
+    int guard = 0;
+
+    *out_len = 0;
+    while (stream_off < stream_len || pending_len)
+    {
+        SecBufferDesc desc;
+        SecBuffer b[4];
+
+        if (!pending_len || status == SEC_E_INCOMPLETE_MESSAGE)
+        {
+            ULONG chunk = stream_len - stream_off;
+
+            if (fragment && chunk > fragment)
+                chunk = fragment;
+            memcpy(pending + pending_len, stream + stream_off, chunk);
+            pending_len += chunk;
+            stream_off += chunk;
+        }
+
+        b[0].BufferType = SECBUFFER_DATA;
+        b[0].cbBuffer = pending_len;
+        b[0].pvBuffer = pending;
+        b[1].BufferType = SECBUFFER_EMPTY;
+        b[1].cbBuffer = 0;
+        b[1].pvBuffer = NULL;
+        b[2].BufferType = SECBUFFER_EMPTY;
+        b[2].cbBuffer = 0;
+        b[2].pvBuffer = NULL;
+        b[3].BufferType = SECBUFFER_EMPTY;
+        b[3].cbBuffer = 0;
+        b[3].pvBuffer = NULL;
+        desc.ulVersion = SECBUFFER_VERSION;
+        desc.cBuffers = 4;
+        desc.pBuffers = b;
+
+        status = DecryptMessage(ctx, &desc, 0, NULL);
+        if (status == SEC_E_INCOMPLETE_MESSAGE)
+        {
+            if (stream_off >= stream_len)
+            {
+                trace("INCOMPLETE_MESSAGE with the full stream delivered\n");
+                return status;
+            }
+            continue;
+        }
+        if (status != SEC_E_OK)
+            return status;
+
+        if (b[1].BufferType == SECBUFFER_DATA)
+        {
+            if (collected + b[1].cbBuffer > out_cap)
+                return SEC_E_INSUFFICIENT_MEMORY;
+            memcpy(out + collected, b[1].pvBuffer, b[1].cbBuffer);
+            collected += b[1].cbBuffer;
+        }
+        else
+            trace("no SECBUFFER_DATA in decrypt output\n");
+
+        if (b[3].BufferType == SECBUFFER_EXTRA && b[3].cbBuffer)
+        {
+            memmove(pending, b[3].pvBuffer, b[3].cbBuffer);
+            pending_len = b[3].cbBuffer;
+        }
+        else
+            pending_len = 0;
+
+        if (++guard > 100000)
+        {
+            trace("decrypt loop exceeded the progress guard\n");
+            return SEC_E_INTERNAL_ERROR;
+        }
+    }
+
+    *out_len = collected;
+    return SEC_E_OK;
+}
+
+static void test_schannel_s2_loopback(void)
+{
+    static const char message[] =
+        "Schannel S2 loopback: multi-record EncryptMessage, fragmented DecryptMessage, "
+        "SECBUFFER_MISSING/EXTRA accounting, close_notify shutdown.";
+    static unsigned char plaintext[65536], decrypted[262144];
+    unsigned char *encrypted, *encrypted2;
+    ULONG encrypted_len, encrypted2_len, decrypted_len;
+    ULONG attrs, i, msg_len;
+    SECURITY_STATUS client_status, server_status, status;
+    CredHandle client_cred_handle, server_cred_handle;
+    CtxtHandle client_context, server_context;
+    SCHANNEL_CRED client_cred, server_cred;
+    PCCERT_CONTEXT cert;
+    HCRYPTPROV csp;
+    HCRYPTKEY key;
+    CRYPT_KEY_PROV_INFO keyProvInfo;
+    WCHAR ms_def_prov_w[MAX_PATH];
+    SecPkgContext_StreamSizes sizes;
+    SecBufferDesc c_in, c_out, s_in, s_out;
+    SecBuffer c_in_buf, c_out_buf, s_in_buf, s_out_buf;
+    unsigned char client_tok[8192], server_tok[8192];
+    ULONG client_tok_len = 0, server_tok_len = 0;
+    DWORD shutdown = SCHANNEL_SHUTDOWN;
+    SecBufferDesc shutdown_desc;
+    SecBuffer shutdown_buf;
+
+    lstrcpyW(ms_def_prov_w, MS_DEF_PROV_W);
+    keyProvInfo.pwszContainerName = cspNameW;
+    keyProvInfo.pwszProvName = ms_def_prov_w;
+    keyProvInfo.dwProvType = PROV_RSA_FULL;
+    keyProvInfo.dwFlags = 0;
+    keyProvInfo.cProvParam = 0;
+    keyProvInfo.rgProvParam = NULL;
+    keyProvInfo.dwKeySpec = AT_SIGNATURE;
+
+    cert = CertCreateCertificateContext(X509_ASN_ENCODING, selfSignedCert, sizeof(selfSignedCert));
+    ok(cert != NULL, "CertCreateCertificateContext failed\n");
+    if (!cert) return;
+    status = CertSetCertificateContextProperty(cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &keyProvInfo);
+    ok(status, "CertSetCertificateContextProperty failed: %08lx\n", GetLastError());
+    CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_DELETEKEYSET);
+    status = CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET);
+    ok(status, "CryptAcquireContextW failed: %08lx\n", GetLastError());
+    if (!status) { CertFreeCertificateContext(cert); return; }
+    status = CryptImportKey(csp, privKey, sizeof(privKey), 0, 0, &key);
+    ok(status, "CryptImportKey failed: %08lx\n", GetLastError());
+    if (!status) { CryptReleaseContext(csp, 0); CertFreeCertificateContext(cert); return; }
+
+    init_cred(&client_cred);
+    init_cred(&server_cred);
+    client_cred.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT;
+    client_cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MANUAL_CRED_VALIDATION;
+    server_cred.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
+    server_cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MANUAL_CRED_VALIDATION;
+    server_cred.cCreds = 1;
+    server_cred.paCred = &cert;
+
+    status = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL,
+                                       &client_cred, NULL, NULL, &client_cred_handle, NULL);
+    ok(status == SEC_E_OK, "client AcquireCredentialsHandleA failed: %08lx\n", status);
+    status = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A, SECPKG_CRED_INBOUND, NULL,
+                                       &server_cred, NULL, NULL, &server_cred_handle, NULL);
+    ok(status == SEC_E_OK, "server AcquireCredentialsHandleA failed: %08lx\n", status);
+
+    c_in.ulVersion = c_out.ulVersion = s_in.ulVersion = s_out.ulVersion = SECBUFFER_VERSION;
+    c_in.cBuffers = c_out.cBuffers = s_in.cBuffers = s_out.cBuffers = 1;
+    c_in.pBuffers = &c_in_buf;
+    c_out.pBuffers = &c_out_buf;
+    s_in.pBuffers = &s_in_buf;
+    s_out.pBuffers = &s_out_buf;
+
+    client_status = server_status = SEC_I_CONTINUE_NEEDED;
+    c_out_buf.BufferType = SECBUFFER_TOKEN;
+    c_out_buf.cbBuffer = sizeof(client_tok);
+    c_out_buf.pvBuffer = client_tok;
+    status = InitializeSecurityContextA(&client_cred_handle, NULL, (SEC_CHAR *)"localhost",
+                                        ISC_REQ_CONFIDENTIALITY | ISC_REQ_STREAM, 0, 0, NULL, 0,
+                                        &client_context, &c_out, &attrs, NULL);
+    ok(status == SEC_I_CONTINUE_NEEDED, "client hello got %08lx\n", status);
+    client_status = status;
+    client_tok_len = c_out_buf.cbBuffer;
+
+    for (i = 0; i < 16 && (client_status != SEC_E_OK || server_status != SEC_E_OK); i++)
+    {
+        if (server_status != SEC_E_OK && client_tok_len)
+        {
+            s_in_buf.BufferType = SECBUFFER_TOKEN;
+            s_in_buf.cbBuffer = client_tok_len;
+            s_in_buf.pvBuffer = client_tok;
+            s_out_buf.BufferType = SECBUFFER_TOKEN;
+            s_out_buf.cbBuffer = sizeof(server_tok);
+            s_out_buf.pvBuffer = server_tok;
+            server_status = AcceptSecurityContext(&server_cred_handle,
+                                                  i ? &server_context : NULL, &s_in,
+                                                  ASC_REQ_CONFIDENTIALITY | ASC_REQ_STREAM, 0,
+                                                  &server_context, &s_out, &attrs, NULL);
+            server_tok_len = s_out_buf.cbBuffer;
+            client_tok_len = 0;
+            if (server_status != SEC_E_OK && server_status != SEC_I_CONTINUE_NEEDED)
+                break;
+        }
+        if (client_status != SEC_E_OK && server_tok_len)
+        {
+            c_in_buf.BufferType = SECBUFFER_TOKEN;
+            c_in_buf.cbBuffer = server_tok_len;
+            c_in_buf.pvBuffer = server_tok;
+            c_out_buf.BufferType = SECBUFFER_TOKEN;
+            c_out_buf.cbBuffer = sizeof(client_tok);
+            c_out_buf.pvBuffer = client_tok;
+            client_status = InitializeSecurityContextA(&client_cred_handle, &client_context,
+                                                       (SEC_CHAR *)"localhost",
+                                                       ISC_REQ_CONFIDENTIALITY | ISC_REQ_STREAM, 0, 0,
+                                                       &c_in, 0, NULL, &c_out, &attrs, NULL);
+            client_tok_len = c_out_buf.cbBuffer;
+            server_tok_len = 0;
+            if (client_status != SEC_E_OK && client_status != SEC_I_CONTINUE_NEEDED)
+                break;
+        }
+    }
+    ok(client_status == SEC_E_OK, "client handshake did not complete: %08lx\n", client_status);
+    ok(server_status == SEC_E_OK, "server handshake did not complete: %08lx\n", server_status);
+    if (client_status != SEC_E_OK || server_status != SEC_E_OK) goto done;
+
+    memset(&sizes, 0, sizeof(sizes));
+    status = QueryContextAttributesA(&client_context, SECPKG_ATTR_STREAM_SIZES, &sizes);
+    ok(status == SEC_E_OK, "QueryContextAttributesA(STREAM_SIZES) failed: %08lx\n", status);
+    ok(sizes.cbMaximumMessage != 0, "cbMaximumMessage is 0\n");
+
+    for (i = 0; i < sizeof(plaintext); i++)
+        plaintext[i] = (unsigned char)(i * 31 + 7);
+
+    /* Single-record sizes plus the multi-record cases (16384 = two records,
+     * 64k = five). Round-trip through the peer with whole-stream delivery. */
+    {
+        static const ULONG roundtrip_sizes[] = { 1, 1000, 16383, 16384, 65536 };
+
+        for (i = 0; i < sizeof(roundtrip_sizes) / sizeof(roundtrip_sizes[0]); i++)
+        {
+            msg_len = roundtrip_sizes[i];
+            status = s2_encrypt(&client_context, &sizes, plaintext, msg_len, &encrypted, &encrypted_len);
+            ok(status == SEC_E_OK, "encrypt %lu bytes failed: %08lx\n", msg_len, status);
+            if (status != SEC_E_OK) continue;
+            if (msg_len > sizes.cbMaximumMessage)
+                ok(encrypted_len > msg_len, "multi-record encrypt %lu did not grow (%lu)\n",
+                   msg_len, encrypted_len);
+
+            status = s2_decrypt_all(&server_context, encrypted, encrypted_len, 0,
+                                    decrypted, sizeof(decrypted), &decrypted_len);
+            ok(status == SEC_E_OK, "decrypt %lu bytes failed: %08lx\n", msg_len, status);
+            ok(decrypted_len == msg_len && !memcmp(decrypted, plaintext, msg_len),
+               "round-trip %lu bytes corrupted (got %lu)\n", msg_len, decrypted_len);
+            free(encrypted);
+        }
+    }
+
+    /* Fragmented delivery: the same 64k stream fed in 7-byte pieces must
+     * survive the SEC_E_INCOMPLETE_MESSAGE/SECBUFFER_MISSING resumption. */
+    status = s2_encrypt(&client_context, &sizes, plaintext, 65536, &encrypted, &encrypted_len);
+    ok(status == SEC_E_OK, "encrypt 64k failed: %08lx\n", status);
+    if (status == SEC_E_OK)
+    {
+        status = s2_decrypt_all(&server_context, encrypted, encrypted_len, 7,
+                                decrypted, sizeof(decrypted), &decrypted_len);
+        ok(status == SEC_E_OK, "fragmented decrypt failed: %08lx\n", status);
+        ok(decrypted_len == 65536 && !memcmp(decrypted, plaintext, 65536),
+           "fragmented round-trip corrupted (got %lu)\n", decrypted_len);
+        free(encrypted);
+    }
+
+    /* Adversarial input: garbage must not decrypt, loop or crash. The exact
+     * Windows status is pinned in the S2 battery baseline and asserted here. */
+    memset(decrypted, 0xAA, 64);
+    memset(decrypted + 64, 0x55, 64);
+    status = s2_decrypt_all(&server_context, decrypted, 128, 0,
+                            decrypted + 128, sizeof(decrypted) - 128, &decrypted_len);
+    ok(status != SEC_E_OK, "garbage input decrypted successfully: %08lx\n", status);
+
+    /* Shutdown: ApplyControlToken(SCHANNEL_SHUTDOWN) + empty EncryptMessage
+     * produces the close_notify bytes; the peer reads them as an empty
+     * message; sending afterwards must fail with SEC_E_CONTEXT_EXPIRED. */
+    shutdown_buf.BufferType = SECBUFFER_TOKEN;
+    shutdown_buf.cbBuffer = sizeof(shutdown);
+    shutdown_buf.pvBuffer = &shutdown;
+    shutdown_desc.ulVersion = SECBUFFER_VERSION;
+    shutdown_desc.cBuffers = 1;
+    shutdown_desc.pBuffers = &shutdown_buf;
+    status = ApplyControlToken(&client_context, &shutdown_desc);
+    ok(status == SEC_E_OK, "ApplyControlToken(SCHANNEL_SHUTDOWN) failed: %08lx\n", status);
+
+    status = s2_encrypt(&client_context, &sizes, (unsigned char *)message, 0, &encrypted, &encrypted_len);
+    ok(status == SEC_E_OK, "empty EncryptMessage after shutdown failed: %08lx\n", status);
+    ok(encrypted_len > 0, "close_notify produced no bytes\n");
+    if (status == SEC_E_OK)
+    {
+        status = s2_decrypt_all(&server_context, encrypted, encrypted_len, 0,
+                                decrypted, sizeof(decrypted), &decrypted_len);
+        ok(status == SEC_E_OK && decrypted_len == 0,
+           "peer should read close_notify as an empty message: %08lx, %lu bytes\n",
+           status, decrypted_len);
+        free(encrypted);
+    }
+
+    status = s2_encrypt(&client_context, &sizes, (unsigned char *)message,
+                        sizeof(message) - 1, &encrypted2, &encrypted2_len);
+    ok(status == SEC_E_CONTEXT_EXPIRED, "EncryptMessage after shutdown got %08lx\n", status);
+    if (status == SEC_E_OK)
+        free(encrypted2);
+
+done:
+    DeleteSecurityContext(&client_context);
+    DeleteSecurityContext(&server_context);
+    FreeCredentialsHandle(&client_cred_handle);
+    FreeCredentialsHandle(&server_cred_handle);
+    CryptDestroyKey(key);
+    CryptReleaseContext(csp, 0);
+    CryptAcquireContextW(&csp, cspNameW, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_DELETEKEYSET);
+    CertFreeCertificateContext(cert);
+}
+
 START_TEST(schannel)
 {
     WSADATA wsa_data;
@@ -2124,4 +2472,5 @@ START_TEST(schannel)
     test_server_protocol_negotiation();
     test_dtls();
     test_connection_shutdown();
+    test_schannel_s2_loopback();
 }
