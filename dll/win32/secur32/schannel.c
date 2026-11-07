@@ -86,6 +86,7 @@ struct schan_context
     enum control_token control_token;
     unsigned int alert_type;
     unsigned int alert_number;
+    BOOL shutdown_sent;
 };
 
 static struct schan_handle *schan_handle_table;
@@ -1589,6 +1590,12 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
 
     dump_buffer_desc(message);
 
+    if (ctx->shutdown_sent)
+    {
+        WARN("EncryptMessage after close_notify was sent\n");
+        return SEC_E_CONTEXT_EXPIRED;
+    }
+
     data_idx = schan_find_sec_buffer_idx(message, 0, SECBUFFER_DATA);
     if (data_idx == -1)
     {
@@ -1638,10 +1645,18 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
     params.length = data_size;
     params.output_buffer_idx = &output_buffer_idx;
     params.output_offset = &output_offset;
+    params.control_token = ctx->control_token;
+    params.alert_type = ctx->alert_type;
+    params.alert_number = ctx->alert_number;
+    ctx->control_token = CONTROL_TOKEN_NONE;
     status = GNUTLS_CALL( send, &params );
 
     if (!status)
+    {
         message->pBuffers[buffer_index[output_buffer_idx]].cbBuffer = output_offset;
+        if (params.control_token == CONTROL_TOKEN_SHUTDOWN)
+            ctx->shutdown_sent = TRUE;
+    }
 
     free(data);
 

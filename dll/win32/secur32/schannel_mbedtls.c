@@ -1151,6 +1151,19 @@ static NTSTATUS backend_send(void *args)
     init_schan_buffers(&transport.out, params->output);
     session->transport = &transport;
 
+    if (params->control_token == CONTROL_TOKEN_SHUTDOWN || params->control_token == CONTROL_TOKEN_ALERT)
+    {
+        /* ApplyControlToken(SCHANNEL_SHUTDOWN) followed by an empty
+         * EncryptMessage produces the close_notify record here. */
+        int ret = mbedtls_ssl_send_alert_message(&session->ssl, (unsigned char)params->alert_type,
+                                                 (unsigned char)params->alert_number);
+        session->transport = NULL;
+        *params->output_buffer_idx = transport.out.current_buffer_idx;
+        *params->output_offset = transport.out.offset;
+        return !ret || ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE
+               ? SEC_E_OK : SEC_E_INTERNAL_ERROR;
+    }
+
     /* One mbedtls_ssl_write carries at most one TLS record (16383-byte
      * payload cap), so drive it in a loop and concatenate the records for
      * a single EncryptMessage. */

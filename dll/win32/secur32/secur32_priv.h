@@ -187,6 +187,9 @@ struct send_params
     ULONG length;
     int *output_buffer_idx;
     ULONG *output_offset;
+    enum control_token control_token;
+    unsigned int alert_type;
+    unsigned int alert_number;
 };
 
 struct set_application_protocols_params
