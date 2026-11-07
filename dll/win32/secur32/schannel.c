@@ -1750,6 +1750,23 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
     buffer = &message->pBuffers[idx];
     buf_ptr = buffer->pvBuffer;
 
+    if (buffer->cbBuffer < ctx->header_size)
+    {
+        TRACE("Expected at least %Iu header bytes, buffer only contains %lu bytes\n",
+              ctx->header_size, buffer->cbBuffer);
+        remaining_size = ctx->header_size - buffer->cbBuffer;
+        buffer->BufferType = SECBUFFER_MISSING;
+        buffer->cbBuffer = remaining_size;
+
+        idx = schan_find_sec_buffer_idx(message, 0, SECBUFFER_EMPTY);
+        buffer = &message->pBuffers[idx];
+        buffer->BufferType = SECBUFFER_MISSING;
+        buffer->cbBuffer = remaining_size;
+
+        TRACE("Returning SEC_E_INCOMPLETE_MESSAGE\n");
+        return SEC_E_INCOMPLETE_MESSAGE;
+    }
+
     expected_size = ctx->header_size + read_record_size(buf_ptr, ctx->header_size);
     if(buffer->cbBuffer < expected_size)
     {
@@ -1769,6 +1786,10 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
 
     data_size = expected_size - ctx->header_size;
     data = malloc(data_size);
+#ifdef __REACTOS__
+    if (!data)
+        RaiseException(STATUS_NO_MEMORY, EXCEPTION_NONCONTINUABLE, 0, NULL);
+#endif
 
     received = data_size;
 

@@ -852,11 +852,17 @@ SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
 
         *length = ret;
     }
-    else if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+    else if (ret == MBEDTLS_ERR_SSL_WANT_READ)
     {
         *length = 0;
-        TRACE("MBEDTLS schan_imp_send: operation would block\n");
+        TRACE("MBEDTLS schan_imp_send: renegotiation needs input\n");
         return SEC_I_CONTINUE_NEEDED;
+    }
+    else if (ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+    {
+        *length = 0;
+        TRACE("MBEDTLS schan_imp_send: output buffers are full\n");
+        return SEC_E_BUFFER_TOO_SMALL;
     }
     else
     {
