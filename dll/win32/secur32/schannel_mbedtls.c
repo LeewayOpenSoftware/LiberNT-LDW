@@ -31,10 +31,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(schannel);
 
 #include <mbedtls/ssl.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/x509_crt.h>
 
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
 #include <psa/crypto.h>
+
+#include <wincrypt.h>
 
 typedef struct
 {
@@ -51,6 +54,8 @@ typedef struct
     struct schan_transport  *transport;
     char                   **alpn_protocols;
     MBEDTLS_CREDENTIALS     *credentials;
+    DWORD                    verify_chain_error;
+    DWORD                    verify_policy_error;
 } MBEDTLS_SESSION, *PMBEDTLS_SESSION;
 
 typedef MBEDTLS_SESSION *schan_imp_session;
@@ -63,6 +68,105 @@ static const uint16_t small_key_sig_algs[] =
     MBEDTLS_TLS1_3_SIG_RSA_PKCS1_SHA1,
     MBEDTLS_TLS1_3_SIG_NONE
 };
+
+/* Verify a DER leaf through crypt32 only: chain building, trust, validity,
+ * EKU and hostname policy all live in crypt32 (TLS-POC-P2 owner rule); the
+ * TLS layer records the errors and applies policy. Returns 0 when the chain
+ * builds and the SSL policy (including hostname) passes. */
+static int schan_verify_cert_der(const unsigned char *der, size_t der_len,
+                                 const char *hostname, DWORD *chain_error, DWORD *policy_error)
+{
+    PCCERT_CONTEXT leaf = NULL;
+    HCERTSTORE collection = NULL;
+    CERT_CHAIN_PARA para;
+    PCCERT_CHAIN_CONTEXT chain = NULL;
+    CERT_CHAIN_POLICY_PARA pol;
+    SSL_EXTRA_CERT_CHAIN_POLICY_PARA para2;
+    CERT_CHAIN_POLICY_STATUS polst;
+    WCHAR wname[128];
+    int ok = -1;
+
+    *chain_error = 0;
+    *policy_error = 0;
+    leaf = CertCreateCertificateContext(X509_ASN_ENCODING, der, (DWORD)der_len);
+    if (!leaf)
+    {
+        *chain_error = (DWORD)-1;
+        return -1;
+    }
+    collection = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
+                               CERT_STORE_CREATE_NEW_FLAG, NULL);
+    if (!collection)
+    {
+        CertFreeCertificateContext(leaf);
+        *chain_error = (DWORD)-2;
+        return -1;
+    }
+    CertAddStoreToCollection(collection, CertOpenSystemStoreA(0, "ROOT"), 0, 0);
+
+    memset(&para, 0, sizeof(para));
+    para.cbSize = sizeof(para);
+    if (!CertGetCertificateChain(NULL, leaf, NULL, collection, &para, 0, NULL, &chain))
+    {
+        *chain_error = (DWORD)-3;
+        goto out;
+    }
+    *chain_error = chain->TrustStatus.dwErrorStatus;
+    if (*chain_error)
+        goto out;
+
+    memset(&pol, 0, sizeof(pol));
+    memset(&para2, 0, sizeof(para2));
+    memset(&polst, 0, sizeof(polst));
+    pol.cbSize = sizeof(pol);
+    pol.pvExtraPolicyPara = &para2;
+    para2.cbSize = sizeof(para2);
+    para2.dwAuthType = AUTHTYPE_SERVER;
+    if (hostname)
+    {
+        MultiByteToWideChar(CP_ACP, 0, hostname, -1, wname, 128);
+        para2.pwszServerName = wname;
+    }
+    if (!CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL, chain, &pol, &polst))
+    {
+        *policy_error = (DWORD)-4;
+        goto out;
+    }
+    *policy_error = polst.dwError;
+    ok = (*policy_error == 0) ? 0 : 1;
+out:
+    if (chain)
+        CertFreeCertificateChain(chain);
+    CertFreeCertificateContext(leaf);
+    CertCloseStore(collection, 0);
+    return ok;
+}
+
+/* mbedtls verify callback. Called per depth; the leaf verdict comes from
+ * crypt32, and mbedtls's own findings are cleared because its CA list is
+ * empty by design (crypt32 owns trust). A failed crypt32 check sets a fatal
+ * badcert flag so the handshake aborts. */
+static int schan_verify_crypt32_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    MBEDTLS_SESSION *s = ctx;
+
+    if (depth != 0)
+    {
+        *flags = 0;
+        return 0;
+    }
+
+    if (schan_verify_cert_der(crt->raw.p, crt->raw.len, s->ssl.hostname,
+                              &s->verify_chain_error, &s->verify_policy_error))
+    {
+        ERR("schan_verify_crypt32_cb: crypt32 verification failed (chain %#lx, policy %#lx)\n",
+            s->verify_chain_error, s->verify_policy_error);
+        *flags |= MBEDTLS_X509_BADCERT_OTHER;
+    }
+    else
+        *flags = 0;
+    return 0;
+}
 
 struct schan_buffers
 {
@@ -299,7 +403,17 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
         mbedtls_ssl_conf_renegotiation(&s->conf, MBEDTLS_SSL_RENEGOTIATION_ENABLED);
 
     TRACE("MBEDTLS set authmode\n");
-    mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    if (cred->credential_use & SECPKG_CRED_INBOUND)
+        mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    else
+    {
+        /* Client: crypt32 is the certificate policy engine; verification is
+         * mandatory and hard-fails (no silent acceptance). Server-side
+         * client-certificate policy stays off until the ISC_REQ flags ask
+         * for it. */
+        mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_ssl_conf_verify(&s->conf, schan_verify_crypt32_cb, s);
+    }
 
     TRACE("MBEDTLS set rng\n");
     mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &s->ctr_drbg);
@@ -401,6 +515,18 @@ SECURITY_STATUS schan_imp_handshake(schan_imp_session session)
     {
         ERR("schan_imp_handshake: SSL Feature unavailable...\n");
         return SEC_E_UNSUPPORTED_FUNCTION;
+    }
+    else if (err == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED)
+    {
+        ERR("schan_imp_handshake: certificate verification failed (chain %#lx, policy %#lx)\n",
+            s->verify_chain_error, s->verify_policy_error);
+        if (s->verify_policy_error == CERT_E_CN_NO_MATCH)
+            return SEC_E_WRONG_PRINCIPAL;
+        if (s->verify_policy_error == CERT_E_EXPIRED)
+            return SEC_E_CERT_EXPIRED;
+        if (s->verify_chain_error == CERT_E_UNTRUSTEDROOT)
+            return SEC_E_UNTRUSTED_ROOT;
+        return SEC_E_CERT_UNKNOWN;
     }
     else if (err != 0)
     {
