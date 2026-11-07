@@ -1144,13 +1144,31 @@ static NTSTATUS backend_send(void *args)
     const struct send_params *params = args;
     MBEDTLS_SESSION *session = session_from_handle(params->session);
     struct schan_transport transport;
-    SIZE_T length = params->length;
-    SECURITY_STATUS status;
+    SIZE_T total = params->length, sent = 0;
+    SECURITY_STATUS status = SEC_E_OK;
 
     init_schan_buffers(&transport.in, NULL);
     init_schan_buffers(&transport.out, params->output);
     session->transport = &transport;
-    status = schan_imp_send(session, params->buffer, &length);
+
+    /* One mbedtls_ssl_write carries at most one TLS record (16383-byte
+     * payload cap), so drive it in a loop and concatenate the records for
+     * a single EncryptMessage. */
+    while (sent < total)
+    {
+        SIZE_T length = total - sent;
+
+        status = schan_imp_send(session, (const char *)params->buffer + sent, &length);
+        if (status != SEC_E_OK)
+            break;
+        if (!length)
+        {
+            status = SEC_E_INTERNAL_ERROR;
+            break;
+        }
+        sent += length;
+    }
+
     session->transport = NULL;
     *params->output_buffer_idx = transport.out.current_buffer_idx;
     *params->output_offset = transport.out.offset;
