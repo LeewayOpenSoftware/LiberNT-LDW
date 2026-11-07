@@ -666,7 +666,7 @@ BOOL import_private_key_impl( ALG_ID algid, const BYTE *src, DWORD keylen, DWORD
     SIZE_T primes_sizes[2];
     UINT64 exp64 = pubexp;
 
-    ctx->rsa.flags = SYMCRYPT_FLAG_KEY_NO_FIPS | SYMCRYPT_FLAG_KEY_MINIMAL_VALIDATION;
+    ctx->rsa.flags = SYMCRYPT_FLAG_KEY_NO_FIPS;
     if (algid == CALG_RSA_KEYX) ctx->rsa.flags |= SYMCRYPT_FLAG_RSAKEY_ENCRYPT;
     else ctx->rsa.flags |= SYMCRYPT_FLAG_RSAKEY_SIGN | SYMCRYPT_FLAG_RSAKEY_ENCRYPT;
 
