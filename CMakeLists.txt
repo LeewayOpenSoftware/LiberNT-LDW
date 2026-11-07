@@ -61,6 +61,8 @@ endif()
 
 # Versioning
 include(sdk/include/reactos/version.cmake)
+# Leeway Build Identity: one allocated attempt -> lbi.h / lbi.json (WS-B prototype)
+include(sdk/cmake/lbi.cmake)
 
 # Compile options
 include(sdk/cmake/config.cmake)
