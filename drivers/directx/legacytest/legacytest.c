@@ -257,7 +257,8 @@ Lt1xFillSourceMode(_In_ PLT1X_CONTEXT Ctx,
 
     Lt1xModeGeometry(Ctx, ModeIndex, &Width, &Height, &Bpp, &Stride);
     RtlZeroMemory(Mode, sizeof(*Mode));
-    Mode->Id = (D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID)ModeIndex;
+    /* The Id is assigned by pfnCreateNewModeInfo and must not be touched;
+       the pin code captures it before pfnAddMode. */
     Mode->Type = D3DKMDT_RMT_GRAPHICS;
     Mode->Format.Graphics.PrimSurfSize.cx = Width;
     Mode->Format.Graphics.PrimSurfSize.cy = Height;
@@ -281,7 +282,7 @@ Lt1xFillTargetMode(_In_ PLT1X_CONTEXT Ctx,
 
     Lt1xModeGeometry(Ctx, ModeIndex, &Width, &Height, &Bpp, &Stride);
     RtlZeroMemory(Mode, sizeof(*Mode));
-    Mode->Id = (D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID)ModeIndex;
+    /* Id comes from pfnCreateNewModeInfo; see the source mode comment. */
     Mode->VideoSignalInfo.TotalSize.cx = Width;
     Mode->VideoSignalInfo.TotalSize.cy = Height;
     Mode->VideoSignalInfo.ActiveSize.cx = Width;
