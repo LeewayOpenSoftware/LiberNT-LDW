@@ -79,15 +79,6 @@ static WCHAR ExpArm64CsdVersionBuffer[256];
 static WCHAR ExpArm64VersionBuffer[64];
 #endif
 
-/*
- * Leeway Build Identity (owner directive, domain B). BuildLab and BuildLabEx
- * carry the allocated build attempt in the NT shapes
- *   BuildLab   = <sequence>.<channel>.<yymmdd-hhmm>
- *   BuildLabEx = <sequence>.<revision>.<arch><fre|chk>.<channel>.<yymmdd-hhmm>
- * (sdk/cmake/lbi.cmake). They never carry the NT compatibility version, and
- * NtMajorVersion/NtMinorVersion/NtBuildNumber above never carry the LBI.
- * The toolchain that used to be appended to BuildLab now lives in lbi.json.
- */
 CHAR NtBuildLab[] = LBI_BUILDLAB;
 CHAR NtBuildLabEx[] = LBI_BUILDLABEX;
 

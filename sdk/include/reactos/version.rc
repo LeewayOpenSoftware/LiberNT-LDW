@@ -122,8 +122,6 @@ BEGIN
             VALUE "OriginalFilename",   REACTOS_STR_ORIGINAL_FILENAME
             VALUE "ProductName",        REACTOS_STR_PRODUCT_NAME
             VALUE "ProductVersion",     REACTOS_STR_PRODUCT_VERSION
-            /* Leeway Build Identity (domain B): the allocated attempt this image came from.
-             * Additional string values only; FILEVERSION/PRODUCTVERSION (NT compat) untouched. */
             VALUE "LeewayBuildId",      LBI_LABEL_RC
             VALUE "LeewayBuildAttempt", LBI_ATTEMPT_ID "\0"
             VALUE "LeewaySourceCommit", LBI_SOURCE_COMMIT "\0"

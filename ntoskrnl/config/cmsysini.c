@@ -2747,8 +2747,6 @@ CmpSetVersionDataInKey(
                       ValueData.Length + sizeof(WCHAR));
     }
 
-    /* Set the 'BuildLabEx' value (Leeway Build Identity; the NT compat values
-     * CurrentVersion/CurrentBuild/UBR above are not derived from it) */
     RtlInitUnicodeString(&ValueName, L"BuildLabEx");
     RtlInitAnsiString(&TempString, NtBuildLabEx);
     Status = RtlAnsiStringToUnicodeString(&ValueData, &TempString, FALSE);
