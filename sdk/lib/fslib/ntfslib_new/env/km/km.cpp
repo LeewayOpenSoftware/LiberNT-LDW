@@ -1051,6 +1051,19 @@ NtfsReadVolumeContext(_In_opt_ void* Context,
 }
 
 NTSTATUS
+NtfsCommitRangeContext(_In_opt_ void* Context,
+                       _In_ ULONGLONG Offset,
+                       _In_ ULONG Length)
+{
+    PDEVICE_OBJECT DeviceObject;
+
+    DeviceObject = Context ? static_cast<PDEVICE_OBJECT>(Context) : PartDeviceObj;
+    if (!DeviceObject)
+        return STATUS_INVALID_PARAMETER;
+    return NtfsDiskFlushRangeKm(DeviceObject, Offset, Length);
+}
+
+NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context)
 {
     PDEVICE_OBJECT DeviceObject;

@@ -147,6 +147,17 @@ NtfsWriteVolumeContext(_In_opt_ void* Context,
 }
 
 NTSTATUS
+NtfsCommitRangeContext(_In_opt_ void* Context,
+                       _In_ ULONGLONG Offset,
+                       _In_ ULONG Length)
+{
+    /* The boot environment has no range commit: flush the device. */
+    UNREFERENCED_PARAMETER(Offset);
+    UNREFERENCED_PARAMETER(Length);
+    return NtfsFlushVolumeContext(Context);
+}
+
+NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context)
 {
     return DkFlush(static_cast<struct _DK_DEVICE*>(Context)) ? STATUS_SUCCESS : STATUS_UNEXPECTED_IO_ERROR;

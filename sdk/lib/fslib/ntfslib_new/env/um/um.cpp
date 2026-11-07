@@ -278,6 +278,18 @@ NtfsReadVolumeContext(_In_opt_ void* Context,
 }
 
 NTSTATUS
+NtfsCommitRangeContext(_In_opt_ void* Context,
+                       _In_ ULONGLONG Offset,
+                       _In_ ULONG Length)
+{
+    /* No write-back cache here: every write has already been issued. */
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Offset);
+    UNREFERENCED_PARAMETER(Length);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context)
 {
     IO_STATUS_BLOCK IoStatus;

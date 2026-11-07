@@ -269,6 +269,18 @@ NtfsWriteVolume(_In_ ULONGLONG Offset,
 }
 
 extern "C" NTSTATUS
+NtfsCommitRangeContext(_In_opt_ void* Context,
+                       _In_ ULONGLONG Offset,
+                       _In_ ULONG Length)
+{
+    /* No write-back cache here: every write has already been issued. */
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Offset);
+    UNREFERENCED_PARAMETER(Length);
+    return STATUS_SUCCESS;
+}
+
+extern "C" NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context)
 {
     UNREFERENCED_PARAMETER(Context);

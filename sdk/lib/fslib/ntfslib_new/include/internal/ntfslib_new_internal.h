@@ -500,6 +500,14 @@ NtfsWriteVolumeContext(_In_opt_ void* Context,
 NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context);
 
+/* Puts any write the environment still holds for [Offset, Offset + Length)
+ * on the disk before returning, without flushing the device's own cache.
+ * Environments that write through at once return STATUS_SUCCESS. */
+NTSTATUS
+NtfsCommitRangeContext(_In_opt_ void* Context,
+                       _In_ ULONGLONG Offset,
+                       _In_ ULONG Length);
+
 #ifdef __cplusplus
 }
 #endif
@@ -816,6 +824,10 @@ public:
                          _Inout_ PUCHAR Buffer);
 
     NTSTATUS FlushVolume();
+
+    /* Writes held back for this range reach the disk before it returns. */
+    NTSTATUS CommitRange(_In_ ULONGLONG Offset,
+                         _In_ ULONG Length);
 
     NTSTATUS
     Initialize(_In_ PUCHAR BootSectorData,

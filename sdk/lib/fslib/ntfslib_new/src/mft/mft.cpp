@@ -971,6 +971,27 @@ ScanAgain:
         if (!NT_SUCCESS(Status))
             goto Done;
     }
+    else
+    {
+        /*
+         * Inside a chunk that has already grown, the record, its bitmap bit
+         * and the parent index entry are separate blocks of the write-back
+         * cache, committed in no particular order. A power cut that kept
+         * the bit and the index entry but not the record left a zeroed
+         * record that both name (JOB28 PC2-P: 136 records). Commit the
+         * record's own block first, so nothing can name it before it is on
+         * the disk. Only this record's range is written, not the volume.
+         */
+        ULONGLONG RecordDiskOffset;
+
+        Status = GetFileRecordDiskOffset(Candidate, &RecordDiskOffset);
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
+        else if (Status == STATUS_NOT_IMPLEMENTED)
+            Status = DiskVolume->FlushVolume(); /* record spans a run boundary */
+        if (!NT_SUCCESS(Status))
+            goto Done;
+    }
 
     BitmapAttribute =
         MFTFile->GetAttribute(TypeBitmap, NULL);
