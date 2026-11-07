@@ -26,7 +26,7 @@ if(NOT KERNEL_VERSION_BUILD_TYPE STREQUAL "")
     set(DLL_VERSION_STR "${DLL_VERSION_STR}-${KERNEL_VERSION_BUILD_TYPE}")
 endif()
 
-# Get Git revision: full SHA and a deterministic 12-hex abbreviation
+# Get Git revision through "git describe"
 set(COMMIT_HASH "unknown-hash")
 set(REVISION "unknown-revision")
 
@@ -44,20 +44,15 @@ if((EXISTS "${REACTOS_SOURCE_DIR}/.git") AND (NOT NO_REACTOS_BUILDNO))
             set(COMMIT_HASH "${GIT_COMMIT_HASH}")
         endif()
 
-        # Deterministic revision: the 12-hex abbreviation of HEAD is the same for
-        # every checkout of a commit. 'git describe --long' depended on which tags
-        # were reachable (bare 7-hex on the rewritten leeway/main, 'nt10.0-044-594-
-        # g4248bb7' on pre-rewrite trees), so the same macro had two shapes and
-        # parsers needed heuristics. The full SHA stays in KERNEL_VERSION_COMMIT_HASH.
         execute_process(
-            COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+            COMMAND "${GIT_EXECUTABLE}" describe --abbrev=7 --long --always
             WORKING_DIRECTORY ${REACTOS_SOURCE_DIR}
-            OUTPUT_VARIABLE GIT_SHORT_REVISION
+            OUTPUT_VARIABLE GIT_DESCRIBE_REVISION
             RESULT_VARIABLE GIT_CALL_RESULT
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
-        if(GIT_CALL_RESULT EQUAL 0 AND GIT_SHORT_REVISION MATCHES "^[0-9a-f]+$")
-            set(REVISION "${GIT_SHORT_REVISION}")
+        if(GIT_CALL_RESULT EQUAL 0)
+            set(REVISION "${GIT_DESCRIBE_REVISION}")
         endif()
     endif()
 endif()
