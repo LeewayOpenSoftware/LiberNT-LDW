@@ -265,7 +265,7 @@ MMixerGetPinInstanceCount(
     KSPIN_CINSTANCES PinInstances;
     ULONG BytesReturned;
     MIXER_STATUS Status;
-    UNREFERENCED_PARAMETER(Status);
+    DBG_UNREFERENCED_LOCAL_VARIABLE(Status);
 
     /* query the instance count */
     PinRequest.Reserved = 0;

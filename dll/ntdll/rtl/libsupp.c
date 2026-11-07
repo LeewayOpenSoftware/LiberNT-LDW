@@ -1531,9 +1531,9 @@ LdrpApplyFileNameRedirection(
         *ApiSetRedirected = FALSE;
 
     PCUNICODE_STRING PrevNewName = *NewName;
-    UNREFERENCED_PARAMETER(PrevNewName);
     UNICODE_STRING ApisetName = {0};
     NTSTATUS Status = STATUS_SUCCESS;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(PrevNewName);
 
     DWORD ApisetVersion = LdrpApisetVersion();
     if (ApisetVersion)

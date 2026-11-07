@@ -128,7 +128,7 @@ RXactpCommit(
     PRXACT_DATA Data;
     PRXACT_ACTION Action;
     NTSTATUS Status, TmpStatus;
-    UNREFERENCED_PARAMETER(TmpStatus);
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
     HANDLE KeyHandle;
     ULONG i;
 
@@ -299,7 +299,7 @@ RtlInitializeRXact(
     PRXACT_CONTEXT *OutContext)
 {
     NTSTATUS Status, TmpStatus;
-    UNREFERENCED_PARAMETER(TmpStatus);
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
     PRXACT_CONTEXT Context;
     PKEY_VALUE_FULL_INFORMATION KeyValueInformation;
     KEY_VALUE_BASIC_INFORMATION KeyValueBasicInfo;
