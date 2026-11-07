@@ -25,6 +25,10 @@ static ULONG Lt1xFailCommit = 0;
    pre-fix behavior) so the lab can force a post-QueryAdapterInfo start
    failure on purpose and exercise the BasicDisplay-fallback recovery path. */
 static ULONG Lt1xFailCaps = 0;
+/* L6g M1 arm: expose a second mode (1024x768x32) and register
+   DxgkDdiCommitVidPn so a real mode switch programs the bochs dispi.
+   Off by default: R0..R4 keep the single boot-mode table unchanged. */
+static ULONG Lt1xAltModes = 0;
 
 typedef struct _LT1X_CONTEXT
 {
@@ -132,6 +136,11 @@ Lt1xReadConfig(_In_ PUNICODE_STRING RegistryPath)
     if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
         Lt1xFailCaps = *(PULONG)Info->Data;
 
+    RtlInitUnicodeString(&ValueName, L"AltModes");
+    Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Info, sizeof(Buffer), &ResultLength);
+    if (NT_SUCCESS(Status) && Info->Type == REG_DWORD && Info->DataLength == sizeof(ULONG))
+        Lt1xAltModes = *(PULONG)Info->Data;
+
     ZwClose(KeyHandle);
     return STATUS_SUCCESS;
 }
@@ -213,20 +222,50 @@ Lt1xProbeCurrentMode(_In_ PLT1X_CONTEXT Ctx)
     DbgPrint("LT1X: dispi mode %lux%lux%lu stride %lu\n", Width, Height, Bpp, Stride);
 }
 
+/* Mode 0 is always the probed boot mode; mode 1 (only exposed when
+   AltModes=1) is the fixed 1024x768x32 the M1 arm switches to. */
 static
 VOID
-Lt1xFillSourceMode(_In_ PLT1X_CONTEXT Ctx, _Out_ D3DKMDT_VIDPN_SOURCE_MODE *Mode)
+Lt1xModeGeometry(_In_ PLT1X_CONTEXT Ctx,
+                 _In_ ULONG ModeIndex,
+                 _Out_ ULONG *Width,
+                 _Out_ ULONG *Height,
+                 _Out_ ULONG *Bpp,
+                 _Out_ ULONG *Stride)
 {
+    if (ModeIndex == 0 || !Lt1xAltModes)
+    {
+        *Width = Ctx->ModeWidth;
+        *Height = Ctx->ModeHeight;
+        *Bpp = Ctx->ModeBpp;
+        *Stride = Ctx->Stride;
+        return;
+    }
+    *Width = 1024;
+    *Height = 768;
+    *Bpp = 32;
+    *Stride = 1024 * 4;
+}
+
+static
+VOID
+Lt1xFillSourceMode(_In_ PLT1X_CONTEXT Ctx,
+                   _In_ ULONG ModeIndex,
+                   _Out_ D3DKMDT_VIDPN_SOURCE_MODE *Mode)
+{
+    ULONG Width, Height, Bpp, Stride;
+
+    Lt1xModeGeometry(Ctx, ModeIndex, &Width, &Height, &Bpp, &Stride);
     RtlZeroMemory(Mode, sizeof(*Mode));
-    Mode->Id = 0;
+    Mode->Id = (D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID)ModeIndex;
     Mode->Type = D3DKMDT_RMT_GRAPHICS;
-    Mode->Format.Graphics.PrimSurfSize.cx = Ctx->ModeWidth;
-    Mode->Format.Graphics.PrimSurfSize.cy = Ctx->ModeHeight;
-    Mode->Format.Graphics.VisibleRegionSize.cx = Ctx->ModeWidth;
-    Mode->Format.Graphics.VisibleRegionSize.cy = Ctx->ModeHeight;
-    Mode->Format.Graphics.Stride = Ctx->Stride;
-    Mode->Format.Graphics.PixelFormat = Ctx->ModeBpp == 32 ? D3DDDIFMT_A8R8G8B8 :
-                                        Ctx->ModeBpp == 24 ? D3DDDIFMT_R8G8B8 :
+    Mode->Format.Graphics.PrimSurfSize.cx = Width;
+    Mode->Format.Graphics.PrimSurfSize.cy = Height;
+    Mode->Format.Graphics.VisibleRegionSize.cx = Width;
+    Mode->Format.Graphics.VisibleRegionSize.cy = Height;
+    Mode->Format.Graphics.Stride = Stride;
+    Mode->Format.Graphics.PixelFormat = Bpp == 32 ? D3DDDIFMT_A8R8G8B8 :
+                                        Bpp == 24 ? D3DDDIFMT_R8G8B8 :
                                         D3DDDIFMT_X8R8G8B8;
     Mode->Format.Graphics.ColorBasis = D3DKMDT_CB_SRGB;
     Mode->Format.Graphics.PixelValueAccessMode = D3DKMDT_PVAM_DIRECT;
@@ -234,21 +273,27 @@ Lt1xFillSourceMode(_In_ PLT1X_CONTEXT Ctx, _Out_ D3DKMDT_VIDPN_SOURCE_MODE *Mode
 
 static
 VOID
-Lt1xFillTargetMode(_In_ PLT1X_CONTEXT Ctx, _Out_ D3DKMDT_VIDPN_TARGET_MODE *Mode)
+Lt1xFillTargetMode(_In_ PLT1X_CONTEXT Ctx,
+                   _In_ ULONG ModeIndex,
+                   _Out_ D3DKMDT_VIDPN_TARGET_MODE *Mode)
 {
+    ULONG Width, Height, Bpp, Stride;
+
+    Lt1xModeGeometry(Ctx, ModeIndex, &Width, &Height, &Bpp, &Stride);
     RtlZeroMemory(Mode, sizeof(*Mode));
-    Mode->Id = 0;
-    Mode->VideoSignalInfo.TotalSize.cx = Ctx->ModeWidth;
-    Mode->VideoSignalInfo.TotalSize.cy = Ctx->ModeHeight;
-    Mode->VideoSignalInfo.ActiveSize.cx = Ctx->ModeWidth;
-    Mode->VideoSignalInfo.ActiveSize.cy = Ctx->ModeHeight;
+    Mode->Id = (D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID)ModeIndex;
+    Mode->VideoSignalInfo.TotalSize.cx = Width;
+    Mode->VideoSignalInfo.TotalSize.cy = Height;
+    Mode->VideoSignalInfo.ActiveSize.cx = Width;
+    Mode->VideoSignalInfo.ActiveSize.cy = Height;
     Mode->VideoSignalInfo.VSyncFreq.Numerator = 60;
     Mode->VideoSignalInfo.VSyncFreq.Denominator = 1;
-    Mode->VideoSignalInfo.HSyncFreq.Numerator = (Ctx->ModeWidth + 160) * 60;
+    Mode->VideoSignalInfo.HSyncFreq.Numerator = (Width + 160) * 60;
     Mode->VideoSignalInfo.HSyncFreq.Denominator = 1;
-    Mode->VideoSignalInfo.PixelRate = (SIZE_T)Ctx->ModeWidth * Ctx->ModeHeight * 60;
+    Mode->VideoSignalInfo.PixelRate = (SIZE_T)Width * Height * 60;
     Mode->VideoSignalInfo.ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
-    Mode->Preference = D3DKMDT_MP_PREFERRED;
+    Mode->Preference = ModeIndex == 0 ? D3DKMDT_MP_PREFERRED
+                                      : D3DKMDT_MP_NOTPREFERRED;
 }
 
 static
@@ -291,7 +336,7 @@ Lt1xAssignCofuncModality(
         {
             D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID SourceModeId;
 
-            Lt1xFillSourceMode(Ctx, SourceMode);
+            Lt1xFillSourceMode(Ctx, 0, SourceMode);
             /* pfnAddMode consumes the pending mode info, so pin by the id
                captured here and never touch the mode info afterwards. */
             SourceModeId = SourceMode->Id;
@@ -299,6 +344,16 @@ Lt1xAssignCofuncModality(
             if (NT_SUCCESS(Status))
                 Status = SourceModeSetInterface->pfnPinMode(hSourceModeSet, SourceModeId);
             SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
+        }
+        if (NT_SUCCESS(Status) && Lt1xAltModes)
+        {
+            Status = SourceModeSetInterface->pfnCreateNewModeInfo(hSourceModeSet, &SourceMode);
+            if (NT_SUCCESS(Status))
+            {
+                Lt1xFillSourceMode(Ctx, 1, SourceMode);
+                Status = SourceModeSetInterface->pfnAddMode(hSourceModeSet, SourceMode);
+                SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
+            }
         }
         if (NT_SUCCESS(Status))
             Status = VidPnInterface->pfnAssignSourceModeSet(hVidPn, Path->VidPnSourceId, hSourceModeSet);
@@ -315,13 +370,23 @@ Lt1xAssignCofuncModality(
         {
             D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID TargetModeId;
 
-            Lt1xFillTargetMode(Ctx, TargetMode);
+            Lt1xFillTargetMode(Ctx, 0, TargetMode);
             /* pfnAddMode consumes the pending mode info; pin by the saved id. */
             TargetModeId = TargetMode->Id;
             Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
             if (NT_SUCCESS(Status))
                 Status = TargetModeSetInterface->pfnPinMode(hTargetModeSet, TargetModeId);
             TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
+        }
+        if (NT_SUCCESS(Status) && Lt1xAltModes)
+        {
+            Status = TargetModeSetInterface->pfnCreateNewModeInfo(hTargetModeSet, &TargetMode);
+            if (NT_SUCCESS(Status))
+            {
+                Lt1xFillTargetMode(Ctx, 1, TargetMode);
+                Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
+                TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
+            }
         }
         if (NT_SUCCESS(Status))
             Status = VidPnInterface->pfnAssignTargetModeSet(hVidPn, Path->VidPnTargetId, hTargetModeSet);
@@ -1325,7 +1390,13 @@ Lt1xDdiCommitVidPn(
     IN_CONST_HANDLE hAdapter,
     IN_CONST_PDXGKARG_COMMITVIDPN_CONST pCommitVidPn)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
+    PLT1X_CONTEXT Ctx = (PLT1X_CONTEXT)hAdapter;
+    CONST DXGK_VIDPN_INTERFACE *VidPnInterface;
+    CONST DXGK_VIDPNSOURCEMODESET_INTERFACE *SourceModeSetInterface;
+    CONST D3DKMDT_VIDPN_SOURCE_MODE *PinnedMode;
+    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet;
+    NTSTATUS Status;
+
     DbgPrint("LT1X: DxgkDdiCommitVidPn source=%lu primaryAlloc=%p\n",
              pCommitVidPn->AffectedVidPnSourceId,
              pCommitVidPn->hPrimaryAllocation);
@@ -1335,7 +1406,51 @@ Lt1xDdiCommitVidPn(
         DbgPrint("LT1X: FailCommit poison set, failing CommitVidPn\n");
         return STATUS_UNSUCCESSFUL;
     }
-    return STATUS_SUCCESS;
+
+    /* AltModes: program the bochs dispi when the committed source mode
+       differs from what is scanning now (single-mode configs always match,
+       so R0..R4 keep the old no-op behavior). */
+    Status = Ctx->DxgkInterface.DxgkCbQueryVidPnInterface(
+        pCommitVidPn->hFunctionalVidPn, DXGK_VIDPN_INTERFACE_VERSION_V1,
+        &VidPnInterface);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = VidPnInterface->pfnAcquireSourceModeSet(
+        pCommitVidPn->hFunctionalVidPn, pCommitVidPn->AffectedVidPnSourceId,
+        &hSourceModeSet, &SourceModeSetInterface);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = SourceModeSetInterface->pfnAcquirePinnedModeInfo(hSourceModeSet,
+                                                              &PinnedMode);
+    if (NT_SUCCESS(Status))
+    {
+        ULONG Width = (ULONG)PinnedMode->Format.Graphics.PrimSurfSize.cx;
+        ULONG Height = (ULONG)PinnedMode->Format.Graphics.PrimSurfSize.cy;
+        ULONG Stride = (ULONG)PinnedMode->Format.Graphics.Stride;
+
+        if (Width != Ctx->ModeWidth || Height != Ctx->ModeHeight ||
+            Stride != Ctx->Stride)
+        {
+            ULONG Bpp = PinnedMode->Format.Graphics.PixelFormat ==
+                        D3DDDIFMT_R8G8B8 ? 24 : 32;
+
+            Lt1xDispiWrite(Ctx, 1, (USHORT)Width);
+            Lt1xDispiWrite(Ctx, 2, (USHORT)Height);
+            Lt1xDispiWrite(Ctx, 3, (USHORT)Bpp);
+            Lt1xDispiWrite(Ctx, 6, (USHORT)(Stride * 8 / Bpp));
+            Lt1xDispiWrite(Ctx, 4, 0x41); /* ENABLE | linear framebuffer */
+            Ctx->ModeWidth = Width;
+            Ctx->ModeHeight = Height;
+            Ctx->ModeBpp = Bpp;
+            Ctx->Stride = Stride;
+            DbgPrint("LT1X: dispi programmed %lux%lux%lu stride %lu\n",
+                     Width, Height, Bpp, Stride);
+        }
+        SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, PinnedMode);
+    }
+    VidPnInterface->pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn,
+                                            hSourceModeSet);
+    return Status;
 }
 
 static DXGKDDI_UPDATEACTIVEVIDPNPRESENTPATH Lt1xDdiUpdateActiveVidPnPresentPath;
@@ -1744,8 +1859,8 @@ DriverEntry(
 
     Lt1xReadConfig(RegistryPath);
 
-    DbgPrint("LT1X: DriverEntry version=0x%lx poison=%lu children=%lu failStart=%lu failCommit=%lu failCaps=%lu\n",
-             Lt1xDdiVersion, Lt1xPoisonTail, Lt1xChildCount, Lt1xFailStart, Lt1xFailCommit, Lt1xFailCaps);
+    DbgPrint("LT1X: DriverEntry version=0x%lx poison=%lu children=%lu failStart=%lu failCommit=%lu failCaps=%lu altModes=%lu\n",
+             Lt1xDdiVersion, Lt1xPoisonTail, Lt1xChildCount, Lt1xFailStart, Lt1xFailCommit, Lt1xFailCaps, Lt1xAltModes);
 
     RtlZeroMemory(&InitData, sizeof(InitData));
 
