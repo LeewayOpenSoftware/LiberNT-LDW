@@ -12,6 +12,9 @@
 #include <prsht.h>
 
 #define IDC_APPLY_BUTTON 12321
+#define IDC_BACK_BUTTON  12323
+#define IDC_NEXT_BUTTON  12324
+#define IDC_FINISH_BUTTON 12325
 
 static BOOL s_bNotified;
 
@@ -146,6 +149,145 @@ static void test_ApplyButtonDisabled()
     ok(pPropertySheetW(&header) > 0, "PropertySheet returned non-positive value.\n");
 }
 
+static INT s_iAeroState;
+static LONG s_lAeroSetActive;
+
+static BOOL AeroOnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam)
+{
+    SetTimer(hwnd, 999, 300, NULL);
+    return TRUE;
+}
+
+static BOOL AeroOnNotify(HWND hwnd, UINT idCtrl, LPNMHDR pnmh)
+{
+    if (pnmh->code == PSN_SETACTIVE)
+        InterlockedIncrement(&s_lAeroSetActive);
+    return FALSE;
+}
+
+static void AeroFinish(HWND hwnd, HWND hwndParent)
+{
+    KillTimer(hwnd, 999);
+    ok(InterlockedCompareExchange(&s_lAeroSetActive, 0, 0) >= 1,
+       "PSN_SETACTIVE was not received.\n");
+    PropSheet_PressButton(hwndParent, PSBTN_CANCEL);
+}
+
+static void AeroOnTimer(HWND hwnd, UINT id)
+{
+    HWND hwndParent = GetParent(hwnd);
+    HWND hwndBack = GetDlgItem(hwndParent, IDC_BACK_BUTTON);
+    HWND hwndNext = GetDlgItem(hwndParent, IDC_NEXT_BUTTON);
+    HWND hwndFinish = GetDlgItem(hwndParent, IDC_FINISH_BUTTON);
+    HWND hwndCancel = GetDlgItem(hwndParent, IDCANCEL);
+    WCHAR szText[64];
+
+    switch (s_iAeroState)
+    {
+        case 0:
+            ok(hwndBack != NULL, "IDC_BACK_BUTTON missing.\n");
+            ok(hwndNext != NULL, "IDC_NEXT_BUTTON missing.\n");
+            ok(hwndFinish != NULL, "IDC_FINISH_BUTTON missing.\n");
+            ok(hwndCancel != NULL, "IDCANCEL missing.\n");
+
+            SendMessageW(hwndParent, PSM_SETNEXTTEXTW, 0, (LPARAM)L"Install");
+            GetWindowTextW(hwndNext, szText, ARRAYSIZE(szText));
+            ok(wcscmp(szText, L"Install") == 0, "PSM_SETNEXTTEXTW failed, got %ls.\n", szText);
+
+            SendMessageW(hwndParent, PSM_SETBUTTONTEXTW, PSBTN_CANCEL, (LPARAM)L"Dismiss");
+            GetWindowTextW(hwndCancel, szText, ARRAYSIZE(szText));
+            ok(wcscmp(szText, L"Dismiss") == 0, "PSM_SETBUTTONTEXTW on CANCEL failed, got %ls.\n", szText);
+
+            SendMessageW(hwndParent, PSM_SETBUTTONTEXTW, PSBTN_BACK, (LPARAM)L"Return");
+            GetWindowTextW(hwndBack, szText, ARRAYSIZE(szText));
+            ok(wcscmp(szText, L"Return") == 0, "PSM_SETBUTTONTEXTW on BACK failed, got %ls.\n", szText);
+
+            PropSheet_ShowWizButtons(hwndParent, 0, PSWIZB_BACK | PSWIZB_NEXT);
+            break;
+        case 1:
+            ok(!IsWindowVisible(hwndBack), "Back should be hidden.\n");
+            ok(IsWindowVisible(hwndNext), "Next should still be visible.\n");
+            ok(IsWindowVisible(hwndCancel), "Cancel should still be visible.\n");
+
+            PropSheet_ShowWizButtons(hwndParent, PSWIZB_BACK, PSWIZB_BACK);
+            PropSheet_ShowWizButtons(hwndParent, 0, PSWIZB_CANCEL);
+            break;
+        case 2:
+            ok(IsWindowVisible(hwndBack), "Back should be shown again.\n");
+            ok(!IsWindowVisible(hwndCancel), "Cancel should be hidden.\n");
+
+            PropSheet_ShowWizButtons(hwndParent, PSWIZB_CANCEL, PSWIZB_CANCEL);
+            PropSheet_EnableWizButtons(hwndParent, 0, PSWIZB_NEXT);
+            break;
+        case 3:
+            ok(IsWindowVisible(hwndCancel), "Cancel should be shown again.\n");
+            ok(!IsWindowEnabled(hwndNext), "Next should be disabled.\n");
+
+            PropSheet_EnableWizButtons(hwndParent, PSWIZB_NEXT, PSWIZB_NEXT);
+            break;
+        case 4:
+            ok(IsWindowEnabled(hwndNext), "Next should be enabled again.\n");
+
+            SendMessageW(hwndParent, PSM_SETWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_DISABLEDFINISH);
+            ok(!IsWindowVisible(hwndNext), "Next should be hidden with DISABLEDFINISH.\n");
+            ok(IsWindowVisible(hwndFinish), "Finish should be visible with DISABLEDFINISH.\n");
+            ok(!IsWindowEnabled(hwndFinish), "Finish should be disabled with DISABLEDFINISH.\n");
+
+            SendMessageW(hwndParent, PSM_SETWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_NEXT);
+            ok(IsWindowVisible(hwndNext) && IsWindowEnabled(hwndNext),
+               "Next should be restored after DISABLEDFINISH.\n");
+
+            AeroFinish(hwnd, hwndParent);
+            break;
+    }
+    s_iAeroState++;
+    if (s_iAeroState < 5)
+        SetTimer(hwnd, 999, 300, NULL);
+}
+
+static INT_PTR CALLBACK
+AeroPage1DlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+        HANDLE_MSG(hwnd, WM_INITDIALOG, AeroOnInitDialog);
+        HANDLE_MSG(hwnd, WM_NOTIFY, AeroOnNotify);
+        HANDLE_MSG(hwnd, WM_TIMER, AeroOnTimer);
+    }
+    return 0;
+}
+
+// PSH_AEROWIZARD contract surface (M0): the four aero wizard messages drive
+// the existing wizard chrome identically in the v5 and v6 load paths.
+static void test_AeroWizard(void)
+{
+    PROPSHEETPAGEW psp = {0};
+    PROPSHEETHEADERW header = {0};
+    HPROPSHEETPAGE hpsp[1];
+    INT_PTR ret;
+
+    psp.dwSize = sizeof(psp);
+    psp.dwFlags = PSP_DEFAULT;
+    psp.hInstance = GetModuleHandleW(NULL);
+    psp.pszTemplate = MAKEINTRESOURCEW(1);
+    psp.pfnDlgProc = AeroPage1DlgProc;
+    hpsp[0] = pCreatePropertySheetPageW(&psp);
+    ok(hpsp[0] != NULL, "hpsp[0] was NULL.\n");
+
+    header.dwSize = sizeof(header);
+    header.dwFlags = PSH_AEROWIZARD;
+    header.hInstance = GetModuleHandleW(NULL);
+    header.hwndParent = NULL;
+    header.nPages = ARRAYSIZE(hpsp);
+    header.phpage = hpsp;
+    header.pszCaption = L"aerowizard";
+
+    s_iAeroState = 0;
+    s_lAeroSetActive = 0;
+    ret = pPropertySheetW(&header);
+    ok(ret != -1, "PropertySheet returned -1.\n");
+}
+
 
 START_TEST(propsheetv6)
 {
@@ -154,6 +296,12 @@ START_TEST(propsheetv6)
     hComCtl32 = LoadLibraryW(L"comctl32.dll");
     pCreatePropertySheetPageW = (FN_CreatePropertySheetPageW)GetProcAddress(hComCtl32, "CreatePropertySheetPageW");
     pPropertySheetW = (FN_PropertySheetW)GetProcAddress(hComCtl32, "PropertySheetW");
+
+    {
+        WCHAR szPath[MAX_PATH];
+        if (GetModuleFileNameW(hComCtl32, szPath, ARRAYSIZE(szPath)))
+            trace("comctl32 loaded from %s\n", wine_dbgstr_w(szPath));
+    }
 
     ok(pCreatePropertySheetPageW != NULL, "pCreatePropertySheetPageW was NULL.\n");
     ok(pPropertySheetW != NULL, "pPropertySheetW was NULL.\n");
@@ -166,6 +314,7 @@ START_TEST(propsheetv6)
 
     test_StructSizes();
     test_ApplyButtonDisabled();
+    test_AeroWizard();
 
     FreeLibrary(hComCtl32);
 }
