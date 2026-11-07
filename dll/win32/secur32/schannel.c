@@ -331,8 +331,11 @@ static SECURITY_STATUS schan_QueryCredentialsAttributes(
     case SECPKG_ATTR_SUPPORTED_PROTOCOLS:
         if(pBuffer) {
             /* Regardless of MSDN documentation, tests show that this attribute takes into account
-             * what protocols are enabled for given credential. */
-            ((SecPkgCred_SupportedProtocols*)pBuffer)->grbitProtocol = cred->enabled_protocols;
+             * what protocols are enabled for given credential. Only protocols the engine actually
+             * implements may be reported: the engine negotiates TLS 1.2/1.3 only, so obsolete
+             * protocols (PCT1/SSL2/SSL3) must never appear as supported. */
+            ((SecPkgCred_SupportedProtocols*)pBuffer)->grbitProtocol = cred->enabled_protocols &
+                GNUTLS_CALL( get_enabled_protocols, NULL );
             ret = SEC_E_OK;
         }else {
             ret = SEC_E_INTERNAL_ERROR;
@@ -1225,7 +1228,8 @@ static SECURITY_STATUS establish_context(
     }
     RtlFreeHeap( GetProcessHeap(), 0, alloc_buffer.pvBuffer );
 
-    if (input_offset && input_offset != pInput->pBuffers[0].cbBuffer)
+    if ((ret == SEC_E_OK || ret == SEC_I_CONTINUE_NEEDED) &&
+        input_offset && input_offset != pInput->pBuffers[0].cbBuffer)
     {
         if(pInput->cBuffers<2 || pInput->pBuffers[1].BufferType!=SECBUFFER_EMPTY)
             return SEC_E_INVALID_TOKEN;

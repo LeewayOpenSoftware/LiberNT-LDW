@@ -18,6 +18,7 @@
 @ cdecl mbedtls_ssl_close_notify(ptr)
 @ cdecl mbedtls_ssl_conf_alpn_protocols(ptr ptr)
 @ cdecl mbedtls_ssl_conf_authmode(ptr long)
+@ cdecl mbedtls_ssl_conf_ca_chain(ptr ptr ptr)
 @ cdecl mbedtls_ssl_set_bio(ptr ptr ptr ptr)
 @ cdecl mbedtls_ssl_conf_endpoint(ptr long)
 @ cdecl mbedtls_ssl_set_hostname(ptr str)

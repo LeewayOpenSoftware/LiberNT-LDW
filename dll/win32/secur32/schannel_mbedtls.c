@@ -54,6 +54,7 @@ typedef struct
     struct schan_transport  *transport;
     char                   **alpn_protocols;
     MBEDTLS_CREDENTIALS     *credentials;
+    mbedtls_x509_crt         empty_ca;
     DWORD                    verify_chain_error;
     DWORD                    verify_policy_error;
 } MBEDTLS_SESSION, *PMBEDTLS_SESSION;
@@ -414,8 +415,14 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
     else
     {
         /* Client: crypt32 is the certificate policy engine; verification is
-         * mandatory and hard-fails (no silent acceptance). */
+         * mandatory and hard-fails (no silent acceptance). An empty CA chain
+         * is configured because mbedtls rejects VERIFY_REQUIRED sessions
+         * without one (MBEDTLS_ERR_SSL_CA_CHAIN_REQUIRED) even when the
+         * verify callback owns the decision; the callback clears mbedtls's
+         * per-depth findings and the crypt32 verdict is the only policy. */
         mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_x509_crt_init(&s->empty_ca);
+        mbedtls_ssl_conf_ca_chain(&s->conf, &s->empty_ca, NULL);
         mbedtls_ssl_conf_verify(&s->conf, schan_verify_crypt32_cb, s);
     }
 
@@ -466,6 +473,7 @@ void schan_imp_dispose_session(schan_imp_session session)
     mbedtls_ssl_free(&s->ssl);
     mbedtls_ctr_drbg_free(&s->ctr_drbg);
     mbedtls_entropy_free(&s->entropy);
+    mbedtls_x509_crt_free(&s->empty_ca);
     mbedtls_ssl_config_free(&s->conf);
 
     if (s->alpn_protocols)
