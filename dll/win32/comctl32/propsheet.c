@@ -170,6 +170,11 @@ static const WCHAR PropSheetInfoStr[] = L"PropertySheetInfo";
 #define AERO_PAGE_TOP        (AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT + 4)
 #define AERO_COMMAND_HEIGHT  22
 #define AERO_BUTTON_GAP      3
+#define AERO_BACK_LEFT       1
+#define AERO_BACK_TOP        5
+#define AERO_BACK_WIDTH      16
+#define AERO_BACK_HEIGHT     12
+#define AERO_BACK_GAP        3
                          	
 /******************************************************************************
  * Prototypes
@@ -2750,6 +2755,14 @@ static void PROPSHEET_SetWizButtons(HWND hwndDlg, DWORD dwFlags)
   EnableWindow(hwndNext, dwFlags & PSWIZB_NEXT);
   EnableWindow(hwndFinish, enable_finish);
 
+  if (psInfo->aeroChrome)
+  {
+    HWND hwndAeroBack = GetDlgItem(hwndDlg, IDC_AERO_BACKBUTTON);
+
+    if (hwndAeroBack)
+      EnableWindow(hwndAeroBack, (dwFlags & PSWIZB_BACK) != 0);
+  }
+
   /* set the default pushbutton to an enabled button */
   if (enable_finish)
     SendMessageW(hwndDlg, DM_SETDEFID, IDC_FINISH_BUTTON, 0);
@@ -2904,28 +2917,56 @@ static void PROPSHEET_EnableWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask
 }
 
 /******************************************************************************
+ *            PROPSHEET_AeroBackRect
+ *
+ * Computes the title-bar back button rectangle in sheet pixels.
+ */
+static void PROPSHEET_AeroBackRect(HWND hwndDlg, RECT *rcBack)
+{
+  RECT rc;
+
+  SetRect(&rc, AERO_BACK_LEFT, AERO_BACK_TOP,
+          AERO_BACK_LEFT + AERO_BACK_WIDTH,
+          AERO_BACK_TOP + AERO_BACK_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  *rcBack = rc;
+}
+
+/******************************************************************************
  *            PROPSHEET_AeroHeaderRects
  *
  * Computes the title/subtitle static rectangles in sheet pixels.
  */
 static void PROPSHEET_AeroHeaderRects(HWND hwndDlg, RECT *rcTitle, RECT *rcSubTitle)
 {
-  RECT rcClient, rcSide, rc;
+  RECT rcClient, rcSide, rc, rcBack;
+  int left;
 
   GetClientRect(hwndDlg, &rcClient);
 
   SetRect(&rcSide, 0, 0, AERO_SIDE_MARGIN, 0);
   MapDialogRect(hwndDlg, &rcSide);
 
+  left = rcSide.right;
+  if (IsWindowVisible(GetDlgItem(hwndDlg, IDC_AERO_BACKBUTTON)))
+  {
+    RECT rcGap;
+
+    PROPSHEET_AeroBackRect(hwndDlg, &rcBack);
+    SetRect(&rcGap, 0, 0, AERO_BACK_GAP, 0);
+    MapDialogRect(hwndDlg, &rcGap);
+    left = rcBack.right + rcGap.right;
+  }
+
   SetRect(&rc, AERO_SIDE_MARGIN, AERO_HEADER_TOP,
           AERO_SIDE_MARGIN + 1, AERO_HEADER_TOP + AERO_TITLE_HEIGHT);
   MapDialogRect(hwndDlg, &rc);
-  SetRect(rcTitle, rcSide.right, rc.top, rcClient.right - rcSide.right, rc.bottom);
+  SetRect(rcTitle, left, rc.top, rcClient.right - rcSide.right, rc.bottom);
 
   SetRect(&rc, AERO_SIDE_MARGIN, AERO_SUBTITLE_TOP,
           AERO_SIDE_MARGIN + 1, AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT);
   MapDialogRect(hwndDlg, &rc);
-  SetRect(rcSubTitle, rcSide.right, rc.top, rcClient.right - rcSide.right, rc.bottom);
+  SetRect(rcSubTitle, left, rc.top, rcClient.right - rcSide.right, rc.bottom);
 }
 
 /******************************************************************************
@@ -2960,7 +3001,8 @@ static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo)
   int index = psInfo->active_page;
   DWORD flags;
   WCHAR *title, *subtitle;
-  HWND hwndTitle, hwndSubTitle;
+  HWND hwndTitle, hwndSubTitle, hwndBack;
+  RECT rcTitle, rcSubTitle;
 
   if (index < 0)
     return;
@@ -2969,6 +3011,19 @@ static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo)
   hwndSubTitle = GetDlgItem(hwndDlg, IDC_AERO_SUBTITLE);
   if (!hwndTitle || !hwndSubTitle)
     return;
+
+  hwndBack = GetDlgItem(hwndDlg, IDC_AERO_BACKBUTTON);
+  if (hwndBack)
+    ShowWindow(hwndBack, index > 0 ? SW_SHOW : SW_HIDE);
+
+  PROPSHEET_AeroHeaderRects(hwndDlg, &rcTitle, &rcSubTitle);
+  SetWindowPos(hwndTitle, NULL, rcTitle.left, rcTitle.top,
+               rcTitle.right - rcTitle.left, rcTitle.bottom - rcTitle.top,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  SetWindowPos(hwndSubTitle, NULL, rcSubTitle.left, rcSubTitle.top,
+               rcSubTitle.right - rcSubTitle.left,
+               rcSubTitle.bottom - rcSubTitle.top,
+               SWP_NOZORDER | SWP_NOACTIVATE);
 
   flags = HPSP_get_flags(psInfo->proppage[index].hpage);
 
@@ -2998,21 +3053,88 @@ static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo)
 }
 
 /******************************************************************************
+ *            PROPSHEET_AeroDrawBackButton
+ *
+ * Owner-draw of the flat title-bar back button: a plain left arrow over the
+ * white sheet background.
+ */
+static void PROPSHEET_AeroDrawBackButton(DRAWITEMSTRUCT *dis)
+{
+  HDC hdc = dis->hDC;
+  RECT rc = dis->rcItem;
+  BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;
+  BOOL enabled = (dis->itemState & ODS_DISABLED) == 0;
+  BOOL focused = (dis->itemState & ODS_FOCUS) != 0;
+  COLORREF clrArrow = GetSysColor(enabled ? COLOR_WINDOWTEXT : COLOR_3DSHADOW);
+  POINT pts[7];
+  HBRUSH hbrArrow, hbrOld;
+  HPEN hpenArrow, hpenOld;
+  int cx, cy, midY, tipX, tailX, baseX, halfHead, shaft;
+
+  FillRect(hdc, &rc, GetSysColorBrush(pressed ? COLOR_3DFACE : COLOR_WINDOW));
+
+  cx = rc.right - rc.left;
+  cy = rc.bottom - rc.top;
+  midY = rc.top + cy / 2;
+  tipX = rc.left + cx / 6;
+  tailX = rc.left + cx - cx / 6;
+  baseX = rc.left + cx / 2 - 1;
+  halfHead = cy / 3;
+  shaft = (cy / 6 > 1) ? cy / 6 : 1;
+
+  pts[0].x = tipX;  pts[0].y = midY;
+  pts[1].x = baseX; pts[1].y = midY - halfHead;
+  pts[2].x = baseX; pts[2].y = midY - shaft;
+  pts[3].x = tailX; pts[3].y = midY - shaft;
+  pts[4].x = tailX; pts[4].y = midY + shaft;
+  pts[5].x = baseX; pts[5].y = midY + shaft;
+  pts[6].x = baseX; pts[6].y = midY + halfHead;
+
+  hbrArrow = CreateSolidBrush(clrArrow);
+  hpenArrow = CreatePen(PS_SOLID, 1, clrArrow);
+  hbrOld = (HBRUSH)SelectObject(hdc, hbrArrow);
+  hpenOld = (HPEN)SelectObject(hdc, hpenArrow);
+  Polygon(hdc, pts, 7);
+  SelectObject(hdc, hbrOld);
+  SelectObject(hdc, hpenOld);
+  DeleteObject(hbrArrow);
+  DeleteObject(hpenArrow);
+
+  if (focused && enabled)
+  {
+    InflateRect(&rc, -2, -2);
+    DrawFocusRect(hdc, &rc);
+  }
+}
+
+/******************************************************************************
  *            PROPSHEET_AeroSetupChrome
  *
  * Turns the shared wizard template into the flat aero chrome: the command
  * area back button, the separators and the help button go away, and the
- * header statics are created empty (filled per page).
+ * header statics and the title-bar back button are created empty (the
+ * statics are filled per page, the back button shows from page two on).
  */
 static void PROPSHEET_AeroSetupChrome(HWND hwndDlg, PropSheetInfo *psInfo)
 {
-  RECT rcTitle, rcSubTitle;
-  HWND hwndTitle, hwndSubTitle;
+  RECT rcTitle, rcSubTitle, rcBack;
+  HWND hwndTitle, hwndSubTitle, hwndBack;
 
   ShowWindow(GetDlgItem(hwndDlg, IDC_BACK_BUTTON), SW_HIDE);
   ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINE), SW_HIDE);
   ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINEHEADER), SW_HIDE);
   ShowWindow(GetDlgItem(hwndDlg, IDHELP), SW_HIDE);
+
+  PROPSHEET_AeroBackRect(hwndDlg, &rcBack);
+  hwndBack = CreateWindowExW(0, L"BUTTON", L"",
+                             WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+                             rcBack.left, rcBack.top,
+                             rcBack.right - rcBack.left,
+                             rcBack.bottom - rcBack.top,
+                             hwndDlg, (HMENU)(INT_PTR)IDC_AERO_BACKBUTTON,
+                             COMCTL32_hModule, NULL);
+  if (hwndBack)
+    ShowWindow(hwndBack, SW_HIDE);
 
   PROPSHEET_AeroHeaderRects(hwndDlg, &rcTitle, &rcSubTitle);
 
@@ -3298,6 +3420,19 @@ static BOOL PROPSHEET_IsDialogMessage(HWND hwnd, LPMSG lpMsg)
    TRACE("\n");
    if (!psInfo || (hwnd != lpMsg->hwnd && !IsChild(hwnd, lpMsg->hwnd)))
       return FALSE;
+
+   if (psInfo->aeroChrome && lpMsg->message == WM_SYSKEYDOWN &&
+       lpMsg->wParam == VK_LEFT)
+   {
+      HWND hwndAeroBack = GetDlgItem(hwnd, IDC_AERO_BACKBUTTON);
+
+      if (hwndAeroBack && IsWindowVisible(hwndAeroBack) &&
+          IsWindowEnabled(hwndAeroBack))
+      {
+         PROPSHEET_Back(hwnd);
+         return TRUE;
+      }
+   }
 
    if (lpMsg->message == WM_KEYDOWN && (GetKeyState(VK_CONTROL) & 0x8000))
    {
@@ -3732,6 +3867,10 @@ static BOOL PROPSHEET_DoCommand(HWND hwnd, WORD wID)
 	PROPSHEET_Back(hwnd);
 	break;
 
+    case IDC_AERO_BACKBUTTON:
+	PROPSHEET_Back(hwnd);
+	break;
+
     case IDC_NEXT_BUTTON:
 	PROPSHEET_Next(hwnd);
 	break;
@@ -4094,10 +4233,23 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
       return FALSE;
     }
 
+    case WM_DRAWITEM:
+    {
+      PropSheetInfo* psInfo = GetPropW(hwnd, PropSheetInfoStr);
+      DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;
+
+      if (psInfo && psInfo->aeroChrome &&
+          dis->CtlType == ODT_BUTTON && dis->CtlID == IDC_AERO_BACKBUTTON)
+      {
+        PROPSHEET_AeroDrawBackButton(dis);
+        return TRUE;
+      }
+      return FALSE;
+    }
+
     case WM_DESTROY:
       PROPSHEET_CleanUp(hwnd);
       return TRUE;
-
     case WM_CLOSE:
       PROPSHEET_Cancel(hwnd, 1);
       return FALSE; /* let DefDlgProc post us WM_COMMAND/IDCANCEL */

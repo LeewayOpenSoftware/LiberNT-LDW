@@ -15,6 +15,7 @@
 #define IDC_BACK_BUTTON  12323
 #define IDC_NEXT_BUTTON  12324
 #define IDC_FINISH_BUTTON 12325
+#define IDC_AERO_BACKBUTTON 12330
 
 static BOOL s_bNotified;
 
@@ -290,6 +291,168 @@ static void test_AeroWizard(void)
     ok(ret != -1, "PropertySheet returned -1.\n");
 }
 
+// PSH_AEROWIZARD M2: the title-bar back button shows from page two on, and
+// click / Alt+Left drive the PSN_WIZBACK path. Classic chrome lacks the
+// button; the checks are skipped there.
+static INT s_iAeroBackState;
+static LONG s_lAeroWizBackCount;
+static HWND s_hwndAeroPage0;
+static BOOL s_bAeroBackArmed;
+
+static BOOL AeroBackOnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam)
+{
+    if (!s_bAeroBackArmed)
+    {
+        s_bAeroBackArmed = TRUE;
+        SetTimer(hwnd, 999, 300, NULL);
+    }
+    return TRUE;
+}
+
+static BOOL AeroBackOnNotify(HWND hwnd, UINT idCtrl, LPNMHDR pnmh)
+{
+    switch (pnmh->code)
+    {
+        case PSN_SETACTIVE:
+            if (!s_hwndAeroPage0)
+                s_hwndAeroPage0 = hwnd;
+            break;
+        case PSN_WIZBACK:
+            InterlockedIncrement(&s_lAeroWizBackCount);
+            break;
+    }
+    return FALSE;
+}
+
+static void AeroBackFinish(HWND hwnd, HWND hwndParent)
+{
+    KillTimer(hwnd, 999);
+    PropSheet_PressButton(hwndParent, PSBTN_CANCEL);
+}
+
+static void AeroBackOnTimer(HWND hwnd, UINT id)
+{
+    HWND hwndParent = GetParent(hwnd);
+    HWND hwndCaptionBack = GetDlgItem(hwndParent, IDC_AERO_BACKBUTTON);
+    HWND hwndBack = GetDlgItem(hwndParent, IDC_BACK_BUTTON);
+    HWND hwndCurrent = (HWND)SendMessageW(hwndParent, PSM_GETCURRENTPAGEHWND, 0, 0);
+
+    KillTimer(hwnd, id);
+
+    if (!hwndCaptionBack)
+    {
+        trace("IDC_AERO_BACKBUTTON not present (classic chrome), skipping M2 checks.\n");
+        AeroBackFinish(hwnd, hwndParent);
+        return;
+    }
+
+    switch (s_iAeroBackState)
+    {
+        case 0:
+            ok(hwndCurrent == s_hwndAeroPage0, "Wizard should open on page 1.\n");
+            ok(!IsWindowVisible(hwndCaptionBack), "Title-bar Back should be hidden on page 1.\n");
+            ok(!IsWindowVisible(hwndBack), "Command-area Back should be hidden in aero chrome.\n");
+            ok((GetWindowLongW(hwndCaptionBack, GWL_STYLE) & WS_TABSTOP) != 0,
+               "Title-bar Back should participate in tab order.\n");
+            ok(GetParent(hwndCaptionBack) == hwndParent, "Title-bar Back should be a child of the sheet.\n");
+
+            PropSheet_PressButton(hwndParent, PSBTN_NEXT);
+            break;
+        case 1:
+            ok(hwndCurrent != s_hwndAeroPage0, "Wizard should be on page 2.\n");
+            ok(IsWindowVisible(hwndCaptionBack), "Title-bar Back should be visible on page 2.\n");
+            ok(IsWindowEnabled(hwndCaptionBack), "Title-bar Back should be enabled on page 2.\n");
+
+            SendMessageW(hwndCaptionBack, BM_CLICK, 0, 0);
+            ok(InterlockedCompareExchange(&s_lAeroWizBackCount, 0, 0) == 1,
+               "PSN_WIZBACK should have been sent once.\n");
+            ok(SendMessageW(hwndParent, PSM_GETCURRENTPAGEHWND, 0, 0) == (LPARAM)s_hwndAeroPage0,
+               "Clicking title-bar Back should return to page 1.\n");
+            break;
+        case 2:
+            PostMessageW(hwndParent, WM_SYSKEYDOWN, VK_LEFT, (1ul << 29));
+            break;
+        case 3:
+            ok(InterlockedCompareExchange(&s_lAeroWizBackCount, 0, 0) == 1,
+               "Alt+Left should be ignored while Back is hidden.\n");
+            ok(SendMessageW(hwndParent, PSM_GETCURRENTPAGEHWND, 0, 0) == (LPARAM)s_hwndAeroPage0,
+               "Should still be on page 1.\n");
+
+            PropSheet_PressButton(hwndParent, PSBTN_NEXT);
+            break;
+        case 4:
+            PostMessageW(hwndParent, WM_SYSKEYDOWN, VK_LEFT, (1ul << 29));
+            break;
+        case 5:
+            ok(InterlockedCompareExchange(&s_lAeroWizBackCount, 0, 0) == 2,
+               "Alt+Left should send PSN_WIZBACK.\n");
+            ok(SendMessageW(hwndParent, PSM_GETCURRENTPAGEHWND, 0, 0) == (LPARAM)s_hwndAeroPage0,
+               "Alt+Left should return to page 1.\n");
+
+            PropSheet_PressButton(hwndParent, PSBTN_NEXT);
+            break;
+        case 6:
+            SendMessageW(hwndParent, PSM_SETWIZBUTTONS, 0, PSWIZB_NEXT);
+            ok(!IsWindowEnabled(hwndCaptionBack), "Title-bar Back should follow PSWIZB_BACK off.\n");
+
+            SendMessageW(hwndParent, PSM_SETWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_NEXT);
+            ok(IsWindowEnabled(hwndCaptionBack), "Title-bar Back should follow PSWIZB_BACK on.\n");
+
+            AeroBackFinish(hwnd, hwndParent);
+            break;
+    }
+    s_iAeroBackState++;
+    if (s_iAeroBackState < 7)
+        SetTimer(hwnd, 999, 300, NULL);
+}
+
+static INT_PTR CALLBACK
+AeroBackPageProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+        HANDLE_MSG(hwnd, WM_INITDIALOG, AeroBackOnInitDialog);
+        HANDLE_MSG(hwnd, WM_NOTIFY, AeroBackOnNotify);
+        HANDLE_MSG(hwnd, WM_TIMER, AeroBackOnTimer);
+    }
+    return 0;
+}
+
+static void test_AeroWizardBack(void)
+{
+    PROPSHEETPAGEW psp = {0};
+    PROPSHEETHEADERW header = {0};
+    HPROPSHEETPAGE hpsp[3];
+    INT_PTR ret;
+    INT i;
+
+    psp.dwSize = sizeof(psp);
+    psp.dwFlags = PSP_DEFAULT;
+    psp.hInstance = GetModuleHandleW(NULL);
+    psp.pszTemplate = MAKEINTRESOURCEW(1);
+    psp.pfnDlgProc = AeroBackPageProc;
+    for (i = 0; i < 3; i++)
+    {
+        hpsp[i] = pCreatePropertySheetPageW(&psp);
+        ok(hpsp[i] != NULL, "hpsp[%d] was NULL.\n", i);
+    }
+
+    header.dwSize = sizeof(header);
+    header.dwFlags = PSH_AEROWIZARD;
+    header.hInstance = GetModuleHandleW(NULL);
+    header.hwndParent = NULL;
+    header.nPages = ARRAYSIZE(hpsp);
+    header.phpage = hpsp;
+    header.pszCaption = L"aerowizard-back";
+
+    s_iAeroBackState = 0;
+    s_lAeroWizBackCount = 0;
+    s_hwndAeroPage0 = NULL;
+    s_bAeroBackArmed = FALSE;
+    ret = pPropertySheetW(&header);
+    ok(ret != -1, "PropertySheet returned -1.\n");
+}
+
 
 START_TEST(propsheetv6)
 {
@@ -317,6 +480,7 @@ START_TEST(propsheetv6)
     test_StructSizes();
     test_ApplyButtonDisabled();
     test_AeroWizard();
+    test_AeroWizardBack();
 
     FreeLibrary(hComCtl32);
 }
