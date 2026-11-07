@@ -296,6 +296,44 @@ Lt1xFillTargetMode(_In_ PLT1X_CONTEXT Ctx,
                                       : D3DKMDT_MP_NOTPREFERRED;
 }
 
+/* The constraining VidPn may already carry a source mode set naming the
+   mode the caller wants (a dynamic mode switch); an empty set means the
+   boot-time call and pins the probed mode 0.  Without this the M1 switch
+   request (1024x768) was answered by pinning the probed 1280x800, the
+   path validation failed and win32k reported DISP_CHANGE_RESTART. */
+static ULONG
+Lt1xConstraintModeIndex(
+    _In_ PLT1X_CONTEXT Ctx,
+    _In_ CONST DXGK_VIDPN_INTERFACE *VidPnInterface,
+    _In_ D3DKMDT_HVIDPN hVidPn,
+    _In_ D3DDDI_VIDEO_PRESENT_SOURCE_ID SourceId)
+{
+    D3DKMDT_HVIDPNSOURCEMODESET hSet;
+    CONST DXGK_VIDPNSOURCEMODESET_INTERFACE *SetInterface;
+    CONST D3DKMDT_VIDPN_SOURCE_MODE *Mode;
+    NTSTATUS Status;
+    ULONG Index = 0;
+
+    Status = VidPnInterface->pfnAcquireSourceModeSet(hVidPn, SourceId,
+                                                     &hSet, &SetInterface);
+    if (!NT_SUCCESS(Status))
+        return 0;
+    Status = SetInterface->pfnAcquireFirstModeInfo(hSet, &Mode);
+    if (NT_SUCCESS(Status) && Mode != NULL)
+    {
+        ULONG WantW = (ULONG)Mode->Format.Graphics.PrimSurfSize.cx;
+        ULONG WantH = (ULONG)Mode->Format.Graphics.PrimSurfSize.cy;
+
+        if (Lt1xAltModes &&
+            (WantW != Ctx->ModeWidth || WantH != Ctx->ModeHeight) &&
+            WantW == 1024 && WantH == 768)
+            Index = 1;
+        SetInterface->pfnReleaseModeInfo(hSet, Mode);
+    }
+    VidPnInterface->pfnReleaseSourceModeSet(hVidPn, hSet);
+    return Index;
+}
+
 static
 NTSTATUS
 Lt1xAssignCofuncModality(
@@ -326,6 +364,11 @@ Lt1xAssignCofuncModality(
         CONST DXGK_VIDPNTARGETMODESET_INTERFACE *TargetModeSetInterface;
         D3DKMDT_VIDPN_SOURCE_MODE *SourceMode;
         D3DKMDT_VIDPN_TARGET_MODE *TargetMode;
+        ULONG PinIndex;
+
+        PinIndex = Lt1xConstraintModeIndex(Ctx, VidPnInterface, hVidPn,
+                                           Path->VidPnSourceId);
+        DbgPrint("LT1X: EnumVidPnCofuncModality pin mode %lu\n", PinIndex);
 
         Status = VidPnInterface->pfnCreateNewSourceModeSet(
             hVidPn, Path->VidPnSourceId, &hSourceModeSet, &SourceModeSetInterface);
@@ -334,26 +377,30 @@ Lt1xAssignCofuncModality(
         Status = SourceModeSetInterface->pfnCreateNewModeInfo(hSourceModeSet, &SourceMode);
         if (NT_SUCCESS(Status))
         {
-            D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID SourceModeId;
+            D3DKMDT_VIDEO_PRESENT_SOURCE_MODE_ID SourceModeId[2] = { 0, 0 };
+            ULONG Added = 1;
 
             Lt1xFillSourceMode(Ctx, 0, SourceMode);
             /* pfnAddMode consumes the pending mode info, so pin by the id
                captured here and never touch the mode info afterwards. */
-            SourceModeId = SourceMode->Id;
+            SourceModeId[0] = SourceMode->Id;
             Status = SourceModeSetInterface->pfnAddMode(hSourceModeSet, SourceMode);
-            if (NT_SUCCESS(Status))
-                Status = SourceModeSetInterface->pfnPinMode(hSourceModeSet, SourceModeId);
             SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
-        }
-        if (NT_SUCCESS(Status) && Lt1xAltModes)
-        {
-            Status = SourceModeSetInterface->pfnCreateNewModeInfo(hSourceModeSet, &SourceMode);
-            if (NT_SUCCESS(Status))
+            if (NT_SUCCESS(Status) && Lt1xAltModes)
             {
-                Lt1xFillSourceMode(Ctx, 1, SourceMode);
-                Status = SourceModeSetInterface->pfnAddMode(hSourceModeSet, SourceMode);
-                SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
+                Status = SourceModeSetInterface->pfnCreateNewModeInfo(hSourceModeSet, &SourceMode);
+                if (NT_SUCCESS(Status))
+                {
+                    Added = 2;
+                    Lt1xFillSourceMode(Ctx, 1, SourceMode);
+                    SourceModeId[1] = SourceMode->Id;
+                    Status = SourceModeSetInterface->pfnAddMode(hSourceModeSet, SourceMode);
+                    SourceModeSetInterface->pfnReleaseModeInfo(hSourceModeSet, SourceMode);
+                }
             }
+            if (NT_SUCCESS(Status))
+                Status = SourceModeSetInterface->pfnPinMode(
+                    hSourceModeSet, SourceModeId[PinIndex < Added ? PinIndex : 0]);
         }
         if (NT_SUCCESS(Status))
             Status = VidPnInterface->pfnAssignSourceModeSet(hVidPn, Path->VidPnSourceId, hSourceModeSet);
@@ -368,25 +415,30 @@ Lt1xAssignCofuncModality(
         Status = TargetModeSetInterface->pfnCreateNewModeInfo(hTargetModeSet, &TargetMode);
         if (NT_SUCCESS(Status))
         {
-            D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID TargetModeId;
+            D3DKMDT_VIDEO_PRESENT_TARGET_MODE_ID TargetModeId[2] = { 0, 0 };
+            ULONG Added = 1;
 
-            Lt1xFillTargetMode(Ctx, 0, TargetMode);
+            /* The target set mirrors the source pick for this VidPn. */
+            Lt1xFillTargetMode(Ctx, PinIndex, TargetMode);
             /* pfnAddMode consumes the pending mode info; pin by the saved id. */
-            TargetModeId = TargetMode->Id;
+            TargetModeId[0] = TargetMode->Id;
             Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
-            if (NT_SUCCESS(Status))
-                Status = TargetModeSetInterface->pfnPinMode(hTargetModeSet, TargetModeId);
             TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
-        }
-        if (NT_SUCCESS(Status) && Lt1xAltModes)
-        {
-            Status = TargetModeSetInterface->pfnCreateNewModeInfo(hTargetModeSet, &TargetMode);
-            if (NT_SUCCESS(Status))
+            if (NT_SUCCESS(Status) && Lt1xAltModes)
             {
-                Lt1xFillTargetMode(Ctx, 1, TargetMode);
-                Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
-                TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
+                Status = TargetModeSetInterface->pfnCreateNewModeInfo(hTargetModeSet, &TargetMode);
+                if (NT_SUCCESS(Status))
+                {
+                    Added = 2;
+                    Lt1xFillTargetMode(Ctx, 1 - PinIndex, TargetMode);
+                    TargetModeId[1] = TargetMode->Id;
+                    Status = TargetModeSetInterface->pfnAddMode(hTargetModeSet, TargetMode);
+                    TargetModeSetInterface->pfnReleaseModeInfo(hTargetModeSet, TargetMode);
+                }
             }
+            if (NT_SUCCESS(Status))
+                Status = TargetModeSetInterface->pfnPinMode(
+                    hTargetModeSet, TargetModeId[PinIndex < Added ? PinIndex : 0]);
         }
         if (NT_SUCCESS(Status))
             Status = VidPnInterface->pfnAssignTargetModeSet(hVidPn, Path->VidPnTargetId, hTargetModeSet);
