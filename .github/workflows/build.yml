@@ -83,8 +83,7 @@ jobs:
           exit 0
         fi
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
-        printf '%s
-' "$LBI_LEDGER_DEPLOY_KEY" > ~/.ssh/lbi_ledger && chmod 600 ~/.ssh/lbi_ledger
+        echo "$LBI_LEDGER_DEPLOY_KEY" > ~/.ssh/lbi_ledger && chmod 600 ~/.ssh/lbi_ledger
         ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
         export GIT_SSH_COMMAND="ssh -i ~/.ssh/lbi_ledger -o IdentitiesOnly=yes"
         python3 -I sdk/tools/lbi/lbi_alloc.py --ledger git@github.com:LeewayOpenSoftware/leeway-lbi-ledger.git \
