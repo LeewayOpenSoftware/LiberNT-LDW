@@ -206,14 +206,16 @@ static void AeroOnTimer(HWND hwnd, UINT id)
             break;
         case 1:
             ok(!IsWindowVisible(hwndBack), "Back should be hidden.\n");
-            ok(IsWindowVisible(hwndNext), "Next should still be visible.\n");
+            ok(!IsWindowVisible(hwndNext), "Next should be hidden.\n");
             ok(IsWindowVisible(hwndCancel), "Cancel should still be visible.\n");
 
             PropSheet_ShowWizButtons(hwndParent, PSWIZB_BACK, PSWIZB_BACK);
+            PropSheet_ShowWizButtons(hwndParent, PSWIZB_NEXT, PSWIZB_NEXT);
             PropSheet_ShowWizButtons(hwndParent, 0, PSWIZB_CANCEL);
             break;
         case 2:
             ok(IsWindowVisible(hwndBack), "Back should be shown again.\n");
+            ok(IsWindowVisible(hwndNext), "Next should be shown again.\n");
             ok(!IsWindowVisible(hwndCancel), "Cancel should be hidden.\n");
 
             PropSheet_ShowWizButtons(hwndParent, PSWIZB_CANCEL, PSWIZB_CANCEL);
