@@ -2703,6 +2703,40 @@ static void s2_teardown_fixture(PCCERT_CONTEXT cert, HCRYPTPROV csp, HCRYPTKEY k
  * a wrong target name fails, the certificate's own CN succeeds. Without a
  * trusted root the trust error would short-circuit the name check (the P2
  * finding), so the root is installed into ROOT for the duration. */
+static BOOL s2_root_install_allowed(void)
+{
+    char buf[8];
+    DWORD len = GetEnvironmentVariableA("S2_ALLOW_ROOT_INSTALL", buf, sizeof(buf));
+
+    if (len == 1 && buf[0] == '1')
+        return TRUE;
+
+    /* The certificate verification under test runs inside secur32 against
+     * the default chain engine and the system stores, so the fixture must be
+     * installed into ROOT for the duration of this test. That is fine in the
+     * disposable lab VM, but never on a real Windows host by default: skip
+     * there unless S2_ALLOW_ROOT_INSTALL=1 says so. */
+    {
+        HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+        HKEY key;
+        char product[64];
+        DWORD size = sizeof(product), type;
+        BOOL windows = FALSE;
+
+        if (ntdll && GetProcAddress(ntdll, "wine_get_version"))
+            return TRUE;
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                          0, KEY_READ, &key) == ERROR_SUCCESS)
+        {
+            if (RegQueryValueExA(key, "ProductName", NULL, &type, (BYTE *)product, &size) == ERROR_SUCCESS &&
+                type == REG_SZ && strstr(product, "Windows"))
+                windows = TRUE;
+            RegCloseKey(key);
+        }
+        return !windows;
+    }
+}
+
 static void test_schannel_s2_hostname_mismatch(void)
 {
     static unsigned char client_tok[8192], server_tok[8192];
@@ -2717,6 +2751,13 @@ static void test_schannel_s2_hostname_mismatch(void)
 
     s2_setup_fixture(&cert, &csp, &key);
     if (!cert || !csp || !key) { s2_teardown_fixture(cert, csp, key); return; }
+
+    if (!s2_root_install_allowed())
+    {
+        skip("ROOT-store install not allowed on this host (set S2_ALLOW_ROOT_INSTALL=1 to enable)\n");
+        s2_teardown_fixture(cert, csp, key);
+        return;
+    }
 
     root_store = CertOpenSystemStoreA(0, "ROOT");
     ok(root_store != NULL, "CertOpenSystemStoreA(ROOT) failed: %08lx\n", GetLastError());
