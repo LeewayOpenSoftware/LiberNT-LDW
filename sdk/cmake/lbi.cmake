@@ -42,8 +42,8 @@ if(NOT DEFINED LBI_REVISION)
     set(LBI_REVISION 0)
 endif()
 if(NOT DEFINED LBI_MANIFEST_SCHEMA)
-    # WS-C owns this identifier (cross-dependency, spec section 8).
-    set(LBI_MANIFEST_SCHEMA "leeway-provenance-manifest/v1")
+    # WS-C owns this identifier (WS-C-PROVENANCE.md section 3, pinned 2026-11-07).
+    set(LBI_MANIFEST_SCHEMA "lbi-provenance-manifest/1.0")
 endif()
 
 # ---- arch / type from the configured tree ----------------------------------

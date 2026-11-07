@@ -120,7 +120,8 @@ def main(argv=None):
     ap.add_argument("--worker", default=os.environ.get("LBI_WORKER") or socket.gethostname() or "unknown",
                     help="who allocated (host name, lab id, CI runner); recorded, never identity")
     ap.add_argument("--ci-ref", default=os.environ.get("GITHUB_RUN_ID", ""), help="opaque CI run reference (recorded, never identity)")
-    ap.add_argument("--manifest-schema", default="leeway-provenance-manifest/v1", help="WS-C manifest schema id")
+    ap.add_argument("--manifest-schema", default="lbi-provenance-manifest/1.0",
+                    help="WS-C manifest schema id (WS-C-PROVENANCE.md section 3)")
     ap.add_argument("--timestamp", help="override UTC timestamp (ISO 8601 Z), tests only")
     a = ap.parse_args(argv)
 
