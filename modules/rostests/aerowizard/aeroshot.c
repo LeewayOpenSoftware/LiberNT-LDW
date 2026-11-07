@@ -22,9 +22,23 @@ ShotPageProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
         case WM_INITDIALOG:
             SetTimer(hwndDlg, 1, SAFETY_TIMEOUT_MS, NULL);
+            if (GetDlgItem(hwndDlg, IDC_SHOT_OPT_AUTO))
+                CheckRadioButton(hwndDlg, IDC_SHOT_OPT_AUTO, IDC_SHOT_OPT_SKIP, IDC_SHOT_OPT_AUTO);
+            if (GetDlgItem(hwndDlg, IDC_SHOT_PROGRESS))
+            {
+                SendDlgItemMessageW(hwndDlg, IDC_SHOT_PROGRESS, PBM_SETRANGE32, 0, 100);
+                SendDlgItemMessageW(hwndDlg, IDC_SHOT_PROGRESS, PBM_SETPOS, 0, 0);
+                SetTimer(hwndDlg, 2, 150, NULL);
+            }
             return TRUE;
 
         case WM_TIMER:
+            if (wParam == 2)
+            {
+                LRESULT pos = SendDlgItemMessageW(hwndDlg, IDC_SHOT_PROGRESS, PBM_GETPOS, 0, 0);
+                SendDlgItemMessageW(hwndDlg, IDC_SHOT_PROGRESS, PBM_SETPOS, (pos + 2) % 102, 0);
+                return TRUE;
+            }
             KillTimer(hwndDlg, 1);
             PropSheet_PressButton(GetParent(hwndDlg), PSBTN_CANCEL);
             return TRUE;
