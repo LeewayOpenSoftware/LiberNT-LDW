@@ -135,6 +135,7 @@ typedef struct tagPropSheetInfo
   int height;
   HIMAGELIST hImageList;
   BOOL ended;
+  BOOL aeroChrome;
   INT result;
 } PropSheetInfo;
 
@@ -159,6 +160,16 @@ static const WCHAR PropSheetInfoStr[] = L"PropertySheetInfo";
 /* Wizard metrics specified in DLUs */
 #define WIZARD_PADDING 7
 #define WIZARD_HEADER_HEIGHT 36
+
+/* Aero wizard metrics specified in DLUs of the sheet dialog */
+#define AERO_SIDE_MARGIN     6
+#define AERO_HEADER_TOP      7
+#define AERO_TITLE_HEIGHT    12
+#define AERO_SUBTITLE_TOP    (AERO_HEADER_TOP + AERO_TITLE_HEIGHT + 2)
+#define AERO_SUBTITLE_HEIGHT 11
+#define AERO_PAGE_TOP        (AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT + 4)
+#define AERO_COMMAND_HEIGHT  22
+#define AERO_BUTTON_GAP      3
                          	
 /******************************************************************************
  * Prototypes
@@ -174,6 +185,7 @@ static int PROPSHEET_GetPageIndex(HPROPSHEETPAGE hpage, const PropSheetInfo* psI
 static PADDING_INFO PROPSHEET_GetPaddingInfoWizard(HWND hwndDlg, const PropSheetInfo* psInfo);
 static BOOL PROPSHEET_DoCommand(HWND hwnd, WORD wID);
 static BOOL PROPSHEET_RemovePage(HWND hwndDlg, int index, HPROPSHEETPAGE hpage);
+static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo);
 
 static INT_PTR CALLBACK
 PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -643,9 +655,19 @@ static VOID PROPSHEET_UnImplementedFlags(DWORD dwFlags)
 static void PROPSHEET_GetPageRect(const PropSheetInfo * psInfo, HWND hwndDlg,
                                   RECT *rc, HPROPSHEETPAGE hpsp)
 {
-    if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) {     
+    if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) {
         HWND hwndChild;
         RECT r;
+
+        if (psInfo->aeroChrome)
+        {
+            rc->left = AERO_SIDE_MARGIN;
+            rc->top = AERO_PAGE_TOP;
+            rc->right = rc->left + psInfo->width;
+            rc->bottom = rc->top + psInfo->height;
+            MapDialogRect(hwndDlg, rc);
+            return;
+        }
 
         if (((psInfo->ppshheader.dwFlags & (PSH_WIZARD97_NEW | PSH_WIZARD97_OLD)) &&
              (psInfo->ppshheader.dwFlags & PSH_HEADER) &&
@@ -1184,11 +1206,25 @@ static BOOL PROPSHEET_AdjustSizeWizard(HWND hwndDlg, const PropSheetInfo* psInfo
 
   TRACE("Biggest page %s\n", wine_dbgstr_rect(&rc));
 
-  /* Add space for the buttons row */
-  GetWindowRect(hwndLine, &lineRect);
-  MapWindowPoints(NULL, hwndDlg, (LPPOINT)&lineRect, 2);
-  GetClientRect(hwndDlg, &dialogRect);
-  rc.bottom += dialogRect.bottom - lineRect.top - 1;
+  if (psInfo->aeroChrome)
+  {
+    RECT margins;
+
+    SetRect(&margins, AERO_SIDE_MARGIN, AERO_PAGE_TOP,
+            AERO_SIDE_MARGIN, AERO_COMMAND_HEIGHT);
+    MapDialogRect(hwndDlg, &margins);
+
+    rc.right += margins.left + margins.right;
+    rc.bottom += margins.top + margins.bottom;
+  }
+  else
+  {
+    /* Add space for the buttons row */
+    GetWindowRect(hwndLine, &lineRect);
+    MapWindowPoints(NULL, hwndDlg, (LPPOINT)&lineRect, 2);
+    GetClientRect(hwndDlg, &dialogRect);
+    rc.bottom += dialogRect.bottom - lineRect.top - 1;
+  }
 
   /* Convert the client coordinates to window coordinates */
   AdjustWindowRect(&rc, GetWindowLongW(hwndDlg, GWL_STYLE), FALSE);
@@ -1306,6 +1342,39 @@ static BOOL PROPSHEET_AdjustButtonsWizard(HWND hwndParent,
   int num_buttons = 3;
   int buttonWidth, buttonHeight, lineHeight, lineWidth;
   PADDING_INFO padding = PROPSHEET_GetPaddingInfoWizard(hwndParent, psInfo);
+
+  if (psInfo->aeroChrome)
+  {
+    RECT rcPad;
+
+    /* Right-aligned Next/Finish and Cancel; no Back, Help or separator. */
+    GetClientRect(hwndButton, &rcSheet);
+    buttonWidth = rcSheet.right;
+    buttonHeight = rcSheet.bottom;
+
+    GetClientRect(hwndParent, &rcSheet);
+
+    SetRect(&rcPad, AERO_SIDE_MARGIN, 0, AERO_BUTTON_GAP, AERO_COMMAND_HEIGHT);
+    MapDialogRect(hwndParent, &rcPad);
+
+    y = rcSheet.bottom - rcPad.bottom + ((rcPad.bottom - buttonHeight) / 2);
+
+    x = rcSheet.right - rcPad.left - buttonWidth;
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    x -= rcPad.right + buttonWidth;
+
+    hwndButton = GetDlgItem(hwndParent, IDC_NEXT_BUTTON);
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    hwndButton = GetDlgItem(hwndParent, IDC_FINISH_BUTTON);
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    return TRUE;
+  }
 
   if (psInfo->hasHelp)
     num_buttons++;
@@ -1650,6 +1719,8 @@ static BOOL PROPSHEET_CreatePage(HWND hwndParent,
 #if __WINE_COMCTL32_VERSION == 6
   if (!(psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD))
       EnableThemeDialogTexture (hwndPage, ETDT_ENABLETAB);
+  else if (psInfo->aeroChrome)
+      EnableThemeDialogTexture (hwndPage, ETDT_ENABLEAEROWIZARDTAB);
 #endif
 
   return TRUE;
@@ -1732,13 +1803,16 @@ static BOOL PROPSHEET_ShowPage(HWND hwndDlg, int index, PropSheetInfo * psInfo)
   if (psInfo->ppshheader.dwFlags & (PSH_WIZARD97_OLD | PSH_WIZARD97_NEW) )
   {
       hwndLineHeader = GetDlgItem(hwndDlg, IDC_SUNKEN_LINEHEADER);
-      
+
       if ((HPSP_get_flags(psInfo->proppage[index].hpage) & PSP_HIDEHEADER) ||
               (!(psInfo->ppshheader.dwFlags & PSH_HEADER)) )
 	  ShowWindow(hwndLineHeader, SW_HIDE);
       else
 	  ShowWindow(hwndLineHeader, SW_SHOW);
   }
+
+  if (psInfo->aeroChrome)
+      PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 
   return TRUE;
 }
@@ -2803,6 +2877,140 @@ static void PROPSHEET_EnableWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask
 }
 
 /******************************************************************************
+ *            PROPSHEET_AeroHeaderRects
+ *
+ * Computes the title/subtitle static rectangles in sheet pixels.
+ */
+static void PROPSHEET_AeroHeaderRects(HWND hwndDlg, RECT *rcTitle, RECT *rcSubTitle)
+{
+  RECT rcClient, rcSide, rc;
+
+  GetClientRect(hwndDlg, &rcClient);
+
+  SetRect(&rcSide, 0, 0, AERO_SIDE_MARGIN, 0);
+  MapDialogRect(hwndDlg, &rcSide);
+
+  SetRect(&rc, AERO_SIDE_MARGIN, AERO_HEADER_TOP,
+          AERO_SIDE_MARGIN + 1, AERO_HEADER_TOP + AERO_TITLE_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  SetRect(rcTitle, rcSide.right, rc.top, rcClient.right - rcSide.right, rc.bottom);
+
+  SetRect(&rc, AERO_SIDE_MARGIN, AERO_SUBTITLE_TOP,
+          AERO_SIDE_MARGIN + 1, AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  SetRect(rcSubTitle, rcSide.right, rc.top, rcClient.right - rcSide.right, rc.bottom);
+}
+
+/******************************************************************************
+ *            HPSP_get_header_textW
+ *
+ * Returns a copy of the page header title/subtitle, converted to UNICODE.
+ */
+static WCHAR *HPSP_get_header_textW(HPROPSHEETPAGE hpsp, BOOL subtitle)
+{
+  if (!hpsp)
+    return NULL;
+
+  if (hpsp->unicode)
+  {
+    const WCHAR *str = subtitle ? hpsp->pspW.pszHeaderSubTitle : hpsp->pspW.pszHeaderTitle;
+    return str ? heap_strdupW(str) : NULL;
+  }
+  else
+  {
+    const char *str = subtitle ? hpsp->pspA.pszHeaderSubTitle : hpsp->pspA.pszHeaderTitle;
+    return str ? heap_strdupAtoW(str) : NULL;
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroUpdateHeader
+ *
+ * Shows the header title/subtitle of the active page in the flat chrome.
+ */
+static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo)
+{
+  int index = psInfo->active_page;
+  DWORD flags;
+  WCHAR *title, *subtitle;
+  HWND hwndTitle, hwndSubTitle;
+
+  if (index < 0)
+    return;
+
+  hwndTitle = GetDlgItem(hwndDlg, IDC_AERO_TITLE);
+  hwndSubTitle = GetDlgItem(hwndDlg, IDC_AERO_SUBTITLE);
+  if (!hwndTitle || !hwndSubTitle)
+    return;
+
+  flags = HPSP_get_flags(psInfo->proppage[index].hpage);
+
+  title = (flags & PSP_HIDEHEADER) ? NULL :
+      HPSP_get_header_textW(psInfo->proppage[index].hpage, FALSE);
+  subtitle = (flags & PSP_HIDEHEADER) ? NULL :
+      HPSP_get_header_textW(psInfo->proppage[index].hpage, TRUE);
+
+  if (title && title[0])
+  {
+    SetWindowTextW(hwndTitle, title);
+    ShowWindow(hwndTitle, SW_SHOW);
+  }
+  else
+    ShowWindow(hwndTitle, SW_HIDE);
+
+  if (subtitle && subtitle[0])
+  {
+    SetWindowTextW(hwndSubTitle, subtitle);
+    ShowWindow(hwndSubTitle, SW_SHOW);
+  }
+  else
+    ShowWindow(hwndSubTitle, SW_HIDE);
+
+  Free(title);
+  Free(subtitle);
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroSetupChrome
+ *
+ * Turns the shared wizard template into the flat aero chrome: the command
+ * area back button, the separators and the help button go away, and the
+ * header statics are created empty (filled per page).
+ */
+static void PROPSHEET_AeroSetupChrome(HWND hwndDlg, PropSheetInfo *psInfo)
+{
+  RECT rcTitle, rcSubTitle;
+  HWND hwndTitle, hwndSubTitle;
+
+  ShowWindow(GetDlgItem(hwndDlg, IDC_BACK_BUTTON), SW_HIDE);
+  ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINE), SW_HIDE);
+  ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINEHEADER), SW_HIDE);
+  ShowWindow(GetDlgItem(hwndDlg, IDHELP), SW_HIDE);
+
+  PROPSHEET_AeroHeaderRects(hwndDlg, &rcTitle, &rcSubTitle);
+
+  hwndTitle = CreateWindowExW(0, L"STATIC", L"",
+                              WS_CHILD | SS_LEFT | SS_NOPREFIX,
+                              rcTitle.left, rcTitle.top,
+                              rcTitle.right - rcTitle.left,
+                              rcTitle.bottom - rcTitle.top,
+                              hwndDlg, (HMENU)(INT_PTR)IDC_AERO_TITLE,
+                              COMCTL32_hModule, NULL);
+  if (hwndTitle)
+    SendMessageW(hwndTitle, WM_SETFONT, (WPARAM)psInfo->hFontBold, FALSE);
+
+  hwndSubTitle = CreateWindowExW(0, L"STATIC", L"",
+                                 WS_CHILD | SS_LEFT | SS_NOPREFIX,
+                                 rcSubTitle.left, rcSubTitle.top,
+                                 rcSubTitle.right - rcSubTitle.left,
+                                 rcSubTitle.bottom - rcSubTitle.top,
+                                 hwndDlg, (HMENU)(INT_PTR)IDC_AERO_SUBTITLE,
+                                 COMCTL32_hModule, NULL);
+  if (hwndSubTitle)
+    SendMessageW(hwndSubTitle, WM_SETFONT, (WPARAM)psInfo->hFont, FALSE);
+}
+
+/******************************************************************************
  *            PROPSHEET_SetHeaderTitleW
  */
 static void PROPSHEET_SetHeaderTitleW(HWND hwndDlg, UINT page_index, const WCHAR *title)
@@ -2815,6 +3023,9 @@ static void PROPSHEET_SetHeaderTitleW(HWND hwndDlg, UINT page_index, const WCHAR
         return;
 
     HPSP_set_header_title(psInfo->proppage[page_index].hpage, title);
+
+    if (psInfo->aeroChrome && (int)page_index == psInfo->active_page)
+        PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 }
 
 /******************************************************************************
@@ -2844,6 +3055,9 @@ static void PROPSHEET_SetHeaderSubTitleW(HWND hwndDlg, UINT page_index, const WC
         return;
 
     HPSP_set_header_subtitle(psInfo->proppage[page_index].hpage, subtitle);
+
+    if (psInfo->aeroChrome && (int)page_index == psInfo->active_page)
+        PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 }
 
 /******************************************************************************
@@ -3534,6 +3748,12 @@ static LRESULT PROPSHEET_Paint(HWND hwnd, HDC hdcParam)
     hdc = hdcParam ? hdcParam : BeginPaint(hwnd, &ps);
     if (!hdc) return 1;
 
+    if (psInfo->aeroChrome)
+    {
+        GetClientRect(hwnd, &r);
+        FillRect(hdc, &r, GetSysColorBrush(COLOR_WINDOW));
+    }
+
     hdcSrc = CreateCompatibleDC(0);
 
     if (psInfo->ppshheader.dwFlags & PSH_USEHPLWATERMARK) 
@@ -3758,6 +3978,8 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
       GetWindowTextW(hwnd, psInfo->strPropertiesFor, MAX_CAPTION_LENGTH);
 
+      psInfo->aeroChrome = ((psInfo->ppshheader.dwFlags & PSH_AEROWIZARD) && IsAppThemed());
+
       PROPSHEET_CreateTabControl(hwnd, psInfo);
 
       PROPSHEET_LoadWizardBitmaps(psInfo);
@@ -3767,6 +3989,8 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         ShowWindow(hwndTabCtrl, SW_HIDE);
         PROPSHEET_AdjustSizeWizard(hwnd, psInfo);
         PROPSHEET_AdjustButtonsWizard(hwnd, psInfo);
+        if (psInfo->aeroChrome)
+          PROPSHEET_AeroSetupChrome(hwnd, psInfo);
         SetFocus(GetDlgItem(hwnd, IDC_NEXT_BUTTON));
       }
       else
@@ -3829,6 +4053,19 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_PAINT:
       PROPSHEET_Paint(hwnd, (HDC)wParam);
       return TRUE;
+
+    case WM_CTLCOLORSTATIC:
+    {
+      PropSheetInfo* psInfo = GetPropW(hwnd, PropSheetInfoStr);
+
+      if (psInfo && psInfo->aeroChrome)
+      {
+        SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+        return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+      }
+      return FALSE;
+    }
 
     case WM_DESTROY:
       PROPSHEET_CleanUp(hwnd);
