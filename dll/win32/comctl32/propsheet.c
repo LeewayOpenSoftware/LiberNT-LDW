@@ -760,7 +760,7 @@ static void PROPSHEET_CollectSheetInfoA(LPCPROPSHEETHEADERA lppsh,
 	lppsh->dwSize, lppsh->dwFlags, lppsh->hwndParent, lppsh->hInstance,
 	debugstr_a(lppsh->pszCaption), lppsh->nPages, lppsh->pfnCallback);
 
-  if (lppsh->dwFlags & INTRNL_ANY_WIZARD)
+  if ((lppsh->dwFlags & INTRNL_ANY_WIZARD) && !(lppsh->dwFlags & PSH_AEROWIZARD))
      psInfo->ppshheader.pszCaption = NULL;
   else
   {
@@ -803,7 +803,7 @@ static void PROPSHEET_CollectSheetInfoW(LPCPROPSHEETHEADERW lppsh,
   TRACE("\n** PROPSHEETHEADER **\ndwSize\t\t%ld\ndwFlags\t\t%#lx\nhwndParent\t%p\nhInstance\t%p\npszCaption\t%s\nnPages\t\t%d\npfnCallback\t%p\n",
       lppsh->dwSize, lppsh->dwFlags, lppsh->hwndParent, lppsh->hInstance, debugstr_w(lppsh->pszCaption), lppsh->nPages, lppsh->pfnCallback);
 
-  if (lppsh->dwFlags & INTRNL_ANY_WIZARD)
+  if ((lppsh->dwFlags & INTRNL_ANY_WIZARD) && !(lppsh->dwFlags & PSH_AEROWIZARD))
      psInfo->ppshheader.pszCaption = NULL;
   else
   {
@@ -4017,11 +4017,7 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         PROPSHEET_AdjustSizeWizard(hwnd, psInfo);
         PROPSHEET_AdjustButtonsWizard(hwnd, psInfo);
         if (psInfo->aeroChrome)
-        {
           PROPSHEET_AeroSetupChrome(hwnd, psInfo);
-          PROPSHEET_SetTitleW(hwnd, psInfo->ppshheader.dwFlags,
-                              psInfo->ppshheader.pszCaption);
-        }
         SetFocus(GetDlgItem(hwnd, IDC_NEXT_BUTTON));
       }
       else
