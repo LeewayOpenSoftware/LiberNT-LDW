@@ -7,6 +7,8 @@
 
 #include "intrin_i.h"
 
+#define KeGetCurrentProcessorNumber() KeGetCurrentProcessorIndex()
+
 #ifdef __cplusplus
 extern "C"
 {
