@@ -80,6 +80,9 @@ KiInsertTimerTable(IN PKTIMER Timer,
     if (!Timer->Period) Timer->Header.SignalState = FALSE;
 
     /* Sanity check */
+    ASSERT(Hand < TIMER_TABLE_SIZE);
+    ASSERT(Timer->Header.Inserted);
+    ASSERT(Timer->Header.Hand == (UCHAR)Hand);
     ASSERT(Hand == KiComputeTimerTableIndex(DueTime));
 
     /* Loop the timer list backwards */
