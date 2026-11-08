@@ -1224,6 +1224,58 @@ NtfsBarrierAfterContext(_In_opt_ void* Context,
     }
     ExReleaseFastMutex(&NtfsCacheMutex);
 }
+#ifdef NTFS_J31C_HOOK
+void
+NtfsJ31cReadControlContext(_In_opt_ void* Context,
+                           _Out_ long* HaltRecord,
+                           _Out_ long* EmulateBase)
+{
+    RTL_QUERY_REGISTRY_TABLE Table[3];
+    ULONG Zero = 0;
+    ULONG Halt = 0;
+    ULONG Emu = 0;
+
+    UNREFERENCED_PARAMETER(Context);
+    *HaltRecord = 0;
+    *EmulateBase = 0;
+
+    RtlZeroMemory(Table, sizeof(Table));
+    Table[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    Table[0].Name = L"NtfsJ31cHaltRecord";
+    Table[0].EntryContext = &Halt;
+    Table[0].DefaultType = REG_DWORD;
+    Table[0].DefaultData = &Zero;
+    Table[0].DefaultLength = sizeof(ULONG);
+    Table[1].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    Table[1].Name = L"NtfsJ31cEmulateBase";
+    Table[1].EntryContext = &Emu;
+    Table[1].DefaultType = REG_DWORD;
+    Table[1].DefaultData = &Zero;
+    Table[1].DefaultLength = sizeof(ULONG);
+
+    (void)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL,
+                                 L"FileSystem",
+                                 Table,
+                                 NULL,
+                                 NULL);
+    *HaltRecord = (long)Halt;
+    *EmulateBase = (long)Emu;
+}
+
+void
+NtfsJ31cResetNowContext(_In_opt_ void* Context)
+{
+    UNREFERENCED_PARAMETER(Context);
+#if defined(_M_AMD64) || defined(_M_IX86)
+    _disable();
+    /* ICH/PCH reset control port: full reset, discarding the write-back cache. */
+    WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)0xCF9, 0x02);
+    WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)0xCF9, 0x0E);
+#endif
+    for (;;)
+        KeStallExecutionProcessor(1000000);
+}
+#endif
 
 NTSTATUS
 NtfsFlushVolumeContext(_In_opt_ void* Context)

@@ -177,6 +177,23 @@ NtfsWriteBarrierEnabledContext(_In_opt_ void* Context)
     UNREFERENCED_PARAMETER(Context);
     return FALSE;
 }
+#ifdef NTFS_J31C_HOOK
+void
+NtfsJ31cReadControlContext(_In_opt_ void* Context,
+                           _Out_ long* HaltRecord,
+                           _Out_ long* EmulateBase)
+{
+    UNREFERENCED_PARAMETER(Context);
+    *HaltRecord = 0;   /* the hook only arms in the kernel during live churn */
+    *EmulateBase = 0;
+}
+
+void
+NtfsJ31cResetNowContext(_In_opt_ void* Context)
+{
+    UNREFERENCED_PARAMETER(Context);
+}
+#endif
 
 
 NTSTATUS

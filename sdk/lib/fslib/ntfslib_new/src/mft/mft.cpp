@@ -128,6 +128,36 @@ ReadMftBitmapByte(
         : STATUS_END_OF_FILE;
 }
 
+#ifdef NTFS_J31C_HOOK
+static volatile long NtfsJ31cConfigDone = 0;
+static long NtfsJ31cHaltRecord = 0;
+static long NtfsJ31cEmulateBase = 0;
+static volatile long NtfsJ31cInChunkSeen = 0;
+
+static VOID
+NtfsJ31cEnsureConfig(_In_ PVolume DiskVolume)
+{
+    if (InterlockedCompareExchange(&NtfsJ31cConfigDone, 1, 0) == 0)
+        DiskVolume->J31cReadControl(&NtfsJ31cHaltRecord, &NtfsJ31cEmulateBase);
+}
+
+static bool
+NtfsJ31cEmulateBaseGet(_In_ PVolume DiskVolume)
+{
+    NtfsJ31cEnsureConfig(DiskVolume);
+    return NtfsJ31cEmulateBase != 0;
+}
+
+static bool
+NtfsJ31cShouldHalt(_In_ PVolume DiskVolume)
+{
+    NtfsJ31cEnsureConfig(DiskVolume);
+    if (NtfsJ31cHaltRecord <= 0)
+        return false;
+    return InterlockedIncrement(&NtfsJ31cInChunkSeen) == NtfsJ31cHaltRecord;
+}
+#endif
+
 static NTSTATUS
 WriteMftBitmapByte(
     _In_ PFileRecord MftFile,
@@ -259,6 +289,52 @@ MasterFileTable::GetFileRecordDiskOffset(_In_ ULONGLONG RecordNumber,
     }
     return STATUS_NOT_FOUND;
 }
+
+#ifdef NTFS_J31C_HOOK
+NTSTATUS
+MasterFileTable::J31cCommitMftBitmapByte(_In_ PFileRecord MftFile,
+                                         _In_ PAttribute BitmapAttribute,
+                                         _In_ ULONGLONG ByteOffset)
+{
+    ULONGLONG Offset;
+    PDataRun Run;
+
+    if (!MftFile || !BitmapAttribute || !DiskVolume)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!BitmapAttribute->IsNonResident)
+    {
+        /* A resident $Bitmap lives inside $MFT record 0; commit that record. */
+        ULONGLONG RecordDiskOffset;
+        NTSTATUS Status = GetFileRecordDiskOffset(0, &RecordDiskOffset);
+        if (!NT_SUCCESS(Status))
+            return Status;
+        return DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
+    }
+
+    Offset = ByteOffset;
+    for (Run = MftFile->GetCachedDataRuns(BitmapAttribute); Run; Run = Run->NextRun)
+    {
+        ULONGLONG RunSize = GetRunSize(Run);
+
+        if (Offset < RunSize)
+        {
+            ULONGLONG Disk;
+            ULONG Bpc;
+            ULONGLONG Base;
+
+            if (Run->IsSparse)
+                return STATUS_NOT_IMPLEMENTED;
+            Disk = GetOffset(Run->LCN) + Offset;
+            Bpc = BytesPerCluster(DiskVolume);
+            Base = Bpc ? Disk - (Disk % Bpc) : Disk;
+            return DiskVolume->CommitRange(Base, Bpc ? Bpc : 512);
+        }
+        Offset -= RunSize;
+    }
+    return STATUS_NOT_FOUND;
+}
+#endif
 
 NTSTATUS
 MasterFileTable::GetMftBitmapByteDiskOffset(_In_ PFileRecord MftFile,
@@ -1039,13 +1115,19 @@ ScanAgain:
         {
             ULONGLONG RecordDiskOffset;
 
-            Status = GetFileRecordDiskOffset(Candidate, &RecordDiskOffset);
-            if (NT_SUCCESS(Status))
-                Status = DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
-            else if (Status == STATUS_NOT_IMPLEMENTED)
-                Status = DiskVolume->FlushVolume(); /* record spans a run boundary */
-            if (!NT_SUCCESS(Status))
-                goto Done;
+#ifdef NTFS_J31C_HOOK
+            /* J31c: emulate the pre-fix BASE by skipping the record pre-commit. */
+            if (!NtfsJ31cEmulateBaseGet(DiskVolume))
+#endif
+            {
+                Status = GetFileRecordDiskOffset(Candidate, &RecordDiskOffset);
+                if (NT_SUCCESS(Status))
+                    Status = DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
+                else if (Status == STATUS_NOT_IMPLEMENTED)
+                    Status = DiskVolume->FlushVolume(); /* record spans a run boundary */
+                if (!NT_SUCCESS(Status))
+                    goto Done;
+            }
         }
     }
 
@@ -1102,6 +1184,21 @@ ScanAgain:
                 goto Done;
         }
     }
+
+#ifdef NTFS_J31C_HOOK
+    /*
+     * J31c deterministic repro. On the configured in-chunk record, make the
+     * bitmap bit durable and then cut power. With the barrier ON the guard
+     * flushes the record before the bit, so the record survives the cut; on an
+     * emulate-base build (barrier off, pre-commit skipped) the cut leaves the
+     * set bit naming a zeroed record. The machine never returns from the reset.
+     */
+    if (Candidate < RecordCount && NtfsJ31cShouldHalt(DiskVolume))
+    {
+        (void)J31cCommitMftBitmapByte(MFTFile, BitmapAttribute, ByteOffset);
+        DiskVolume->J31cResetNow();
+    }
+#endif
 
     *File = NewFile;
     NewFile = NULL;

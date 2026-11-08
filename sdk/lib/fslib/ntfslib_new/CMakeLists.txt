@@ -1,3 +1,9 @@
+option(NTFS_J31C_HOOK "J31c deterministic MFT-record repro hook (TEST ONLY; never enable in a product build)" OFF)
+if(NTFS_J31C_HOOK)
+    # Applies to this directory's subtrees (src/ and env/), i.e. every ntfslib_new_* target.
+    add_compile_definitions(NTFS_J31C_HOOK)
+endif()
+
 add_library(ntfslib_new)
 add_subdirectory(src)
 add_dependencies(ntfslib_new psdk bugcodes)

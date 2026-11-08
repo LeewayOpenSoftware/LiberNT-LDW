@@ -518,6 +518,18 @@ NtfsBarrierAfterContext(_In_opt_ void* Context,
 /* TRUE when the write-ordering barrier is selected instead of CommitRange. */
 BOOLEAN
 NtfsWriteBarrierEnabledContext(_In_opt_ void* Context);
+#ifdef NTFS_J31C_HOOK
+/* J31c deterministic repro hook (TEST ONLY; compiled only when NTFS_J31C_HOOK
+ * is defined, which no product build does). Reads the halt record number and
+ * the emulate-base flag from HKLM\System\CurrentControlSet\Control\FileSystem,
+ * and performs an immediate hardware reset that discards the write-back cache. */
+void
+NtfsJ31cReadControlContext(_In_opt_ void* Context,
+                           _Out_ long* HaltRecord,
+                           _Out_ long* EmulateBase);
+void
+NtfsJ31cResetNowContext(_In_opt_ void* Context);
+#endif
 
 #ifdef __cplusplus
 }
@@ -847,6 +859,10 @@ public:
 
     /* TRUE when the barrier is selected instead of the synchronous CommitRange. */
     BOOLEAN WriteBarrierEnabled();
+#ifdef NTFS_J31C_HOOK
+    VOID J31cReadControl(_Out_ long* HaltRecord, _Out_ long* EmulateBase);
+    VOID J31cResetNow();
+#endif
 
     NTSTATUS
     Initialize(_In_ PUCHAR BootSectorData,
@@ -1780,6 +1796,12 @@ public:
                                _In_ ULONGLONG ByteOffset,
                                _Out_ PULONGLONG DiskOffset,
                                _Out_ PULONG Length);
+#ifdef NTFS_J31C_HOOK
+    NTSTATUS
+    J31cCommitMftBitmapByte(_In_ PFileRecord MftFile,
+                            _In_ PAttribute BitmapAttribute,
+                            _In_ ULONGLONG ByteOffset);
+#endif
 
     NTSTATUS
     GetFileRecordDiskOffset(_In_ ULONGLONG RecordNumber,

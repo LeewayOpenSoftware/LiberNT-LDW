@@ -110,3 +110,16 @@ Volume::WriteBarrierEnabled()
 {
     return NtfsWriteBarrierEnabledContext(IoContext);
 }
+#ifdef NTFS_J31C_HOOK
+VOID
+Volume::J31cReadControl(_Out_ long* HaltRecord, _Out_ long* EmulateBase)
+{
+    NtfsJ31cReadControlContext(IoContext, HaltRecord, EmulateBase);
+}
+
+VOID
+Volume::J31cResetNow()
+{
+    NtfsJ31cResetNowContext(IoContext);
+}
+#endif
