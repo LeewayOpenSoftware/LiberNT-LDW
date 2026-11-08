@@ -105,6 +105,24 @@ jobs:
         mkdir -p applier-out && cp "$f" applier-out/
         (cd applier-out && sha256sum LiberNTUpdatePending.exe | tee LiberNTUpdatePending.exe.sha256 && wc -c < LiberNTUpdatePending.exe)
 
+    - name: Collect image file list
+      continue-on-error: true
+      run: |
+        mkdir -p filelist-out
+        outdir=${{steps.configure.outputs.outdir}}
+        lst=$(find "$outdir" -name 'livecd*.lst' | head -n1)
+        if [ -n "$lst" ]; then
+          cp "$lst" filelist-out/
+          # install path, sha256, size of every host file the list copies into the image
+          grep -v '^[#;]' "$lst" | grep '=' | while IFS='=' read -r dest src; do
+            f="$src"; [ -f "$f" ] || f="$outdir/$src"
+            if [ -f "$f" ]; then printf '%s	%s	%s
+' "$dest" "$(sha256sum "$f" | cut -d' ' -f1)" "$(wc -c < "$f")"; fi
+          done > filelist-out/image-files.tsv
+        else
+          echo 'no livecd*.lst under outdir' | tee filelist-out/NO-LST.txt
+        fi
+
     - name: Print ccache statistics
       if: ${{ always() && steps.ccache_restore.outcome == 'success' }}
       run: ccache -s
@@ -164,6 +182,14 @@ jobs:
       with:
         name: LiberNT-vhdx-${{steps.images.outputs.tag}}
         path: ${{steps.configure.outputs.outdir}}/LiberNT.vhdx
+
+    - name: Upload image file list
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        name: image-filelist-${{steps.images.outputs.tag}}
+        path: filelist-out/
 
     - name: Check build dependencies
       run: python3 sdk/tools/depcheck.py ${{steps.configure.outputs.outdir}} --mode depfiles --nested --fail-on-gaps
