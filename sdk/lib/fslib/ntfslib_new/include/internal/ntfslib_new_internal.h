@@ -510,7 +510,7 @@ NtfsCommitRangeContext(_In_opt_ void* Context,
 
 /* Write-ordering barrier: the Later range must not reach the device until the
  * Earlier range is durable. Environments that write through make it a no-op. */
-VOID
+void
 NtfsBarrierAfterContext(_In_opt_ void* Context,
                         _In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
                         _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength);
@@ -842,7 +842,7 @@ public:
 
     /* Order two held-back ranges without a synchronous write: the Later range
      * cannot reach the device before the Earlier range is durable. */
-    VOID BarrierAfter(_In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
+    void BarrierAfter(_In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
                       _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength);
 
     /* TRUE when the barrier is selected instead of the synchronous CommitRange. */
@@ -1774,7 +1774,6 @@ public:
     NTSTATUS
     WriteFileRecordToMFT(_In_ PFileRecord File);
 
-    NTSTATUS
     NTSTATUS
     GetMftBitmapByteDiskOffset(_In_ PFileRecord MftFile,
                                _In_ PAttribute BitmapAttribute,

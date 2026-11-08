@@ -97,7 +97,7 @@ Volume::CommitRange(_In_ ULONGLONG Offset,
     return NtfsCommitRangeContext(IoContext, Offset, Length);
 }
 
-VOID
+void
 Volume::BarrierAfter(_In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
                      _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength)
 {

@@ -1186,7 +1186,7 @@ NtfsWriteBarrierEnabledContext(_In_opt_ void* Context)
  * [EarlierOffset, +EarlierLength) (the new MFT record) are durable. An earlier
  * block that is already clean or not cached is durable and adds no constraint.
  */
-VOID
+void
 NtfsBarrierAfterContext(_In_opt_ void* Context,
                         _In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
                         _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength)

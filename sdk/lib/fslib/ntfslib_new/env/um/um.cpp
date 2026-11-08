@@ -291,7 +291,7 @@ NtfsCommitRangeContext(_In_opt_ void* Context,
 
 /* Write-through environments: every write is already durable in issue order,
  * so the barrier is a no-op and the CommitRange path is used (enabled=FALSE). */
-VOID
+void
 NtfsBarrierAfterContext(_In_opt_ void* Context,
                         _In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
                         _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength)
