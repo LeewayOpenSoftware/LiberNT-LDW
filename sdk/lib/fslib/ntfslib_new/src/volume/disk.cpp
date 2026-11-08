@@ -96,3 +96,17 @@ Volume::CommitRange(_In_ ULONGLONG Offset,
 {
     return NtfsCommitRangeContext(IoContext, Offset, Length);
 }
+
+VOID
+Volume::BarrierAfter(_In_ ULONGLONG LaterOffset, _In_ ULONG LaterLength,
+                     _In_ ULONGLONG EarlierOffset, _In_ ULONG EarlierLength)
+{
+    NtfsBarrierAfterContext(IoContext, LaterOffset, LaterLength,
+                            EarlierOffset, EarlierLength);
+}
+
+BOOLEAN
+Volume::WriteBarrierEnabled()
+{
+    return NtfsWriteBarrierEnabledContext(IoContext);
+}

@@ -261,6 +261,56 @@ MasterFileTable::GetFileRecordDiskOffset(_In_ ULONGLONG RecordNumber,
 }
 
 NTSTATUS
+MasterFileTable::GetMftBitmapByteDiskOffset(_In_ PFileRecord MftFile,
+                                            _In_ PAttribute BitmapAttribute,
+                                            _In_ ULONGLONG ByteOffset,
+                                            _Out_ PULONGLONG DiskOffset,
+                                            _Out_ PULONG Length)
+{
+    ULONGLONG Offset;
+    PDataRun Run;
+
+    if (!MftFile || !BitmapAttribute || !DiskVolume || !DiskOffset || !Length)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!BitmapAttribute->IsNonResident)
+    {
+        /* A resident $Bitmap lives inside $MFT record 0; order on that record. */
+        ULONGLONG RecordDiskOffset;
+        NTSTATUS Status = GetFileRecordDiskOffset(0, &RecordDiskOffset);
+        if (!NT_SUCCESS(Status))
+            return Status;
+        *DiskOffset = RecordDiskOffset;
+        *Length = FileRecordSize;
+        return STATUS_SUCCESS;
+    }
+
+    Offset = ByteOffset;
+    for (Run = MftFile->GetCachedDataRuns(BitmapAttribute); Run; Run = Run->NextRun)
+    {
+        ULONGLONG RunSize = GetRunSize(Run);
+
+        if (Offset < RunSize)
+        {
+            ULONGLONG Disk;
+            ULONG Bpc;
+
+            if (Run->IsSparse)
+                return STATUS_NOT_IMPLEMENTED;
+            Disk = GetOffset(Run->LCN) + Offset;
+            Bpc = BytesPerCluster(DiskVolume);
+            if (Bpc == 0)
+                Bpc = 512;
+            *DiskOffset = Disk - (Disk % Bpc);
+            *Length = Bpc;
+            return STATUS_SUCCESS;
+        }
+        Offset -= RunSize;
+    }
+    return STATUS_NOT_FOUND;
+}
+
+NTSTATUS
 MasterFileTable::WriteFileRecordToMFT(_In_ PFileRecord File)
 {
     PUCHAR CommittedImage = NULL;
@@ -982,15 +1032,21 @@ ScanAgain:
          * record's own block first, so nothing can name it before it is on
          * the disk. Only this record's range is written, not the volume.
          */
-        ULONGLONG RecordDiskOffset;
+        /* Barrier OFF (default): synchronous CommitRange, as bc86485f. Barrier
+         * ON: no synchronous write here; the record-before-bit ordering is set
+         * after the bitmap bit is written below (BarrierAfter). */
+        if (!DiskVolume->WriteBarrierEnabled())
+        {
+            ULONGLONG RecordDiskOffset;
 
-        Status = GetFileRecordDiskOffset(Candidate, &RecordDiskOffset);
-        if (NT_SUCCESS(Status))
-            Status = DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
-        else if (Status == STATUS_NOT_IMPLEMENTED)
-            Status = DiskVolume->FlushVolume(); /* record spans a run boundary */
-        if (!NT_SUCCESS(Status))
-            goto Done;
+            Status = GetFileRecordDiskOffset(Candidate, &RecordDiskOffset);
+            if (NT_SUCCESS(Status))
+                Status = DiskVolume->CommitRange(RecordDiskOffset, FileRecordSize);
+            else if (Status == STATUS_NOT_IMPLEMENTED)
+                Status = DiskVolume->FlushVolume(); /* record spans a run boundary */
+            if (!NT_SUCCESS(Status))
+                goto Done;
+        }
     }
 
     BitmapAttribute =
@@ -1020,6 +1076,32 @@ ScanAgain:
         (UCHAR)(BitmapByte | BitMask));
     if (!NT_SUCCESS(Status))
         goto Done;
+
+    if (Candidate < RecordCount && DiskVolume->WriteBarrierEnabled())
+    {
+        /* Order the bitmap bit after the new record: the bit block cannot reach
+         * the device until the record block is durable, with no synchronous
+         * write. On a crash the bit is never on disk without the record. */
+        ULONGLONG RecordDiskOffset;
+        ULONGLONG BitDiskOffset;
+        ULONG BitLength;
+
+        if (NT_SUCCESS(GetFileRecordDiskOffset(Candidate, &RecordDiskOffset)) &&
+            NT_SUCCESS(GetMftBitmapByteDiskOffset(MFTFile, BitmapAttribute, ByteOffset,
+                                                  &BitDiskOffset, &BitLength)))
+        {
+            DiskVolume->BarrierAfter(BitDiskOffset, BitLength,
+                                     RecordDiskOffset, FileRecordSize);
+        }
+        else
+        {
+            /* Offsets not resolvable (e.g. a record crossing a run boundary):
+             * make both durable to stay correct. */
+            Status = DiskVolume->FlushVolume();
+            if (!NT_SUCCESS(Status))
+                goto Done;
+        }
+    }
 
     *File = NewFile;
     NewFile = NULL;
