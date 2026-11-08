@@ -358,10 +358,11 @@ KeRemoveEntryDeviceQueue(IN PKDEVICE_QUEUE DeviceQueue,
 
     /* Lock the queue */
     KiAcquireDeviceQueueLock(DeviceQueue, &DeviceLock);
-    ASSERT(DeviceQueue->Busy);
+    ASSERT(DeviceQueue->Busy || IsListEmpty(&DeviceQueue->DeviceListHead));
 
     /* Check the insertion state */
     OldState = DeviceQueueEntry->Inserted;
+    ASSERT(!OldState || DeviceQueue->Busy);
     if (OldState)
     {
         /* Remove it */
