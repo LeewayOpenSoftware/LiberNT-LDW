@@ -110,6 +110,20 @@ Volume::WriteBarrierEnabled()
 {
     return NtfsWriteBarrierEnabledContext(IoContext);
 }
+
+#ifdef NTFS_J36_HOOK
+void
+Volume::J36ArmFailBlock(_In_ ULONGLONG Offset)
+{
+    NtfsJ36ArmFailBlockContext(IoContext, Offset);
+}
+
+void
+Volume::J36ReadConfig(_Out_ long* RecordN, _Out_ long* BitmapN)
+{
+    NtfsJ36ReadConfigContext(IoContext, RecordN, BitmapN);
+}
+#endif
 #ifdef NTFS_J31C_HOOK
 VOID
 Volume::J31cReadControl(_Out_ long* HaltRecord, _Out_ long* EmulateBase)

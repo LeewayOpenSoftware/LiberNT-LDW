@@ -518,6 +518,15 @@ NtfsBarrierAfterContext(_In_opt_ void* Context,
 /* TRUE when the write-ordering barrier is selected instead of CommitRange. */
 BOOLEAN
 NtfsWriteBarrierEnabledContext(_In_opt_ void* Context);
+
+#ifdef NTFS_J36_HOOK
+/* J36 device-write fault injection (TEST ONLY). Arm the next WriteDisk that
+ * covers Offset to fail once; read the fail-on-Nth config. */
+void
+NtfsJ36ArmFailBlockContext(_In_opt_ void* Context, _In_ ULONGLONG Offset);
+void
+NtfsJ36ReadConfigContext(_In_opt_ void* Context, _Out_ long* RecordN, _Out_ long* BitmapN);
+#endif
 #ifdef NTFS_J31C_HOOK
 /* J31c deterministic repro hook (TEST ONLY; compiled only when NTFS_J31C_HOOK
  * is defined, which no product build does). Reads the halt record number and
@@ -859,6 +868,11 @@ public:
 
     /* TRUE when the barrier is selected instead of the synchronous CommitRange. */
     BOOLEAN WriteBarrierEnabled();
+
+#ifdef NTFS_J36_HOOK
+    void J36ArmFailBlock(_In_ ULONGLONG Offset);
+    void J36ReadConfig(_Out_ long* RecordN, _Out_ long* BitmapN);
+#endif
 #ifdef NTFS_J31C_HOOK
     VOID J31cReadControl(_Out_ long* HaltRecord, _Out_ long* EmulateBase);
     VOID J31cResetNow();

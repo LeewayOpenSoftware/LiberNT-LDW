@@ -158,6 +158,27 @@ NtfsJ31cShouldHalt(_In_ PVolume DiskVolume)
 }
 #endif
 
+#ifdef NTFS_J36_HOOK
+static volatile long NtfsJ36ConfigDone = 0;
+static long NtfsJ36RecordN = 0;
+static long NtfsJ36BitmapN = 0;
+static volatile long NtfsJ36Seen = 0;
+
+static void
+NtfsJ36EnsureConfig(_In_ PVolume DiskVolume)
+{
+    if (InterlockedCompareExchange(&NtfsJ36ConfigDone, 1, 0) == 0)
+        DiskVolume->J36ReadConfig(&NtfsJ36RecordN, &NtfsJ36BitmapN);
+}
+
+static bool
+NtfsJ36Active(_In_ PVolume DiskVolume)
+{
+    NtfsJ36EnsureConfig(DiskVolume);
+    return NtfsJ36RecordN > 0 || NtfsJ36BitmapN > 0;
+}
+#endif
+
 static NTSTATUS
 WriteMftBitmapByte(
     _In_ PFileRecord MftFile,
@@ -723,6 +744,9 @@ MasterFileTable::AllocateFileRecord(
     UCHAR BitmapByte;
     UCHAR BitMask;
     NTSTATUS Status;
+#ifdef NTFS_J36_HOOK
+    long j36seen = 0;
+#endif
 
     if (!File)
         return STATUS_INVALID_PARAMETER;
@@ -1099,6 +1123,20 @@ ScanAgain:
     }
     else
     {
+#ifdef NTFS_J36_HOOK
+        /* J36 ERR-REC: arm the record block's write to fail, before the
+         * (barrier-off) synchronous commit or the (barrier-on) forced flush. */
+        if (NtfsJ36Active(DiskVolume))
+        {
+            j36seen = InterlockedIncrement(&NtfsJ36Seen);
+            if (NtfsJ36RecordN > 0 && j36seen == NtfsJ36RecordN)
+            {
+                ULONGLONG RecOff;
+                if (NT_SUCCESS(GetFileRecordDiskOffset(Candidate, &RecOff)))
+                    DiskVolume->J36ArmFailBlock(RecOff);
+            }
+        }
+#endif
         /*
          * Inside a chunk that has already grown, the record, its bitmap bit
          * and the parent index entry are separate blocks of the write-back
@@ -1197,6 +1235,33 @@ ScanAgain:
     {
         (void)J31cCommitMftBitmapByte(MFTFile, BitmapAttribute, ByteOffset);
         DiskVolume->J31cResetNow();
+    }
+#endif
+
+#ifdef NTFS_J36_HOOK
+    /*
+     * J36 fault injection. On the configured in-chunk record, force the device
+     * write so the armed failure fires deterministically. ERR-REC (record block
+     * armed above): with the barrier on, the forced flush of the bit block makes
+     * the guard write the record first, which fails and stays closed (the bit is
+     * never written); with the barrier off this record was already committed and
+     * failed above, so we never reach here. ERR-BITMAP: arm the bit block, then
+     * force its write to fail after the record is durable.
+     */
+    if (Candidate < RecordCount && j36seen != 0)
+    {
+        ULONGLONG BitOff;
+        ULONG BitLen;
+
+        if (((NtfsJ36RecordN > 0 && j36seen == NtfsJ36RecordN) ||
+             (NtfsJ36BitmapN > 0 && j36seen == NtfsJ36BitmapN)) &&
+            NT_SUCCESS(GetMftBitmapByteDiskOffset(MFTFile, BitmapAttribute, ByteOffset,
+                                                  &BitOff, &BitLen)))
+        {
+            if (NtfsJ36BitmapN > 0 && j36seen == NtfsJ36BitmapN)
+                DiskVolume->J36ArmFailBlock(BitOff);
+            (void)DiskVolume->CommitRange(BitOff, BitLen);
+        }
     }
 #endif
 

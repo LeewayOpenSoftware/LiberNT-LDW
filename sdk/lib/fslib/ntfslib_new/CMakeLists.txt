@@ -4,6 +4,11 @@ if(NTFS_J31C_HOOK)
     add_compile_definitions(NTFS_J31C_HOOK)
 endif()
 
+option(NTFS_J36_HOOK "J36 write-barrier fault-injection hook (TEST ONLY; never enable in a product build)" OFF)
+if(NTFS_J36_HOOK)
+    add_compile_definitions(NTFS_J36_HOOK)
+endif()
+
 add_library(ntfslib_new)
 add_subdirectory(src)
 add_dependencies(ntfslib_new psdk bugcodes)

@@ -177,6 +177,23 @@ NtfsWriteBarrierEnabledContext(_In_opt_ void* Context)
     UNREFERENCED_PARAMETER(Context);
     return FALSE;
 }
+
+#ifdef NTFS_J36_HOOK
+void
+NtfsJ36ArmFailBlockContext(_In_opt_ void* Context, _In_ ULONGLONG Offset)
+{
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Offset);
+}
+
+void
+NtfsJ36ReadConfigContext(_In_opt_ void* Context, _Out_ long* RecordN, _Out_ long* BitmapN)
+{
+    UNREFERENCED_PARAMETER(Context);
+    *RecordN = 0;
+    *BitmapN = 0;
+}
+#endif
 #ifdef NTFS_J31C_HOOK
 void
 NtfsJ31cReadControlContext(_In_opt_ void* Context,

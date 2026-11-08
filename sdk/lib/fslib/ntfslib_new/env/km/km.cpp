@@ -965,6 +965,66 @@ ReadDisk(_In_ PDEVICE_OBJECT DeviceObject,
     return Status;
 }
 
+#ifdef NTFS_J36_HOOK
+/* J36 device-write fault injection (TEST ONLY; compiled only under NTFS_J36_HOOK,
+ * which no product build defines). An armed block offset makes the next WriteDisk
+ * that covers it fail once with STATUS_IO_DEVICE_ERROR, to exercise the barrier's
+ * fail-closed path. */
+static volatile LONGLONG NtfsJ36FailOffset = -1;
+
+static BOOLEAN
+NtfsJ36ShouldFail(_In_ ULONGLONG Offset, _In_ ULONG Length)
+{
+    LONGLONG Armed = NtfsJ36FailOffset;
+
+    if (Armed >= 0 &&
+        (ULONGLONG)Armed >= Offset && (ULONGLONG)Armed < Offset + Length)
+    {
+        /* Disarm so exactly one write fails. */
+        return (InterlockedCompareExchange64(&NtfsJ36FailOffset, -1, Armed) == Armed);
+    }
+    return FALSE;
+}
+
+void
+NtfsJ36ArmFailBlockContext(_In_opt_ void* Context, _In_ ULONGLONG Offset)
+{
+    UNREFERENCED_PARAMETER(Context);
+    InterlockedExchange64(&NtfsJ36FailOffset, (LONGLONG)Offset);
+}
+
+void
+NtfsJ36ReadConfigContext(_In_opt_ void* Context, _Out_ long* RecordN, _Out_ long* BitmapN)
+{
+    RTL_QUERY_REGISTRY_TABLE Table[3];
+    ULONG Zero = 0;
+    ULONG Rec = 0;
+    ULONG Bmp = 0;
+
+    UNREFERENCED_PARAMETER(Context);
+    *RecordN = 0;
+    *BitmapN = 0;
+
+    RtlZeroMemory(Table, sizeof(Table));
+    Table[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    Table[0].Name = L"NtfsJ36FailRecordWrite";
+    Table[0].EntryContext = &Rec;
+    Table[0].DefaultType = REG_DWORD;
+    Table[0].DefaultData = &Zero;
+    Table[0].DefaultLength = sizeof(ULONG);
+    Table[1].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    Table[1].Name = L"NtfsJ36FailBitmapWrite";
+    Table[1].EntryContext = &Bmp;
+    Table[1].DefaultType = REG_DWORD;
+    Table[1].DefaultData = &Zero;
+    Table[1].DefaultLength = sizeof(ULONG);
+    (void)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"FileSystem",
+                                 Table, NULL, NULL);
+    *RecordN = (long)Rec;
+    *BitmapN = (long)Bmp;
+}
+#endif
+
 NTSTATUS
 WriteDisk(_In_ PDEVICE_OBJECT DeviceObject,
           _In_ ULONGLONG Offset,
@@ -972,6 +1032,11 @@ WriteDisk(_In_ PDEVICE_OBJECT DeviceObject,
           _In_ PUCHAR Buffer)
 {
     NTSTATUS Status;
+
+#ifdef NTFS_J36_HOOK
+    if (NtfsJ36ShouldFail(Offset, Length))
+        return STATUS_IO_DEVICE_ERROR;
+#endif
 
     do
     {
