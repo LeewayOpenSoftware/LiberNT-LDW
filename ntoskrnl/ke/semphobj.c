@@ -66,15 +66,15 @@ KeReleaseSemaphore(IN PKSEMAPHORE Semaphore,
     KiAcquireDispatcherObject(&Semaphore->Header);
 
     InitialState = Semaphore->Header.SignalState;
-    State = InitialState + Adjustment;
-
-    if ((Semaphore->Limit < State) || (InitialState > State))
+    ASSERT(InitialState >= 0 && InitialState <= Semaphore->Limit);
+    if (Adjustment < 0 || Adjustment > Semaphore->Limit - InitialState)
     {
         KiReleaseDispatcherObject(&Semaphore->Header);
         KiExitDispatcher(OldIrql);
         ExRaiseStatus(STATUS_SEMAPHORE_LIMIT_EXCEEDED);
     }
 
+    State = InitialState + Adjustment;
     Semaphore->Header.SignalState = State;
 
     if (!(InitialState) && !(IsListEmpty(&Semaphore->Header.WaitListHead)))
