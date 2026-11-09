@@ -191,7 +191,7 @@ static void TestPaths(void)
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\hal.dll", -1));
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\halmacpi.dll", -1));
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\bootvid.dll", -1));
-    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\kdcom.dll", -1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\kdcom.dll", -1));                       /* no loader fallback (N3) */
     /* review M3: ntdll, win32k and boot-start drivers (ntfs.sys) have no loader fallback: not in the first delivery */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
@@ -206,6 +206,36 @@ static void TestPaths(void)
     CHECK(LnTargetBootGroup(L"Windows\\System32\\ntdll.dll") == 3);
     CHECK(LnTargetBootGroup(L"Windows\\System32\\notepad.exe") == 0);
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\ntdll.dll", -1));                           /* the user route still refuses it */
+    {
+        /* freeldr.ini fallback check (review N2) against the dx2400 layout */
+        static const char ok[] =
+            "[FREELOADER]\r\nDefaultOS=ReactOS\r\nTimeOut=5\r\n[Operating Systems]\r\nReactOS=\"LiberNT\"\r\n"
+            "LiberNT_Fallback=\"LiberNT (old kernel)\"\r\n[ReactOS]\r\nBootType=Windows2003\r\n"
+            "SystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.exe /FASTDETECT\r\n"
+            "[LiberNT_Fallback]\r\nBootType=Windows2003\r\nSystemPath=partition(2)\\Windows\r\n"
+            "Options=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old /FASTDETECT\r\n";
+        static const char nofb[] =
+            "[FREELOADER]\r\nDefaultOS=ReactOS\r\n[Operating Systems]\r\nReactOS=\"LiberNT\"\r\n"
+            "[ReactOS]\r\nOptions=/KERNEL=ntkrnlmp.exe\r\n";
+        static const char halacpi[] =
+            "[FREELOADER]\r\nDefaultOS=A\r\n[Operating Systems]\r\nA=\"x\"\r\nB=\"y\"\r\n"
+            "[A]\r\nOptions=/KERNEL=ntkrnlmp.exe /HAL=halmacpi.dll\r\n"
+            "[B]\r\nOptions=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old\r\n";
+        const WCHAR *good[3] = { L"Windows\\System32\\ntkrnlmp.exe", L"Windows\\System32\\hal.dll",
+                                 L"Windows\\System32\\bootvid.dll" };
+        const WCHAR *wrongKernel[3] = { L"Windows\\System32\\ntoskrnl.exe", L"Windows\\System32\\hal.dll",
+                                        L"Windows\\System32\\bootvid.dll" };
+        const WCHAR *halmac[3] = { L"Windows\\System32\\ntkrnlmp.exe", L"Windows\\System32\\halmacpi.dll",
+                                   L"Windows\\System32\\bootvid.dll" };
+        char why[160];
+
+        CHECK(LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, good, 3, why, sizeof(why)));
+        CHECK(!LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, wrongKernel, 3, why, sizeof(why)));   /* default boots ntkrnlmp */
+        CHECK(!LnFreeldrFallbackMatches(nofb, sizeof(nofb) - 1, good, 3, why, sizeof(why)));      /* no fallback entry */
+        CHECK(!LnFreeldrFallbackMatches(halacpi, sizeof(halacpi) - 1, good, 3, why, sizeof(why))); /* HAL differs */
+        CHECK(!LnFreeldrFallbackMatches(halacpi, sizeof(halacpi) - 1, halmac, 3, why, sizeof(why))); /* fallback names hal.old */
+        CHECK(!LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, good, 2, why, sizeof(why)));          /* not the whole trio */
+    }
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\a.dll", 3));                                /* Start only for a .sys */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\drivers\\win32k.sys", 3));
 }

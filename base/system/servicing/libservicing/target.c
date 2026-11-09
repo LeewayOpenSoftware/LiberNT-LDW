@@ -118,8 +118,10 @@ static BOOL BootBaseIs(const WCHAR *base, const WCHAR *const *names, size_t n)
 
 int LnTargetBootGroup(const WCHAR *rel)
 {
+    /* kdcom.dll is NOT here (review N3): the Fallback entry has no switch that redirects it, and our labs boot
+     * with /DEBUG, so a bad kdcom would fail under Fallback too. It is refused until a loader switch exists. */
     static const WCHAR *kernel[] = { L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe",
-                                     L"bootvid.dll", L"kdcom.dll" };
+                                     L"bootvid.dll" };
     static const WCHAR *critical[] = { L"ntdll.dll", L"smss.exe", L"csrss.exe", L"wininit.exe", L"winlogon.exe",
                                        L"services.exe", L"lsass.exe", L"ci.dll", L"win32k.sys", L"win32kbase.sys",
                                        L"win32kfull.sys" };
@@ -138,6 +140,267 @@ int LnTargetBootGroup(const WCHAR *rel)
     if (bl > 4 && !_wcsicmp(base + bl - 4, L".sys") && StartsWithNoCase(rel, L"Windows\\System32\\drivers\\"))
         return 2;
     return 0;
+}
+
+/* ---- freeldr.ini fallback check ------------------------------------------------------------- */
+
+#define LNF_MAXSEC 24
+
+typedef struct _LNF_SEC
+{
+    char name[48];
+    char opts[400];
+    char kernel[64], hal[64];
+} LNF_SEC;
+
+static void LnfCopy(char *dst, size_t cch, const char *src, size_t len)
+{
+    if (len >= cch)
+        len = cch - 1;
+    memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
+/* value of "/KEY=" inside an Options string ("" when absent) */
+static void LnfOpt(const char *opts, const char *key, char *out, size_t cch)
+{
+    size_t kl = strlen(key);
+    const char *p = opts;
+
+    out[0] = 0;
+    while (*p)
+    {
+        if ((p == opts || p[-1] == ' ' || p[-1] == '\t') && !_strnicmp(p, key, kl))
+        {
+            size_t l = 0;
+
+            p += kl;
+            while (p[l] && p[l] != ' ' && p[l] != '\t')
+                l++;
+            LnfCopy(out, cch, p, l);
+            return;
+        }
+        p++;
+    }
+}
+
+static void LnfEffective(const LNF_SEC *s, const char *key, const char *fromKey, const char *def,
+                         char *out, size_t cch)
+{
+    LnfOpt(s->opts, key, out, cch);
+    if (!out[0] && fromKey && fromKey[0])
+        LnfCopy(out, cch, fromKey, strlen(fromKey));
+    if (!out[0])
+        LnfCopy(out, cch, def, strlen(def));
+}
+
+static char *LnfTrim(char *s)
+{
+    char *e;
+
+    while (*s == ' ' || *s == '\t')
+        s++;
+    e = s + strlen(s);
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
+        *--e = 0;
+    return s;
+}
+
+static void LnfStem(const char *file, char *out, size_t cch)
+{
+    const char *dot = strrchr(file, '.');
+
+    LnfCopy(out, cch, file, dot ? (size_t)(dot - file) : strlen(file));
+}
+
+BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *targets, size_t n,
+                              char *why, size_t whyCch)
+{
+    LNF_SEC secs[LNF_MAXSEC];
+    char entries[LNF_MAXSEC][48];
+    char defaultOs[48] = "";
+    size_t nsec = 0, nent = 0, i, j;
+    int cur = -1;                       /* index in secs, -2 = [FREELOADER], -3 = [Operating Systems] */
+    char *buf, *line, *next;
+    const LNF_SEC *def = NULL;
+    char dk[64], dh[64], db[64], ok[64], oh[64], ob[64], sk[64], sh[64], sb[64];
+    BOOL found = FALSE;
+    const char *msg;
+
+    msg = "";
+    if (!ini || !targets || n != 3)
+    {
+        msg = "the package must carry exactly the kernel, HAL and bootvid files";
+        goto out_msg;
+    }
+    buf = malloc(len + 1);
+    if (!buf)
+    {
+        msg = "out of memory";
+        goto out_msg;
+    }
+    memcpy(buf, ini, len);
+    buf[len] = 0;
+    memset(secs, 0, sizeof(secs));
+
+    for (line = buf; line && *line; line = next)
+    {
+        char *eq, *key, *val;
+
+        next = strchr(line, '\n');
+        if (next)
+            *next++ = 0;
+        line = LnfTrim(line);
+        if (!*line || *line == ';' || *line == '#')
+            continue;
+        if (*line == '[')
+        {
+            char *close = strchr(line, ']');
+            char name[48];
+
+            if (!close)
+                continue;
+            LnfCopy(name, sizeof(name), line + 1, (size_t)(close - line - 1));
+            if (!_stricmp(name, "FREELOADER"))
+                cur = -2;
+            else if (!_stricmp(name, "Operating Systems"))
+                cur = -3;
+            else if (nsec < LNF_MAXSEC)
+            {
+                LnfCopy(secs[nsec].name, sizeof(secs[nsec].name), name, strlen(name));
+                cur = (int)nsec++;
+            }
+            else
+                cur = -1;
+            continue;
+        }
+        eq = strchr(line, '=');
+        if (!eq)
+            continue;
+        *eq = 0;
+        key = LnfTrim(line);
+        val = LnfTrim(eq + 1);
+        if (*val == '"')
+        {
+            char *q = strchr(val + 1, '"');
+
+            val++;
+            if (q)
+                *q = 0;
+        }
+        if (cur == -2)
+        {
+            if (!_stricmp(key, "DefaultOS"))
+                LnfCopy(defaultOs, sizeof(defaultOs), val, strlen(val));
+        }
+        else if (cur == -3)
+        {
+            if (nent < LNF_MAXSEC)
+                LnfCopy(entries[nent++], sizeof(entries[0]), key, strlen(key));
+        }
+        else if (cur >= 0)
+        {
+            if (!_stricmp(key, "Options"))
+                LnfCopy(secs[cur].opts, sizeof(secs[cur].opts), val, strlen(val));
+            else if (!_stricmp(key, "Kernel"))
+                LnfCopy(secs[cur].kernel, sizeof(secs[cur].kernel), val, strlen(val));
+            else if (!_stricmp(key, "Hal"))
+                LnfCopy(secs[cur].hal, sizeof(secs[cur].hal), val, strlen(val));
+        }
+    }
+    free(buf);
+
+    for (i = 0; i < nsec; i++)
+    {
+        if (!_stricmp(secs[i].name, defaultOs))
+            def = &secs[i];
+    }
+    if (!def)
+    {
+        msg = "freeldr.ini has no default entry section";
+        goto out_msg;
+    }
+    LnfEffective(def, "/KERNEL=", def->kernel, "ntoskrnl.exe", dk, sizeof(dk));
+    LnfEffective(def, "/HAL=", def->hal, "hal.dll", dh, sizeof(dh));
+    LnfEffective(def, "/BOOTVID=", NULL, "bootvid.dll", db, sizeof(db));
+
+    /* the package must replace exactly these three files, nothing else */
+    {
+        const char *want[3];
+        BOOL used[3] = { FALSE, FALSE, FALSE };
+
+        want[0] = dk;
+        want[1] = dh;
+        want[2] = db;
+        for (i = 0; i < 3; i++)
+        {
+            const WCHAR *base = wcsrchr(targets[i], L'\\');
+            char nb[64];
+            size_t k = 0;
+            BOOL ok3 = FALSE;
+
+            base = base ? base + 1 : targets[i];
+            for (; base[k] && k < sizeof(nb) - 1; k++)
+                nb[k] = (char)base[k];
+            nb[k] = 0;
+            for (j = 0; j < 3; j++)
+            {
+                if (!used[j] && !_stricmp(nb, want[j]))
+                {
+                    used[j] = TRUE;
+                    ok3 = TRUE;
+                    break;
+                }
+            }
+            if (!ok3)
+            {
+                msg = "a package file is not the kernel, HAL or bootvid the default boot entry loads";
+                goto out_msg;
+            }
+        }
+    }
+
+    LnfStem(dk, sk, sizeof(sk));
+    LnfStem(dh, sh, sizeof(sh));
+    LnfStem(db, sb, sizeof(sb));
+    for (i = 0; i < nent && !found; i++)
+    {
+        for (j = 0; j < nsec; j++)
+        {
+            const LNF_SEC *s = &secs[j];
+            char e1[80], e2[80], e3[80];
+
+            if (_stricmp(s->name, entries[i]) || s == def)
+                continue;
+            LnfEffective(s, "/KERNEL=", s->kernel, "ntoskrnl.exe", ok, sizeof(ok));
+            LnfEffective(s, "/HAL=", s->hal, "hal.dll", oh, sizeof(oh));
+            LnfEffective(s, "/BOOTVID=", NULL, "bootvid.dll", ob, sizeof(ob));
+            LnfCopy(e1, sizeof(e1), sk, strlen(sk));
+            strcat(e1, ".old");
+            LnfCopy(e2, sizeof(e2), sh, strlen(sh));
+            strcat(e2, ".old");
+            LnfCopy(e3, sizeof(e3), sb, strlen(sb));
+            strcat(e3, ".old");
+            if (!_stricmp(ok, e1) && !_stricmp(oh, e2) && !_stricmp(ob, e3))
+            {
+                found = TRUE;
+                break;
+            }
+        }
+    }
+    if (!found)
+    {
+        msg = "freeldr.ini has no fallback entry loading the <name>.old kernel, HAL and bootvid";
+        goto out_msg;
+    }
+    if (why && whyCch)
+        why[0] = 0;
+    return TRUE;
+
+out_msg:
+    if (why && whyCch)
+        LnfCopy(why, whyCch, msg, strlen(msg));
+    return FALSE;
 }
 
 BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)

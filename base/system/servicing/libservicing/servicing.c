@@ -1030,6 +1030,75 @@ RemoveAttemptRecord(const LN_TARGET *t, const char *txid)
     free(a);
 }
 
+/* Boot-class precheck (review N2): the previous kernel set is only recoverable through the freeldr Fallback
+ * entry, which must name exactly the <name>.old files this swap will keep. Read-only. The ESP has no drive
+ * letter: its NT path is the SystemPartition value of HKLM\SYSTEM\Setup. */
+static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *why, size_t whyCch)
+{
+    const WCHAR *targets[8];
+    size_t n = 0, i;
+    WCHAR path[MAX_PATH + 64];
+    BYTE *ini = NULL;
+    size_t len = 0;
+    DWORD err;
+    BOOL any = FALSE;
+
+    for (i = 0; i < m->itemCount; i++)
+    {
+        if (!m->items[i].bootClass)
+            continue;
+        any = TRUE;
+        if (n < RTL_NUMBER_OF(targets))
+            targets[n++] = m->items[i].target;
+    }
+    if (!any)
+        return ERROR_SUCCESS;
+    if (t->mode != LnTargetOnline)
+    {
+        strcpy(why, "a boot-class update is applied online only");
+        return LN_E_PRECONDITION;
+    }
+    path[0] = 0;
+#ifdef LN_TESTING
+    {
+        DWORD k = GetEnvironmentVariableW(L"LNUPDATE_FREELDR_INI", path, RTL_NUMBER_OF(path));
+
+        if (k == 0 || k >= RTL_NUMBER_OF(path))
+            path[0] = 0;
+    }
+#endif
+    if (!path[0])
+    {
+        WCHAR part[MAX_PATH];
+        DWORD cb = sizeof(part);
+
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\Setup", L"SystemPartition", RRF_RT_REG_SZ, NULL, part, &cb) !=
+            ERROR_SUCCESS)
+        {
+            strcpy(why, "cannot find the system partition to read freeldr.ini");
+            return LN_E_PRECONDITION;
+        }
+        wcscpy(path, L"\\\\?\\GLOBALROOT");
+        wcsncat(path, part, RTL_NUMBER_OF(path) - wcslen(path) - 16);
+        wcscat(path, L"\\freeldr.ini");
+    }
+    err = LnReadFileAll(path, &ini, &len);
+    if (err)
+    {
+        strcpy(why, "cannot read freeldr.ini");
+        return LN_E_PRECONDITION;
+    }
+    if (n != 3 || !LnFreeldrFallbackMatches((const char *)ini, len, targets, n, why, whyCch))
+    {
+        if (n != 3)
+            strcpy(why, "the package must carry exactly the kernel, HAL and bootvid files");
+        free(ini);
+        return LN_E_PRECONDITION;
+    }
+    free(ini);
+    return ERROR_SUCCESS;
+}
+
 static DWORD WritePlan(const CTX *c, const BOOL *pending)
 {
     LN_BUF b;
@@ -1303,6 +1372,20 @@ DWORD LnServicingApplyPackage(const LN_TARGET *t, const char *packageId, const c
         if (err)
         {
             LogLine(t, c.txid, "apply refused: a reboot is required but the boot updater is not installed");
+            Journal(&c, "failed", "error", ErrText(err, buf));
+            goto fail_logged;
+        }
+    }
+
+    /* boot class: the Fallback entry must name the .old set this swap keeps (read-only, before any change) */
+    {
+        char why[160];
+
+        why[0] = 0;
+        err = BootClassPrecheck(t, &c.m, why, sizeof(why));
+        if (err)
+        {
+            LogLine(t, c.txid, why);
             Journal(&c, "failed", "error", ErrText(err, buf));
             goto fail_logged;
         }

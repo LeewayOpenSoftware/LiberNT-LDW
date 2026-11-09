@@ -146,6 +146,13 @@ BOOL LnTargetPathAllowed(const WCHAR *relInRoot);                          /* Ln
  * critical processes; 0 = not a boot-class target. */
 BOOL LnTargetBootItemAllowed(const WCHAR *relInRoot, int driverStart);
 int LnTargetBootGroup(const WCHAR *relInRoot);
+/* Read-only check of freeldr.ini against a kernel-trio swap (review N2). The package targets must be exactly the
+ * default entry's effective /KERNEL, /HAL and /BOOTVID files (defaults ntoskrnl.exe, hal.dll, bootvid.dll, also
+ * taken from Kernel=/Hal= keys), and another entry of [Operating Systems] must load the same three files with
+ * the extension replaced by .old, because that is where the updater keeps the previous set. FALSE with a short
+ * reason otherwise. */
+BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *targets, size_t n,
+                              char *why, size_t whyCch);
 /* Parents must not be reparse points, and the real path must equal the lexical one (8.3, junctions). */
 DWORD LnTargetValidateReal(const LN_TARGET *t, const WCHAR *relInRoot);
 
