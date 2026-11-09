@@ -18,6 +18,9 @@
 
 extern PPROCESSOR_IDENTITY HalpProcessorIdentity;
 
+/* A delivery status bit that survives this many MMIO reads is stuck */
+#define APIC_ICR_POLL_LIMIT 1000000
+
 /* INTERNAL FUNCTIONS *********************************************************/
 
 /*!
@@ -59,15 +62,17 @@ extern PPROCESSOR_IDENTITY HalpProcessorIdentity;
 
  */
 FORCEINLINE
-VOID
-ApicRequestGlobalInterrupt(
+BOOLEAN
+ApicRequestGlobalInterruptLevel(
     _In_ UCHAR DestinationProcessor,
     _In_ UCHAR Vector,
     _In_ APIC_MT MessageType,
     _In_ APIC_TGM TriggerMode,
-    _In_ APIC_DSH DestinationShortHand)
+    _In_ APIC_DSH DestinationShortHand,
+    _In_ ULONG Level)
 {
-    ULONG Flags;
+    BOOLEAN Accepted = TRUE;
+    ULONG Flags, Spin;
     APIC_INTERRUPT_COMMAND_REGISTER Icr;
     APIC_INTERRUPT_COMMAND_REGISTER IcrStatus;
 
@@ -77,7 +82,7 @@ ApicRequestGlobalInterrupt(
     Icr.MessageType = MessageType;
     Icr.DestinationMode = APIC_DM_Physical;
     Icr.DeliveryStatus = 0;
-    Icr.Level = 1;
+    Icr.Level = Level;
     Icr.TriggerMode = TriggerMode;
     Icr.RemoteReadStatus = 0;
     Icr.DestinationShortHand = DestinationShortHand;
@@ -86,63 +91,126 @@ ApicRequestGlobalInterrupt(
     if (HalpApicHvMsrs && MessageType == APIC_MT_Fixed)
     {
         __writemsr(HV_X64_MSR_ICR, Icr.LongLong);
-        return;
+        return TRUE;
     }
 
     /* Disable interrupts so that we can change IRR without being interrupted */
     Flags = __readeflags();
     _disable();
 
-    /* Wait for the APIC to be idle */
-    do
+    /* A local APIC that cannot accept the message never clears the delivery status */
+    for (Spin = 0; ; Spin++)
     {
         IcrStatus.Long0 = ApicRead(APIC_ICR0);
-    } while (IcrStatus.DeliveryStatus);
+        if (!IcrStatus.DeliveryStatus)
+            break;
+
+        if (Spin >= APIC_ICR_POLL_LIMIT)
+        {
+            DPRINT1("APIC: ICR still busy before send to LAPIC %lu"
+                    " (type %lu, vector %lu), ignoring\n",
+                    (ULONG)DestinationProcessor, (ULONG)MessageType, (ULONG)Vector);
+            Accepted = FALSE;
+            break;
+        }
+    }
 
     /* Write the low dword last to send the interrupt */
     ApicWrite(APIC_ICR1, Icr.Long1);
     ApicWrite(APIC_ICR0, Icr.Long0);
 
-    do
+    for (Spin = 0; ; Spin++)
     {
         IcrStatus.Long0 = ApicRead(APIC_ICR0);
-    } while (IcrStatus.DeliveryStatus);
+        if (!IcrStatus.DeliveryStatus)
+            break;
+
+        if (Spin >= APIC_ICR_POLL_LIMIT)
+        {
+            DPRINT1("APIC: delivery to LAPIC %lu not accepted"
+                    " (type %lu, vector %lu)\n",
+                    (ULONG)DestinationProcessor, (ULONG)MessageType, (ULONG)Vector);
+            Accepted = FALSE;
+            break;
+        }
+    }
 
     /* Finally, restore the original interrupt state */
     if (Flags & EFLAGS_INTERRUPT_MASK)
     {
         _enable();
     }
+
+    return Accepted;
+}
+
+FORCEINLINE
+BOOLEAN
+ApicRequestGlobalInterrupt(
+    _In_ UCHAR DestinationProcessor,
+    _In_ UCHAR Vector,
+    _In_ APIC_MT MessageType,
+    _In_ APIC_TGM TriggerMode,
+    _In_ APIC_DSH DestinationShortHand)
+{
+    return ApicRequestGlobalInterruptLevel(DestinationProcessor,
+                                          Vector,
+                                          MessageType,
+                                          TriggerMode,
+                                          DestinationShortHand,
+                                          1);
 }
 
 
 /* SMP SUPPORT FUNCTIONS ******************************************************/
 
-VOID
+BOOLEAN
 ApicStartApplicationProcessor(
     _In_ ULONG NTProcessorNumber,
     _In_ PHYSICAL_ADDRESS StartupLoc)
 {
+    UCHAR LapicId, StartupVector;
+    BOOLEAN Accepted = TRUE;
+
     ASSERT(StartupLoc.HighPart == 0);
     ASSERT((StartupLoc.QuadPart & 0xFFF) == 0);
     ASSERT((StartupLoc.QuadPart & 0xFFF00FFF) == 0);
 
-    /* INIT IPI */
-    ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, 0,
-        APIC_MT_INIT, APIC_TGM_Edge, APIC_DSH_Destination);
+    /* Intel MP spec 1.4 B.4: INIT (level, deassert), 10 ms, STARTUP twice */
+    LapicId = HalpProcessorIdentity[NTProcessorNumber].LapicId;
+    StartupVector = (UCHAR)((StartupLoc.LowPart) >> 12);
+
+    if (!ApicRequestGlobalInterruptLevel(LapicId, 0,
+            APIC_MT_INIT, APIC_TGM_Level, APIC_DSH_Destination, 1))
+    {
+        Accepted = FALSE;
+    }
 
     KeStallExecutionProcessor(10000);
 
-    /* Startup IPI */
-    ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, (StartupLoc.LowPart) >> 12,
-        APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination);
-
-    if (KeGetCurrentPrcb()->CpuVendor != CPU_AMD)
+    if (!ApicRequestGlobalInterruptLevel(LapicId, 0,
+            APIC_MT_INIT, APIC_TGM_Level, APIC_DSH_Destination, 0))
     {
-        KeStallExecutionProcessor(200);
-        ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, (StartupLoc.LowPart) >> 12,
-            APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination);
+        Accepted = FALSE;
     }
+
+    KeStallExecutionProcessor(200);
+
+    if (!ApicRequestGlobalInterrupt(LapicId, StartupVector,
+            APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination))
+    {
+        Accepted = FALSE;
+    }
+
+    KeStallExecutionProcessor(200);
+
+    if (!ApicRequestGlobalInterrupt(LapicId, StartupVector,
+            APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination))
+    {
+        Accepted = FALSE;
+    }
+
+    return Accepted;
 }
 
 /* HAL IPI FUNCTIONS **********************************************************/

@@ -13,6 +13,9 @@
 #define NDEBUG
 #include <debug.h>
 
+/* 5 s in 100ns units */
+#define AP_START_WAIT_TIME (5 * 10000000ULL)
+
 /* GLOBALS ****************************************************************/
 
 CODE_SEG("INIT")
@@ -49,7 +52,9 @@ KeStartAllProcessors(VOID)
 {
     PVOID KernelStack = NULL;
     PVOID DPCStack = NULL;
+    PVOID APInfoBase = NULL;
     PAPINFO APInfo = NULL;
+    BOOLEAN Abandoned = FALSE;
     PKPROCESSOR_STATE ProcessorState;
     KDESCRIPTOR Gdtr, Idtr;
     ULONG ProcessorCount;
@@ -66,10 +71,16 @@ KeStartAllProcessors(VOID)
     {
         KernelStack = NULL;
         DPCStack = NULL;
+        APInfoBase = NULL;
 
-        APInfo = ExAllocatePoolZero(NonPagedPool, sizeof(*APInfo), TAG_KERNEL);
-        if (!APInfo)
+        /* APINFO holds a page aligned IDT and GDT; the pool only promises natural alignment */
+        APInfoBase = ExAllocatePoolZero(NonPagedPool,
+                                        sizeof(*APInfo) + PAGE_SIZE,
+                                        TAG_KERNEL);
+        if (!APInfoBase)
             break;
+
+        APInfo = (PAPINFO)ALIGN_UP_BY((ULONG_PTR)APInfoBase, PAGE_SIZE);
         ASSERT(ALIGN_DOWN_POINTER_BY(APInfo, PAGE_SIZE) == APInfo);
 
         KernelStack = MmCreateKernelStack(FALSE, 0);
@@ -138,14 +149,32 @@ KeStartAllProcessors(VOID)
         if (!HalStartNextProcessor(KeLoaderBlock, ProcessorState))
             break;
 
-        /* Wait for the AP to consume the loader block (KiInitializeKernel) */
-        while (KeLoaderBlock->Prcb != 0)
+        /* Bounded: an AP that never reports in used to hang the boot processor */
         {
-            KeMemoryBarrier();
-            YieldProcessor();
+            ULONGLONG StartTime = KeQueryInterruptTime();
+
+            while (KeLoaderBlock->Prcb != 0)
+            {
+                KeMemoryBarrier();
+                YieldProcessor();
+
+                if ((KeQueryInterruptTime() - StartTime) >= AP_START_WAIT_TIME)
+                    break;
+            }
+
+            if (KeLoaderBlock->Prcb != 0)
+            {
+                DPRINT1("KeStartAllProcessors: CPU %lu did not report in, stopping\n",
+                        ProcessorCount);
+
+                /* Armed: never free its structures or clear its mailbox */
+                Abandoned = TRUE;
+                break;
+            }
         }
 
         APInfo = NULL;
+        APInfoBase = NULL;
         KernelStack = NULL;
         DPCStack = NULL;
     }
@@ -153,12 +182,46 @@ KeStartAllProcessors(VOID)
     /* The last allocation belongs to a CPU that did not start */
     ProcessorCount--;
 
-    if (APInfo)
-        ExFreePoolWithTag(APInfo, TAG_KERNEL);
-    if (KernelStack)
-        MmDeleteKernelStack(KernelStack, FALSE);
-    if (DPCStack)
-        MmDeleteKernelStack(DPCStack, FALSE);
+    /* Active publishing happens later: wait for the active set, bounded */
+    if (!Abandoned && ProcessorCount != 0)
+    {
+        ULONGLONG StartTime = KeQueryInterruptTime();
+
+        for (;;)
+        {
+            ULONG Index, Pending = 0;
+
+            for (Index = 1; Index <= ProcessorCount; Index++)
+            {
+                PKPRCB Prcb = KiProcessorBlock[Index];
+
+                if (Prcb != NULL && (KeActiveProcessors & Prcb->SetMember) == 0)
+                    Pending++;
+            }
+
+            if (Pending == 0)
+                break;
+
+            if ((KeQueryInterruptTime() - StartTime) >= AP_START_WAIT_TIME)
+            {
+                DPRINT1("KeStartAllProcessors: %lu processor(s) never became active\n",
+                        Pending);
+                break;
+            }
+
+            YieldProcessor();
+        }
+    }
+
+    if (!Abandoned)
+    {
+        if (APInfoBase)
+            ExFreePoolWithTag(APInfoBase, TAG_KERNEL);
+        if (KernelStack)
+            MmDeleteKernelStack(KernelStack, FALSE);
+        if (DPCStack)
+            MmDeleteKernelStack(DPCStack, FALSE);
+    }
 
     DPRINT1("KeStartAllProcessors: started %lu processor(s)\n", ProcessorCount);
 }
