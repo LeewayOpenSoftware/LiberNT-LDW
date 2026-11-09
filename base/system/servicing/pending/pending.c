@@ -381,8 +381,24 @@ S1RenameStrict(
 
     /* Rename-by-handle requires DELETE access on the handle (Windows and
      * LiberNT), so the open must grant it and share FILE_SHARE_DELETE. */
-    Status = S1NtOpen(Source, FILE_READ_DATA | FILE_WRITE_DATA | DELETE,
-                      FILE_OPEN, &Handle);
+    {
+        ULONG Try;
+
+        /* A just-written file can be held briefly by a scanner or a lazy closer (STATUS_SHARING_VIOLATION on
+         * the DELETE open); the host test hit it. A few short retries, then the error stands. */
+        for (Try = 0; ; Try++)
+        {
+            Status = S1NtOpen(Source, FILE_READ_DATA | FILE_WRITE_DATA | DELETE, FILE_OPEN, &Handle);
+            if (NT_SUCCESS(Status) || Status != STATUS_SHARING_VIOLATION || Try >= 20)
+                break;
+            {
+                LARGE_INTEGER Delay;
+
+                Delay.QuadPart = -1000000;      /* 100 ms */
+                NtDelayExecution(FALSE, &Delay);
+            }
+        }
+    }
     if (!NT_SUCCESS(Status))
         return Status;
     RtlInitUnicodeString(&NewName, Target);
