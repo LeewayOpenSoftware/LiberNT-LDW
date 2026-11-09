@@ -1259,6 +1259,13 @@ WriteDeferredLeftNodes(
         }
         if (!NT_SUCCESS(Status))
             break;
+        /* The left half is a different node from its right sibling and is
+         * the image built for this VCN: it replaces the node whose entries
+         * moved right, after the right node and its parent were written. */
+        ASSERT(Deferred[Index].Image != NULL);
+        ASSERT(Deferred[Index].LeftVcn != Deferred[Index].RightVcn);
+        ASSERT(reinterpret_cast<PIndexBuffer>(Deferred[Index].Image)->VCN ==
+               Deferred[Index].LeftVcn);
         Status = WriteIndexNode(
             DiskVolume,
             DirectoryFile,
@@ -2432,6 +2439,10 @@ Directory::SplitAndPromote(
      * split, DeferredCount - 1 the highest. */
     PDEFERRED_LEFT_NODE Deferred = NULL;
     ULONG DeferredCount = 0;
+    /* Right nodes written so far. Every level that holds back a left half
+     * must have written its right sibling first: right, parent, left. Only
+     * the assertions read it. */
+    ULONG RightNodesWritten = 0;
     NTSTATUS Status;
 
     /* One node's entry list (<= RecordSize) plus one pending entry. */
@@ -2533,6 +2544,7 @@ Directory::SplitAndPromote(
             if (NT_SUCCESS(Status))
             {
                 /* The links are written; now the left halves may follow. */
+                ASSERT(RightNodesWritten == DeferredCount);
                 Status = WriteDeferredLeftNodes(
                     DiskVolume,
                     DirectoryFile,
@@ -2630,6 +2642,7 @@ Directory::SplitAndPromote(
             SideImage);
         if (!NT_SUCCESS(Status))
             goto Done;
+        RightNodesWritten++;
         if (IndexAllocationSize(DirectoryFile, IndexName) >
             AllocationSizeAtEntry)
         {
@@ -2893,6 +2906,7 @@ Directory::SplitAndPromote(
                 DirectoryFile->GetAttribute(
                     TypeIndexRoot,
                     const_cast<PWSTR>(IndexName));
+            ASSERT(RightNodesWritten == DeferredCount);
             Status = WriteDeferredLeftNodes(
                 DiskVolume,
                 DirectoryFile,
@@ -2961,6 +2975,7 @@ Directory::SplitAndPromote(
                     DirectoryFile->GetAttribute(
                         TypeIndexRoot,
                         const_cast<PWSTR>(IndexName));
+                ASSERT(RightNodesWritten == DeferredCount);
                 Status = WriteDeferredLeftNodes(
                     DiskVolume,
                     DirectoryFile,
@@ -2980,6 +2995,7 @@ Directory::SplitAndPromote(
     }
 
 Done:
+    (void)RightNodesWritten;
     if (Pending && Pending != FirstPending)
         NtfsFreePool(Pending);
     if (Promoted)
