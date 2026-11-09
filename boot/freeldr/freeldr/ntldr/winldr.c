@@ -1444,6 +1444,147 @@ NtLdrNormalizeOptions(
     *NewOptions = ANSI_NULL;
 }
 
+#if !defined(UEFIBOOT) && !defined(OFWBOOT) && (defined(_M_IX86) || defined(_M_AMD64))
+/*
+ * LiberNT boot-try (B2, S1-B2-FREELDR-BOOTTRY.md). A boot-class update swaps the kernel trio on disk and
+ * reboots into the new set. If that set dies before smss nothing on disk can say so (this loader has no
+ * writable state), so a 3-byte record in CMOS RTC RAM counts the armed tries:
+ *   freeldr.ini   BootTryCmos=<index>    (0x40..0x7D, a byte proven unused on this board; absent = disabled)
+ *   file          <volume>\LiberNT\Servicing\pending\bootstate   "ARMED" while a boot-class swap is unconfirmed
+ *   CMOS          [index]='L' [index+1]='N' [index+2]=tries
+ * armed + a valid record with tries >= 1 -> the previous try never confirmed: boot the old trio (*.old).
+ * armed + no record -> write the record with tries = 1 and boot the new set. Not armed -> clear the record.
+ * Foreign data in those bytes is never taken for a count (the magic must match), and any failure to read the
+ * state file means "not armed": the loader behaves as before.
+ */
+#define LN_BOOTTRY_MAGIC0 'L'
+#define LN_BOOTTRY_MAGIC1 'N'
+
+static UCHAR WinLdrBootTryCmosRead(UCHAR Index)
+{
+    __outbyte(0x70, (UCHAR)(Index & 0x7F));     /* bit 7 clear: leave NMI as it is */
+    return __inbyte(0x71);
+}
+
+static VOID WinLdrBootTryCmosWrite(UCHAR Index, UCHAR Value)
+{
+    __outbyte(0x70, (UCHAR)(Index & 0x7F));
+    __outbyte(0x71, Value);
+}
+
+static BOOLEAN WinLdrBootTryIsArmed(PCSTR BootPath)
+{
+    CHAR StatePath[MAX_PATH];
+    CHAR Buffer[8];
+    PCSTR Paren = strrchr(BootPath, ')');
+    ULONG FileId, Count = 0;
+    size_t Prefix;
+
+    if (!Paren)
+        return FALSE;
+    Prefix = (size_t)(Paren - BootPath) + 1;
+    if (Prefix + 40 >= sizeof(StatePath))
+        return FALSE;
+    memcpy(StatePath, BootPath, Prefix);
+    StatePath[Prefix] = ANSI_NULL;
+    RtlStringCbCatA(StatePath, sizeof(StatePath), "\\LiberNT\\Servicing\\pending\\bootstate");
+    if (ArcOpen(StatePath, OpenReadOnly, &FileId) != ESUCCESS)
+        return FALSE;
+    RtlZeroMemory(Buffer, sizeof(Buffer));
+    if (ArcRead(FileId, Buffer, 5, &Count) != ESUCCESS)
+        Count = 0;
+    ArcClose(FileId);
+    return (Count == 5 && memcmp(Buffer, "ARMED", 5) == 0);
+}
+
+/* TRUE: boot the old trio. Also maintains the CMOS record. */
+static BOOLEAN WinLdrBootTryShouldFallback(PCSTR BootPath, ULONG Argc, PCHAR Argv[])
+{
+    PCSTR Value = GetArgumentValue(Argc, Argv, "BootTryCmos");
+    ULONG Index;
+    BOOLEAN Armed, Valid;
+    UCHAR Tries;
+
+    if (!Value || !*Value)
+        return FALSE;
+    Index = strtoul(Value, NULL, 0);
+    if (Index < 0x40 || Index > 0x7D)
+        return FALSE;                       /* outside the range allowed for this record: disabled */
+
+    Armed = WinLdrBootTryIsArmed(BootPath);
+    Valid = (WinLdrBootTryCmosRead((UCHAR)Index) == LN_BOOTTRY_MAGIC0 &&
+             WinLdrBootTryCmosRead((UCHAR)(Index + 1)) == LN_BOOTTRY_MAGIC1);
+    Tries = Valid ? WinLdrBootTryCmosRead((UCHAR)(Index + 2)) : 0;
+
+    if (!Armed)
+    {
+        if (Valid && Tries != 0)
+            WinLdrBootTryCmosWrite((UCHAR)(Index + 2), 0);
+        return FALSE;
+    }
+    if (Valid && Tries >= 1)
+        return TRUE;                        /* the previous armed boot never confirmed */
+    WinLdrBootTryCmosWrite((UCHAR)Index, LN_BOOTTRY_MAGIC0);
+    WinLdrBootTryCmosWrite((UCHAR)(Index + 1), LN_BOOTTRY_MAGIC1);
+    WinLdrBootTryCmosWrite((UCHAR)(Index + 2), 1);
+    return FALSE;
+}
+
+/* Replace the trio overrides with their .old names (extension replaced, as the updater keeps them). */
+static VOID WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
+{
+    static const struct { PCSTR Option; PCSTR Default; } Trio[] =
+    {
+        { "KERNEL=", "ntoskrnl.exe" }, { "HAL=", "hal.dll" }, { "BOOTVID=", "bootvid.dll" }
+    };
+    CHAR Names[3][64];
+    CHAR Added[256];
+    CHAR RemoveBuf[64];
+    PCSTR OptionsToRemove[2];
+    ULONG i;
+
+    Added[0] = ANSI_NULL;
+    for (i = 0; i < 3; i++)
+    {
+        PCSTR Value;
+        ULONG Length = 0;
+        PSTR Dot;
+
+        Value = NtLdrGetOptionEx(BootOptions, Trio[i].Option, &Length);
+        RtlZeroMemory(Names[i], sizeof(Names[i]));
+        if (Value && Length > strlen(Trio[i].Option))
+        {
+            Value += strlen(Trio[i].Option);
+            Length -= (ULONG)strlen(Trio[i].Option);
+            if (Length >= sizeof(Names[i]) - 5)
+                Length = sizeof(Names[i]) - 5;
+            memcpy(Names[i], Value, Length);
+        }
+        else
+        {
+            RtlStringCbCopyA(Names[i], sizeof(Names[i]), Trio[i].Default);
+        }
+        Dot = strrchr(Names[i], '.');
+        if (Dot)
+            *Dot = ANSI_NULL;
+        RtlStringCbCatA(Names[i], sizeof(Names[i]), ".old");
+        RtlStringCbCatA(Added, sizeof(Added), " /");
+        RtlStringCbCatA(Added, sizeof(Added), Trio[i].Option);
+        RtlStringCbCatA(Added, sizeof(Added), Names[i]);
+    }
+    RtlStringCbCopyA(RemoveBuf, sizeof(RemoveBuf), "/KERNEL= /HAL= /BOOTVID=");
+    OptionsToRemove[0] = RemoveBuf;
+    OptionsToRemove[1] = NULL;
+    {
+        PCSTR OptionsToAdd[2];
+
+        OptionsToAdd[0] = Added;
+        OptionsToAdd[1] = NULL;
+        NtLdrUpdateOptions(BootOptions, BufferSize, TRUE, (PCSTR*)OptionsToAdd, OptionsToRemove);
+    }
+}
+#endif /* boot-try */
+
 ARC_STATUS
 LoadAndBootWindows(
     IN ULONG Argc,
@@ -1594,6 +1735,15 @@ LoadAndBootWindows(
             RtlStringCbCatA(BootOptions, sizeof(BootOptions), ArgValue);
         }
     }
+
+#if !defined(UEFIBOOT) && !defined(OFWBOOT) && (defined(_M_IX86) || defined(_M_AMD64))
+    /* LiberNT boot-try: after an unconfirmed boot-class swap, boot the old kernel/HAL/bootvid automatically */
+    if (WinLdrBootTryShouldFallback(BootPath, Argc, Argv))
+    {
+        ERR("Boot-try: the new kernel set did not confirm, booting the previous set (*.old)\n");
+        WinLdrBootTryUseOldTrio(BootOptions, sizeof(BootOptions));
+    }
+#endif
 
     /* Append boot-time options */
     AppendBootTimeOptions(BootOptions, sizeof(BootOptions));
