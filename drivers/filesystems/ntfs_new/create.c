@@ -3356,8 +3356,12 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
          * Truncating frees the stream's clusters. A paging write that already
          * looked up its extent holds PagingIoResource shared, so take it
          * exclusive first, as every other path that frees clusters does.
-         * Order: Main -> PagingIo -> Metadata. The cached sizes are refreshed
-         * before PagingIo is dropped so no paging write sees the old size.
+         * Order: Main -> PagingIo -> Metadata. The header takes the new
+         * sizes before PagingIo is dropped so no paging write sees the old
+         * ones; the cache manager hears of them, and the stale pages are
+         * purged, only after PagingIo is released, because both take the
+         * segment lock that a page-in of this stream holds while its paging
+         * read waits for PagingIo (NtfsPurgeStreamCache says why).
          */
         LARGE_INTEGER OverwriteZeroSize;
 
@@ -3365,15 +3369,13 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
         /*
          * The mapped-file check made before the share access was granted
-         * held nothing, and a section is created under this resource
-         * (FsRtlAcquireToCreateMappedSection takes it exclusive), so a
-         * mapping can have appeared since. Emptying a mapped stream leaves
-         * views over pages the file no longer has, which nothing downstream
-         * is written to survive (Lab03 L3 P3: a refused CREATE_ALWAYS
-         * storm against a reader that maps the file hung the file for good,
-         * on this lineage and on main). Decide again here, where the answer
-         * cannot change before the stream is emptied, exactly as the named
-         * stream path does.
+         * held nothing, so a mapping can have appeared since; decide again
+         * here, right before the stream is emptied, as the named stream
+         * path does. This is the last word only for the instant it runs:
+         * nothing in this kernel takes a file system lock to create a
+         * section (FsRtlAcquireToCreateMappedSection has no caller), so a
+         * view mapped after it reads zeros past the new end, which is what
+         * a mapped reader of a truncated file gets anyway.
          */
         OverwriteZeroSize.QuadPart = 0;
         if (!MmCanFileBeTruncated(&FileCB->StreamCB->SectionObjectPointers, &OverwriteZeroSize))
@@ -3399,11 +3401,14 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             {
                 if (FileCB->StreamCB)
                     FileCB->StreamCB->SizePending = FALSE;
-                NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
+                NtfsRefreshFileSizes(VolCB, FileCB, NULL);
             }
             ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
             if (NT_SUCCESS(Status))
+            {
+                NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
                 NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
+            }
         }
         ExReleaseResourceLite(NtfsGetMainResource(FileCB));
         KeLeaveCriticalRegion();

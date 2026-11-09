@@ -1169,8 +1169,18 @@ NtfsRefreshFileSizes(_In_ PVolumeContextBlock VolCB,
  * manager, so pages Mm already holds for a stream keep the old contents after
  * any size change or overwrite. Every mutation that bypasses Cc drops the
  * affected range here so a later mapped or cached reader faults in the new
- * bytes. Purging synchronizes against paging I/O; callers hold MainResource
- * at most, so acquiring PagingIoResource here preserves lock order.
+ * bytes.
+ *
+ * Callers hold MainResource at most, and never PagingIoResource or the
+ * metadata lock. Mm brings a page in with the segment lock held for the
+ * whole paging read (MiSegmentFaultIn), and that read takes
+ * PagingIoResource shared and then the metadata lock; the purge takes the
+ * same segment lock. Holding either resource here therefore deadlocks with
+ * any page-in of the stream (Lab03 L3 P3: CREATE_ALWAYS over a file another
+ * thread maps hung both threads, then every open of the file). The rename
+ * path already purges before taking PagingIoResource for the same reason.
+ * A paging write that slips in meanwhile writes what the stream still has
+ * room for: the write path clamps it to the size the record holds.
  */
 VOID
 NtfsPurgeStreamCache(_In_ PFileContextBlock FileCB,
@@ -1191,11 +1201,8 @@ NtfsPurgeStreamCache(_In_ PFileContextBlock FileCB,
             PageLength = (ULONG)ROUND_TO_PAGES(Offset->QuadPart - PageOffset.QuadPart + Length);
     }
 
-    KeEnterCriticalRegion();
-    ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    UNREFERENCED_PARAMETER(FileCB);
     CcPurgeCacheSection(FileObject->SectionObjectPointer, Offset ? &PageOffset : NULL, PageLength, FALSE);
-    ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
-    KeLeaveCriticalRegion();
 }
 
 static
@@ -2852,6 +2859,8 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     BOOLEAN PagingResourceAcquired = FALSE;
     BOOLEAN MetadataResourceAcquired = FALSE;
     BOOLEAN PagingMapStale = FALSE;
+    BOOLEAN CacheSizesStale = FALSE;
+    BOOLEAN PurgeStream = FALSE;
 
     IrpSp = IoGetCurrentIrpStackLocation(Irp);
     FileObject = IrpSp->FileObject;
@@ -2918,6 +2927,32 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         if (!NT_SUCCESS(Status))
             goto Complete;
     }
+
+    /*
+     * A shrink under a mapping is refused before PagingIoResource and the
+     * metadata lock are taken: MmCanFileBeTruncated purges the segment past
+     * the new size under the segment lock, and a page-in of this stream
+     * holds that lock while its paging read waits for both of them
+     * (NtfsPurgeStreamCache says why). A stream with no section pointer has
+     * nothing mapped over it, so there is nobody for a shrink to invalidate.
+     * Both information classes start with the size.
+     */
+    if ((IrpSp->Parameters.SetFile.FileInformationClass == FileEndOfFileInformation ||
+         IrpSp->Parameters.SetFile.FileInformationClass == FileAllocationInformation) &&
+        BufferLength >= sizeof(LARGE_INTEGER) &&
+        FileObject->SectionObjectPointer != NULL)
+    {
+        LARGE_INTEGER ShrinkTo = *(PLARGE_INTEGER)SystemBuffer;
+
+        if (ShrinkTo.QuadPart >= 0 &&
+            ShrinkTo.QuadPart < NtfsGetCommonFcbHeader(FileCB)->FileSize.QuadPart &&
+            !MmCanFileBeTruncated(FileObject->SectionObjectPointer, &ShrinkTo))
+        {
+            Status = STATUS_USER_MAPPED_FILE;
+            goto Complete;
+        }
+    }
+
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
     PagingResourceAcquired = TRUE;
     NtfsAcquireMetadata(VolCB);
@@ -3124,7 +3159,9 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             {
                 if (NtfsFileRecordGetHeader(FileCB->FileRec)->Flags & FR_IS_DIRECTORY)
                     InterlockedIncrement(&VolCB->DirGeneration);
-                NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
+                /* Header now; Cc once PagingIo and the metadata lock are gone. */
+                NtfsRefreshFileSizes(VolCB, FileCB, NULL);
+                CacheSizesStale = TRUE;
                 FileObject->Flags |= FO_FILE_MODIFIED;
             }
             goto Complete;
@@ -3191,18 +3228,7 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     if (!NT_SUCCESS(Status))
         goto Complete;
 
-    /* A stream with no section pointer has nothing mapped over it, so there is
-     * nobody for a shrink to invalidate. */
-    if (RequestedSize.QuadPart < NtfsGetCommonFcbHeader(FileCB)->FileSize.QuadPart &&
-        FileObject->SectionObjectPointer != NULL &&
-        !MmCanFileBeTruncated(
-            FileObject->SectionObjectPointer,
-            &RequestedSize))
-    {
-        Status = STATUS_USER_MAPPED_FILE;
-        goto Complete;
-    }
-
+    /* The mapped-file check ran before PagingIoResource was taken, above. */
     Status = AllocationRequest
         ? NtfsFileRecordSetFileAllocationSize(
             FileCB->FileRec,
@@ -3221,10 +3247,14 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             (NtfsFileRecordGetHeader(FileCB->FileRec)->Flags & FR_IS_DIRECTORY))
             InterlockedIncrement(&VolCB->DirGeneration);
 
-        NtfsRefreshFileSizes(VolCB,
-                             FileCB,
-                             FileObject);
-        NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
+        /*
+         * The header takes the new sizes while PagingIoResource is still
+         * held, so no paging write sees the old ones; the cache manager and
+         * the purge wait until both locks are dropped (see Complete).
+         */
+        NtfsRefreshFileSizes(VolCB, FileCB, NULL);
+        CacheSizesStale = TRUE;
+        PurgeStream = TRUE;
         FileObject->Flags |=
             FO_FILE_MODIFIED |
             FO_FILE_SIZE_CHANGED;
@@ -3239,6 +3269,13 @@ Complete:
     }
     if (PagingResourceAcquired)
         ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
+    /* Under MainResource only: both take the segment lock, which a page-in
+     * of this stream holds while it waits for the two resources just
+     * released. */
+    if (CacheSizesStale)
+        NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
+    if (PurgeStream)
+        NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
     if (ResourceAcquired)
     {
         ExReleaseResourceLite(NtfsGetMainResource(FileCB));
