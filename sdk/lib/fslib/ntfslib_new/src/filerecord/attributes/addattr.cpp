@@ -3950,6 +3950,18 @@ FileRecord::CommitNonResidentMappingUpdate(
     if (!NT_SUCCESS(Status))
         return Status;
 
+    /*
+     * L1-B: a record that holds part of this stream is reachable only
+     * through the base record's attribute list. The base was just published
+     * with the list in place, so an extension record in use here implies the
+     * list is there, non-resident and as long as the update says.
+     */
+    ASSERT(AttributeOwner == BaseRecord ||
+           (BaseRecord->FindAttributeInRecord(TypeAttributeList, NULL, NULL) != NULL &&
+            BaseRecord->FindAttributeInRecord(TypeAttributeList, NULL, NULL)->IsNonResident &&
+            BaseRecord->FindAttributeInRecord(TypeAttributeList, NULL, NULL)->NonResident.DataSize ==
+                Update->NewListLength));
+
     delete[] BaseRecord->AttributeListData;
     BaseRecord->AttributeListData = NULL;
     BaseRecord->AttributeListLength = 0;
