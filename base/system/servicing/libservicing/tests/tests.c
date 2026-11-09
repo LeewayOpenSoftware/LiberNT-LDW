@@ -275,6 +275,20 @@ static void TestPaths(void)
             "[FREELOADER]\r\nDefaultOS=A\r\n[Operating Systems]\r\nA=\"x\"\r\nB=\"y\"\r\n"
             "[A]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.exe\r\n"
             "[B]\r\nSystemPath=partition(3)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old\r\n";
+        /* the dx2400's real freeldr.ini (inventory 2026-11-09): no Hal= key, comment lines, a debug entry */
+        static const char dx2400[] =
+            "[FREELOADER]\r\nDefaultOS=ReactOS\r\nTimeOut=10\r\n[Display]\r\nTitleText=LiberNT\r\nMinimalUI=Yes\r\n"
+            "[Operating Systems]\r\nReactOS=\"LiberNT\"\r\nReactOS_Debug=\"LiberNT debug (log a archivo)\"\r\n"
+            "; ROSCONFIG_PROFILE_OS_ENTRIES\r\nLiberNT_Fallback=\"LiberNT (old kernel - recovery)\"\r\n"
+            "[ReactOS]\r\nBootType=Windows2003\r\nSystemPath=partition(2)\\Windows\r\nBootLogo=LiberNT\r\n"
+            "Options=/KERNEL=ntkrnlmp.exe /FASTDETECT /KDWATCHDOG=0\r\n"
+            "[ReactOS_Debug]\r\nBootType=Windows2003\r\nSystemPath=partition(2)\\Windows\r\n"
+            "Options=/KERNEL=ntkrnlmp.exe /FASTDETECT /KDWATCHDOG=0 /DEBUG /DEBUGPORT=FILE\r\n"
+            "; ROSCONFIG_PROFILE_BOOT_ENTRIES\r\n[LiberNT_Fallback]\r\nBootType=Windows2003\r\n"
+            "SystemPath=partition(2)\\Windows\r\n"
+            "Options=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old /FASTDETECT /KDWATCHDOG=0\r\n";
+        CHECK(LnFreeldrFallbackMatches(dx2400, sizeof(dx2400) - 1, good, 3, why, sizeof(why)));       /* implicit hal.dll */
+        CHECK(!LnFreeldrFallbackMatches(dx2400, sizeof(dx2400) - 1, wrongKernel, 3, why, sizeof(why))); /* ntoskrnl is not loaded */
         CHECK(LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, good, 3, why, sizeof(why)));
         CHECK(!LnFreeldrFallbackMatches(detecthal, sizeof(detecthal) - 1, good, 3, why, sizeof(why)));    /* /DETECTHAL */
         CHECK(!LnFreeldrFallbackMatches(fbdetecthal, sizeof(fbdetecthal) - 1, good, 3, why, sizeof(why)));
