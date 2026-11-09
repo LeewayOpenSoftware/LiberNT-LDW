@@ -442,6 +442,25 @@ out_msg:
     return FALSE;
 }
 
+BOOL LnPeIdentity(const BYTE *data, size_t len, DWORD *sizeOfImage, DWORD *checkSum, DWORD *timeDateStamp)
+{
+    DWORD pe;
+
+    if (len < 0x40 || data[0] != 'M' || data[1] != 'Z')
+        return FALSE;
+    memcpy(&pe, data + 0x3C, sizeof(pe));
+    if (pe > len || len - pe < 24 + 68 || data[pe] != 'P' || data[pe + 1] != 'E' || data[pe + 2] || data[pe + 3])
+        return FALSE;
+    if (timeDateStamp)
+        memcpy(timeDateStamp, data + pe + 8, 4);
+    /* optional header starts at pe + 24; SizeOfImage at +56, CheckSum at +64 for both PE32 and PE32+ */
+    if (sizeOfImage)
+        memcpy(sizeOfImage, data + pe + 24 + 56, 4);
+    if (checkSum)
+        memcpy(checkSum, data + pe + 24 + 64, 4);
+    return TRUE;
+}
+
 BOOL LnOptionsUseOldTrio(const WCHAR *options)
 {
     static const WCHAR *keys[] = { L"/KERNEL=", L"/HAL=", L"/BOOTVID=" };

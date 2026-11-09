@@ -1099,6 +1099,123 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     return ERROR_SUCCESS;
 }
 
+/* Boot-class identity (B1 review N4, kernel half). The kernel's module list (SystemModuleInformation) is the only
+ * view of the loaded set a user-mode process has: it carries path and SizeOfImage, not TimeDateStamp/CheckSum
+ * (those need a kernel-side query, a follow-up). So: for every boot-class item the NEW file's SizeOfImage must be
+ * present among the loaded modules, and no loaded module may come from a *.old file. The on-disk hash of each
+ * target was already proven equal to the manifest by the caller. */
+typedef struct _LN_SYS_MODULE
+{
+    PVOID Section;
+    PVOID MappedBase;
+    PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadOrderIndex, InitOrderIndex, LoadCount, OffsetToFileName;
+    UCHAR FullPathName[256];
+} LN_SYS_MODULE;
+
+static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const LN_MANIFEST *m, char *why, size_t whyCch)
+{
+    typedef LONG (NTAPI *PFN_QSI)(ULONG, PVOID, ULONG, PULONG);
+    PFN_QSI qsi = (PFN_QSI)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation");
+    ULONG cb = 0, i;
+    BYTE *buf = NULL;
+    LONG st;
+    ULONG count;
+    const LN_SYS_MODULE *mods;
+    size_t k;
+    DWORD result = ERROR_SUCCESS;
+
+    if (!qsi)
+    {
+        strcpy(why, "cannot query the loaded modules");
+        return LN_E_PRECONDITION;
+    }
+    for (i = 0; i < 4; i++)
+    {
+        cb = cb ? cb * 2 : 0x10000;
+        buf = (BYTE *)realloc(buf, cb);
+        if (!buf)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        ULONG got = 0;
+
+        st = qsi(11 /* SystemModuleInformation */, buf, cb, &got);
+        if (st >= 0)
+            break;
+        if (got > cb)
+            cb = got;
+    }
+    if (st < 0)
+    {
+        free(buf);
+        strcpy(why, "cannot read the loaded module list");
+        return LN_E_PRECONDITION;
+    }
+    count = *(ULONG *)buf;
+    mods = (const LN_SYS_MODULE *)(buf + sizeof(PVOID));            /* RTL_PROCESS_MODULES: ULONG + padding */
+    if ((BYTE *)(mods + 0) + (size_t)count * sizeof(LN_SYS_MODULE) > buf + cb)
+        count = (ULONG)((buf + cb - (BYTE *)mods) / sizeof(LN_SYS_MODULE));
+
+    for (i = 0; i < count; i++)
+    {
+        const char *name = (const char *)mods[i].FullPathName;
+        size_t nl = strlen(name);
+
+        if (nl >= 4 && !_stricmp(name + nl - 4, ".old"))
+        {
+            strcpy(why, "a loaded module comes from a *.old file: the previous set is running");
+            result = LN_E_PRECONDITION;
+            goto out;
+        }
+    }
+    for (k = 0; k < m->itemCount; k++)
+    {
+        WCHAR *tp;
+        BYTE hdr[1024];
+        DWORD got = 0, size = 0, sum = 0, ts = 0;
+        HANDLE h;
+        BOOL found = FALSE;
+
+        if (!m->items[k].bootClass)
+            continue;
+        tp = LnTargetFile(t, m->items[k].target);
+        if (!tp)
+        {
+            result = ERROR_NOT_ENOUGH_MEMORY;
+            goto out;
+        }
+        h = CreateFileW(tp, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL, NULL);
+        free(tp);
+        if (h == INVALID_HANDLE_VALUE || !ReadFile(h, hdr, sizeof(hdr), &got, NULL) ||
+            !LnPeIdentity(hdr, got, &size, &sum, &ts))
+        {
+            if (h != INVALID_HANDLE_VALUE)
+                CloseHandle(h);
+            strcpy(why, "cannot read the PE identity of a boot-class target");
+            result = LN_E_PRECONDITION;
+            goto out;
+        }
+        CloseHandle(h);
+        for (i = 0; i < count; i++)
+        {
+            if (mods[i].ImageSize == size)
+                found = TRUE;
+        }
+        if (!found)
+        {
+            strcpy(why, "no loaded module has the SizeOfImage of the new file: the new set is not what is running");
+            result = LN_E_PRECONDITION;
+            goto out;
+        }
+    }
+out:
+    (void)whyCch;
+    free(buf);
+    return result;
+}
+
 static DWORD WritePlan(const CTX *c, const BOOL *pending)
 {
     LN_BUF b;
@@ -1622,6 +1739,17 @@ DWORD LnServicingConfirmHealth(const LN_TARGET *t, const char *packageId, const 
             why = "confirm refused: cannot read the load options to tell which kernel set is running";
         else if (LnOptionsUseOldTrio(opts))
             why = "confirm refused: the previous kernel set is running, not the new one";
+        else
+        {
+            char idwhy[160];
+
+            idwhy[0] = 0;
+            if (BootLoadedSetIsNew(t, &c.m, idwhy, sizeof(idwhy)) != ERROR_SUCCESS)
+            {
+                LogLine(t, c.txid, idwhy[0] ? idwhy : "confirm refused: cannot verify the loaded kernel set");
+                why = "confirm refused: the loaded kernel set is not the new one";
+            }
+        }
         if (why)
         {
             LogLine(t, c.txid, why);

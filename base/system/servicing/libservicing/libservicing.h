@@ -148,6 +148,8 @@ BOOL LnTargetBootItemAllowed(const WCHAR *relInRoot, int driverStart);
 int LnTargetBootGroup(const WCHAR *relInRoot);
 /* TRUE when a load-option string names a *.old file for /KERNEL=, /HAL= or /BOOTVID= (the previous kernel set). */
 BOOL LnOptionsUseOldTrio(const WCHAR *options);
+/* SizeOfImage / CheckSum / TimeDateStamp from the PE headers in the first bytes of a file; FALSE if it is not a PE. */
+BOOL LnPeIdentity(const BYTE *data, size_t len, DWORD *sizeOfImage, DWORD *checkSum, DWORD *timeDateStamp);
 /* Clears pending\bootstate (CLEAR) if present; the error is returned (B2 review M2). */
 DWORD LnBootStateClear(const LN_TARGET *t);
 /* Read-only check of freeldr.ini against a kernel-trio swap (review N2). The package targets must be exactly the

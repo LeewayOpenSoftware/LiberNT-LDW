@@ -206,6 +206,33 @@ static void TestPaths(void)
     CHECK(LnTargetBootGroup(L"Windows\\System32\\ntdll.dll") == 3);
     CHECK(LnTargetBootGroup(L"Windows\\System32\\notepad.exe") == 0);
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\ntdll.dll", -1));                           /* the user route still refuses it */
+    {
+        /* PE identity read from the first bytes of a file (N4 kernel half) */
+        BYTE pe[512];
+        DWORD size = 0, sum = 0, ts = 0, v;
+
+        memset(pe, 0, sizeof(pe));
+        pe[0] = 'M';
+        pe[1] = 'Z';
+        v = 0x80;
+        memcpy(pe + 0x3C, &v, 4);
+        pe[0x80] = 'P';
+        pe[0x81] = 'E';
+        v = 0x4A5B6C7D;
+        memcpy(pe + 0x80 + 8, &v, 4);                       /* TimeDateStamp */
+        v = 0x00345000;
+        memcpy(pe + 0x80 + 24 + 56, &v, 4);                 /* SizeOfImage */
+        v = 0x00351234;
+        memcpy(pe + 0x80 + 24 + 64, &v, 4);                 /* CheckSum */
+        CHECK(LnPeIdentity(pe, sizeof(pe), &size, &sum, &ts));
+        CHECK(size == 0x00345000 && sum == 0x00351234 && ts == 0x4A5B6C7D);
+        pe[0] = 'X';
+        CHECK(!LnPeIdentity(pe, sizeof(pe), &size, &sum, &ts));                 /* not MZ */
+        pe[0] = 'M';
+        pe[0x80] = 'N';
+        CHECK(!LnPeIdentity(pe, sizeof(pe), &size, &sum, &ts));                 /* not PE */
+        CHECK(!LnPeIdentity(pe, 16, &size, &sum, &ts));                         /* too short */
+    }
     /* which kernel set is running (B2 review M1): the load options name *.old files on a fallback boot */
     CHECK(LnOptionsUseOldTrio(L"/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old /FASTDETECT"));
     CHECK(LnOptionsUseOldTrio(L"/FASTDETECT /kernel=ntoskrnl.OLD"));
