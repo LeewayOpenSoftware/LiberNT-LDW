@@ -28,6 +28,12 @@ NtfsGrowForCachedWrite(_In_ PVolumeContextBlock VolCB,
     NTSTATUS Status;
     BOOLEAN SizePersisted = FALSE;
 
+    /* Only NtfsCachedWrite calls this, after it took MainResource exclusive
+     * to extend; the sizes in the header change under that lock. */
+    NTFS_ASSERT_IRQL_APC();
+    NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+    ASSERT(FileCB->StreamCB);
+
     if (EndOffset > Allocation)
     {
         Target = Allocation + ((Allocation < NTFS_CACHED_GROWTH_LIMIT) ? Allocation : NTFS_CACHED_GROWTH_LIMIT);
@@ -96,6 +102,13 @@ NtfsPersistPendingSize(_In_ PVolumeContextBlock VolCB,
     NTSTATUS Status = STATUS_SUCCESS;
     LONGLONG Allocation = -1;
     LONGLONG FileSize;
+
+    /* Every caller holds the file's MainResource exclusive and takes
+     * PagingIoResource and the metadata lock itself, in that order; coming
+     * in with the metadata lock held would invert it. */
+    NTFS_ASSERT_IRQL_APC();
+    NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+    NTFS_ASSERT_METADATA_NOT_HELD(VolCB);
 
     if (!FileCB->StreamCB || !FileCB->StreamCB->SizePending || !FileCB->FileRec)
         return STATUS_SUCCESS;
@@ -238,6 +251,9 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
     BOOLEAN Handled = FALSE;
     BOOLEAN Extending;
     NTSTATUS TimestampStatus;
+
+    /* Cc copy and resource waits: never above APC_LEVEL. */
+    NTFS_ASSERT_IRQL_APC();
 
     if (ByteOffset->QuadPart < 0 || !CcCanIWrite(FileObj, Length, TRUE, FALSE))
         return FALSE;

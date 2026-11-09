@@ -1100,6 +1100,9 @@ NtfsRefreshFileSizes(_In_ PVolumeContextBlock VolCB,
     LONGLONG FileSize;
     LONGLONG ValidDataLength;
 
+    /* Takes the metadata lock and calls Cc. */
+    NTFS_ASSERT_IRQL_APC();
+
     if (!FileCB || !FileCB->FileRec)
         return;
     Header = NtfsGetCommonFcbHeader(FileCB);
@@ -1180,6 +1183,12 @@ NtfsPurgeStreamCache(_In_ PFileContextBlock FileCB,
 {
     LARGE_INTEGER PageOffset;
     ULONG PageLength = 0;
+
+    /* Waits for PagingIoResource and calls Cc/Mm. Callers hold MainResource
+     * at most, or Main and PagingIo exclusive (FsdSetInformation), so
+     * taking PagingIo exclusive here never upgrades. */
+    NTFS_ASSERT_IRQL_APC();
+    ASSERT(FileObject);
 
     if (!FileObject->SectionObjectPointer)
         return;
@@ -2483,6 +2492,9 @@ NtfsCheckDirectoryEmpty(_In_ PVolumeContextBlock VolCB,
     ULONG RemainingNameLength = 0;
     NTSTATUS Status;
 
+    /* Reads the directory's index through the library. */
+    NTFS_ASSERT_METADATA_HELD(VolCB);
+
     if (!(NtfsFileRecordGetHeader(FileCB->FileRec)->Flags & FR_IS_DIRECTORY))
         return STATUS_SUCCESS;
 
@@ -2522,6 +2534,12 @@ NtfsSetDisposition(_In_ PVolumeContextBlock VolCB,
 {
     BOOLEAN Delete = !!(Flags & FILE_DISPOSITION_DELETE);
     NTSTATUS Status;
+
+    /* Changes delete state and reads the record: the caller took Main,
+     * PagingIo and the metadata lock, in that order. */
+    NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+    NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB);
+    NTFS_ASSERT_METADATA_HELD(VolCB);
 
     if (Flags & ~(FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS |
                   FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK | FILE_DISPOSITION_ON_CLOSE |
@@ -2881,10 +2899,17 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         }
 
         case FileRenameInformation:
+            /* Main -> PagingIo -> Metadata, all exclusive, as taken above. */
+            NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_METADATA_HELD(VolCB);
             Status = NtfsSetRenameInformation(VolCB, FileCB, FileObject, IrpSp, (PFILE_RENAME_INFORMATION)SystemBuffer, BufferLength, Irp->RequestorMode);
             goto Complete;
 
         case FileLinkInformation:
+            NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_METADATA_HELD(VolCB);
             Status = NtfsSetLinkInformation(VolCB, FileCB, IrpSp, (PFILE_LINK_INFORMATION)SystemBuffer, BufferLength, Irp->RequestorMode);
             goto Complete;
 

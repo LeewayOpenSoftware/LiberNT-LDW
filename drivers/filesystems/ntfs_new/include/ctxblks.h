@@ -665,10 +665,27 @@ NTSTATUS
 NtfsQueryLxMetadata(_In_ PFileContextBlock FileCB,
                     _Inout_ PFILE_STAT_LX_INFORMATION Stat);
 
+/*
+ * Lock and IRQL contracts, checked on checked builds only. Lock order is
+ * Main -> PagingIo -> Metadata. The conditions are pure queries.
+ */
+#define NTFS_ASSERT_IRQL_APC() \
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL)
+#define NTFS_ASSERT_METADATA_HELD(VolCB) \
+    ASSERT(ExIsResourceAcquiredExclusiveLite(&(VolCB)->MetadataResource))
+#define NTFS_ASSERT_METADATA_NOT_HELD(VolCB) \
+    ASSERT(!ExIsResourceAcquiredExclusiveLite(&(VolCB)->MetadataResource))
+#define NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB) \
+    ASSERT(ExIsResourceAcquiredExclusiveLite(NtfsGetMainResource(FileCB)))
+#define NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB) \
+    ASSERT(ExIsResourceAcquiredExclusiveLite(NtfsGetPagingIoResource(FileCB)))
+
 static inline
 VOID
 NtfsAcquireMetadata(_In_ PVolumeContextBlock VolCB)
 {
+    /* Waits on a resource: never above APC_LEVEL. */
+    NTFS_ASSERT_IRQL_APC();
     if (!ExIsResourceAcquiredExclusiveLite(&VolCB->MetadataResource))
         ExfAcquirePushLockExclusive(&VolCB->MetadataGate);
     ExAcquireResourceExclusiveLite(&VolCB->MetadataResource, TRUE);
@@ -680,6 +697,7 @@ NtfsReleaseMetadata(_In_ PVolumeContextBlock VolCB)
 {
     BOOLEAN Last = ExIsResourceAcquiredSharedLite(&VolCB->MetadataResource) == 1;
 
+    NTFS_ASSERT_METADATA_HELD(VolCB);
     ExReleaseResourceLite(&VolCB->MetadataResource);
     if (Last)
         ExfReleasePushLockExclusive(&VolCB->MetadataGate);
