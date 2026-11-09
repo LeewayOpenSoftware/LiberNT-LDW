@@ -340,6 +340,9 @@ typedef struct _SCB
     BOOLEAN Unlinked;
     BOOLEAN PagingFile;
     LONG UncleanCount;
+    /* System time of the last automatic write-time stamp by a cached
+     * write of this stream (write.c, NtfsCachedWrite). */
+    LONGLONG LastWriteStampTime;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 

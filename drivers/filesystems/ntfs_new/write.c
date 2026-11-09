@@ -290,6 +290,24 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
 
     ExReleaseResourceLite(NtfsGetMainResource(FileCB));
 
+    /*
+     * Write times, as measured on Windows 11 26100: LastWriteTime and
+     * ChangeTime move on every write, a second write on the same handle
+     * included, and not at close. Paging writes never stamp them (below),
+     * so every cached write does, at most once per system time tick per
+     * stream: a write within the same tick would store the same time.
+     */
+    if (Handled && NT_SUCCESS(*Status) && FileCB->StreamCB)
+    {
+        LARGE_INTEGER Now;
+
+        KeQuerySystemTime(&Now);
+        if (Now.QuadPart != FileCB->StreamCB->LastWriteStampTime)
+        {
+            FileCB->StreamCB->LastWriteStampTime = Now.QuadPart;
+            FileCB->WriteTimesStamped = FALSE;
+        }
+    }
     if (Handled && NT_SUCCESS(*Status) && !FileCB->WriteTimesStamped)
     {
         FileCB->WriteTimesStamped = TRUE;
@@ -546,7 +564,22 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
     else
     {
+        BOOLEAN TimesSuppressed = FALSE;
+
         Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+        if (NT_SUCCESS(Status) && PagingIo)
+        {
+            /* A paging write (lazy writer, CcFlushCache, mapped page
+             * writer) moves data a user write or a mapped view already
+             * changed: it leaves the write times alone, as on Windows. Only
+             * for this call: the refresh above sets the handle's own mask
+             * again before any other use of the record. */
+            Status = NtfsFileRecordSetAutomaticTimestampMask(
+                FileRec,
+                FileCB->AutomaticTimestampMask &
+                    ~(NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME));
+            TimesSuppressed = NT_SUCCESS(Status);
+        }
         if (NT_SUCCESS(Status))
             Status = NtfsFileRecordWriteFileData(FileRec,
                                                  RequestedType,
@@ -554,6 +587,8 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                                  Buffer,
                                                  &Length,
                                                  &ByteOffset);
+        if (TimesSuppressed)
+            (void)NtfsFileRecordSetAutomaticTimestampMask(FileRec, FileCB->AutomaticTimestampMask);
 
         /* The library updates duplicated $FILE_NAME information through a
          * separate parent record. Invalidate parsed directory snapshots
@@ -584,11 +619,15 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
             NtfsRefreshFileSizes(VolCB, FileCB, FileObj);
         if (!PagingIo && Length != 0 && RequestedType == TypeData)
             NtfsPurgeStreamCache(FileCB, FileObj, &ByteOffset, Length);
-        FileObj->Flags |=
-            FO_FILE_MODIFIED |
-            FO_FILE_SIZE_CHANGED;
+        /* A paging write is not a modification by the file object's owner
+         * (it may be any handle's file object backing the cache). */
         if (!PagingIo)
+        {
+            FileObj->Flags |=
+                FO_FILE_MODIFIED |
+                FO_FILE_SIZE_CHANGED;
             FileCB->NotifyFilter |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+        }
 
         /* A cache flush must not change the application's file pointer. */
         if (!PagingIo && (IrpSp->FileObject->Flags & FO_SYNCHRONOUS_IO))
