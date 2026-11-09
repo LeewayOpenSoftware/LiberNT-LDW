@@ -200,7 +200,7 @@ jobs:
 
     - name: Run the host tests
       run: |
-        ctest --test-dir build/ntfslib-linux --output-on-failure -R "grow_fragmented_index|size_persist_times"
+        ctest --test-dir build/ntfslib-linux --output-on-failure -R "grow_fragmented_index|size_persist_times|growth_write|data_write|sparse_write|compressed_write|truncate|index_spill|crash_consistency"
 
   build-msvc:
     if: github.ref == 'refs/heads/leeway/main'
