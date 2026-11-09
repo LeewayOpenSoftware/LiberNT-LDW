@@ -762,6 +762,8 @@ ExpInitSystemPhase0(VOID)
     /* Initialize the lookaside lists and locks */
     ExpInitLookasideLists();
 
+    ExpInitializeWorkerQueues();
+
     /* Initialize the Firmware Table resource and listhead */
     InitializeListHead(&ExpFirmwareTableProviderListHead);
     ExInitializeResourceLite(&ExpFirmwareTableResource);

@@ -274,6 +274,11 @@ ExRefreshTimeZoneInformation(
 CODE_SEG("INIT")
 VOID
 NTAPI
+ExpInitializeWorkerQueues(VOID);
+
+CODE_SEG("INIT")
+VOID
+NTAPI
 ExpInitializeWorkerThreads(VOID);
 
 VOID
