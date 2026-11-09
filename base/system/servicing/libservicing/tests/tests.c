@@ -236,7 +236,22 @@ static void TestPaths(void)
                                    L"Windows\\System32\\bootvid.dll" };
         char why[160];
 
+        static const char detecthal[] =
+            "[FREELOADER]\r\nDefaultOS=A\r\n[Operating Systems]\r\nA=\"x\"\r\nB=\"y\"\r\n"
+            "[A]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.exe /DETECTHAL\r\n"
+            "[B]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old\r\n";
+        static const char fbdetecthal[] =
+            "[FREELOADER]\r\nDefaultOS=A\r\n[Operating Systems]\r\nA=\"x\"\r\nB=\"y\"\r\n"
+            "[A]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.exe\r\n"
+            "[B]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old /DETECTHAL\r\n";
+        static const char otherpath[] =
+            "[FREELOADER]\r\nDefaultOS=A\r\n[Operating Systems]\r\nA=\"x\"\r\nB=\"y\"\r\n"
+            "[A]\r\nSystemPath=partition(2)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.exe\r\n"
+            "[B]\r\nSystemPath=partition(3)\\Windows\r\nOptions=/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old\r\n";
         CHECK(LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, good, 3, why, sizeof(why)));
+        CHECK(!LnFreeldrFallbackMatches(detecthal, sizeof(detecthal) - 1, good, 3, why, sizeof(why)));    /* /DETECTHAL */
+        CHECK(!LnFreeldrFallbackMatches(fbdetecthal, sizeof(fbdetecthal) - 1, good, 3, why, sizeof(why)));
+        CHECK(!LnFreeldrFallbackMatches(otherpath, sizeof(otherpath) - 1, good, 3, why, sizeof(why)));    /* SystemPath */
         CHECK(!LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, wrongKernel, 3, why, sizeof(why)));   /* default boots ntkrnlmp */
         CHECK(!LnFreeldrFallbackMatches(nofb, sizeof(nofb) - 1, good, 3, why, sizeof(why)));      /* no fallback entry */
         CHECK(!LnFreeldrFallbackMatches(halacpi, sizeof(halacpi) - 1, good, 3, why, sizeof(why))); /* HAL differs */

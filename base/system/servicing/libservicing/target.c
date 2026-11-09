@@ -151,6 +151,8 @@ typedef struct _LNF_SEC
     char name[48];
     char opts[400];
     char kernel[64], hal[64];
+    char path[160];                 /* SystemPath */
+    int truncated;                  /* Options or SystemPath did not fit: never judge a cut-off value */
 } LNF_SEC;
 
 static void LnfCopy(char *dst, size_t cch, const char *src, size_t len)
@@ -182,6 +184,21 @@ static void LnfOpt(const char *opts, const char *key, char *out, size_t cch)
         }
         p++;
     }
+}
+
+/* is the bare switch (e.g. "/DETECTHAL") present as a whole word? */
+static BOOL LnfHasOpt(const char *opts, const char *sw)
+{
+    size_t l = strlen(sw);
+    const char *p = opts;
+
+    for (; *p; p++)
+    {
+        if ((p == opts || p[-1] == ' ' || p[-1] == '\t') && !_strnicmp(p, sw, l) &&
+            (p[l] == 0 || p[l] == ' ' || p[l] == '\t'))
+            return TRUE;
+    }
+    return FALSE;
 }
 
 static void LnfEffective(const LNF_SEC *s, const char *key, const char *fromKey, const char *def,
@@ -301,7 +318,17 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
         else if (cur >= 0)
         {
             if (!_stricmp(key, "Options"))
+            {
+                if (strlen(val) >= sizeof(secs[cur].opts))
+                    secs[cur].truncated = 1;
                 LnfCopy(secs[cur].opts, sizeof(secs[cur].opts), val, strlen(val));
+            }
+            else if (!_stricmp(key, "SystemPath"))
+            {
+                if (strlen(val) >= sizeof(secs[cur].path))
+                    secs[cur].truncated = 1;
+                LnfCopy(secs[cur].path, sizeof(secs[cur].path), val, strlen(val));
+            }
             else if (!_stricmp(key, "Kernel"))
                 LnfCopy(secs[cur].kernel, sizeof(secs[cur].kernel), val, strlen(val));
             else if (!_stricmp(key, "Hal"))
@@ -318,6 +345,16 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
     if (!def)
     {
         msg = "freeldr.ini has no default entry section";
+        goto out_msg;
+    }
+    if (def->truncated)
+    {
+        msg = "the default entry's Options or SystemPath is too long to be checked";
+        goto out_msg;
+    }
+    if (LnfHasOpt(def->opts, "/DETECTHAL"))
+    {
+        msg = "the default entry uses /DETECTHAL, which overrides /HAL= and breaks the fallback";
         goto out_msg;
     }
     LnfEffective(def, "/KERNEL=", def->kernel, "ntoskrnl.exe", dk, sizeof(dk));
@@ -372,6 +409,8 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
 
             if (_stricmp(s->name, entries[i]) || s == def)
                 continue;
+            if (s->truncated || LnfHasOpt(s->opts, "/DETECTHAL") || _stricmp(s->path, def->path))
+                continue;                   /* same SystemPath, no /DETECTHAL, nothing cut off */
             LnfEffective(s, "/KERNEL=", s->kernel, "ntoskrnl.exe", ok, sizeof(ok));
             LnfEffective(s, "/HAL=", s->hal, "hal.dll", oh, sizeof(oh));
             LnfEffective(s, "/BOOTVID=", NULL, "bootvid.dll", ob, sizeof(ob));

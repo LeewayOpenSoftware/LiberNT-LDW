@@ -967,6 +967,28 @@ S1BootLogAppend(
  * the KD serial); DbgPrint lands in the kernel debugger on debug builds,
  * which is the reliable channel for a native applier (Dwight's diag run).
  * The same line also goes to logs\boot.log for machines without a debugger. */
+/* Boot-class dirty check (B1 review M4): nothing may be written to the volume before it. S1Log appends to
+ * logs\boot.log, which would mark the volume dirty, so until S1LogFlushDeferred() the lines are kept in memory
+ * (DbgPrint still shows them at once). */
+static BOOLEAN g_S1LogDeferred = FALSE;
+static CHAR g_S1LogHold[6144];
+static SIZE_T g_S1LogHoldLen = 0;
+
+static VOID
+S1LogDefer(VOID)
+{
+    g_S1LogDeferred = TRUE;
+}
+
+static VOID
+S1LogFlushDeferred(VOID)
+{
+    g_S1LogDeferred = FALSE;
+    if (g_S1LogHoldLen)
+        S1BootLogAppend(g_S1LogHold, g_S1LogHoldLen);
+    g_S1LogHoldLen = 0;
+}
+
 static VOID
 S1Log(
     _In_ PCWSTR Msg)
@@ -989,7 +1011,18 @@ S1Log(
     Len = snprintf(Stamped, sizeof(Stamped), "%04d-%02d-%02dT%02d:%02d:%02dZ %s\r\n",
                    Tf.Year, Tf.Month, Tf.Day, Tf.Hour, Tf.Minute, Tf.Second, Narrow);
     if (Len > 0 && (size_t)Len < sizeof(Stamped))
-        S1BootLogAppend(Stamped, (SIZE_T)Len);
+    {
+        if (g_S1LogDeferred)
+        {
+            if (g_S1LogHoldLen + (SIZE_T)Len <= sizeof(g_S1LogHold))
+            {
+                memcpy(g_S1LogHold + g_S1LogHoldLen, Stamped, (SIZE_T)Len);
+                g_S1LogHoldLen += (SIZE_T)Len;
+            }
+        }
+        else
+            S1BootLogAppend(Stamped, (SIZE_T)Len);
+    }
 }
 #else
 static VOID
@@ -997,6 +1030,8 @@ S1Log(_In_ PCWSTR Msg)
 {
     (void)Msg;
 }
+static VOID S1LogDefer(VOID) { }
+static VOID S1LogFlushDeferred(VOID) { }
 #endif
 
 #define S1JournalOrHalt(j, tx, ph, op, res, err) \
@@ -1379,6 +1414,10 @@ S1CheckVolumeClean(VOID)
         return Status;                  /* cannot tell: refuse */
     if (Flags & 1 /* VOLUME_IS_DIRTY */)
         return STATUS_S1_VOLUME_DIRTY;
+#else
+    /* host harness: the fake volume answers dirty when S1_FAKE_DIRTY is set, and records how many mutating file
+     * operations the applier had issued before asking (it must be 0). Defined by host_applier.c. */
+    return ShimQueryVolumeDirty();
 #endif
     return STATUS_SUCCESS;
 }
@@ -1679,12 +1718,54 @@ cleanup_new:
     return Status;
 }
 
+/* Rollback of the whole swap set (review: group restore, not per-op). Every file that is not original needs a
+ * verified source (X.old, X.pre, X.old.tmp) BEFORE any file is touched, so a missing pre-image can never leave
+ * a half-restored, mixed trio. Runs once per process. */
+static BOOLEAN g_SwapRestoreRan = FALSE;
+static NTSTATUS g_SwapRestoreStatus = STATUS_SUCCESS;
+
 static NTSTATUS
-S1SwapRevert(
-    _In_ const S1_PLAN_OP *Op,
-    _In_ PCWSTR TargetW)
+S1SwapRestoreGroup(_In_ const S1_PLAN *Plan)
 {
-    return S1SwapRestoreOne(Op, TargetW);
+    ULONG i;
+    WCHAR TargetW[MAX_PATH * 2], A[MAX_PATH * 2];
+    NTSTATUS Status;
+
+    for (i = 0; i < Plan->OperationCount; i++)
+    {
+        const S1_PLAN_OP *Op = &Plan->Operations[i];
+        BOOLEAN Have = FALSE;
+
+        if (Op->Type != S1_OP_SWAP_FILE)
+            continue;
+        S1SwapTargetPath(Op, TargetW, RTL_NUMBER_OF(TargetW));
+        if (S1HashIs(TargetW, Op->OriginalSha256) == 1)
+            continue;
+        if (NT_SUCCESS(S1SwapSidePath(TargetW, L".old", TRUE, A, RTL_NUMBER_OF(A))) &&
+            S1HashIs(A, Op->OriginalSha256) == 1)
+            Have = TRUE;
+        else if (NT_SUCCESS(S1SwapSidePath(TargetW, L".pre", FALSE, A, RTL_NUMBER_OF(A))) &&
+                 S1HashIs(A, Op->OriginalSha256) == 1)
+            Have = TRUE;
+        else if (NT_SUCCESS(S1SwapSidePath(TargetW, L".old.tmp", TRUE, A, RTL_NUMBER_OF(A))) &&
+                 S1HashIs(A, Op->OriginalSha256) == 1)
+            Have = TRUE;
+        if (!Have)
+            return STATUS_S1_HASH_MISMATCH; /* fail closed: change nothing */
+    }
+    Status = STATUS_SUCCESS;
+    for (i = 0; i < Plan->OperationCount; i++)
+    {
+        NTSTATUS One;
+
+        if (Plan->Operations[i].Type != S1_OP_SWAP_FILE)
+            continue;
+        S1SwapTargetPath(&Plan->Operations[i], TargetW, RTL_NUMBER_OF(TargetW));
+        One = S1SwapRestoreOne(&Plan->Operations[i], TargetW);
+        if (!NT_SUCCESS(One) && NT_SUCCESS(Status))
+            Status = One;
+    }
+    return Status;
 }
 
 /* B2: pending\bootstate is read by freeldr (read-only FS code) to decide whether a boot-try counter in CMOS
@@ -1979,7 +2060,14 @@ S1RevertOperation(
             wcscpy(TargetW, FullTarget);
     }
     if (Op->Type == S1_OP_SWAP_FILE)
-        return S1SwapRevert(Op, TargetW);
+    {
+        if (!g_SwapRestoreRan)
+        {
+            g_SwapRestoreRan = TRUE;
+            g_SwapRestoreStatus = S1SwapRestoreGroup(Plan);
+        }
+        return g_SwapRestoreStatus;
+    }
     Status = S1BuildBackupPath(Plan, Op, BackupPath, MAX_PATH * 2);
     if (!NT_SUCCESS(Status))
         return Status;
@@ -2050,9 +2138,11 @@ NtProcessStartup(
      * under it. Failing here means the applier cannot do anything
      * meaningful at all, so exit loudly (smss survives a BootExecute
      * failure; sminit.c discards the status). */
+    S1LogDefer();                           /* no volume write until the boot-class dirty check (review M4) */
     Status = S1ResolveServicingRoot();
     if (!NT_SUCCESS(Status))
     {
+        S1LogFlushDeferred();
         S1Log(L"S1: cannot resolve the servicing root");
         NtTerminateProcess(NtCurrentProcess(), 1);
     }
@@ -2069,6 +2159,8 @@ NtProcessStartup(
 #ifndef S1_HOST_APPLIER
         HANDLE RootProbe;
 
+        S1LogFlushDeferred();
+
         if (!NT_SUCCESS(S1NtOpen(S1_ROOT, FILE_READ_DATA, FILE_OPEN, &RootProbe)))
             S1Log(L"S1: servicing tree is not installed, exit 0");
         else
@@ -2084,6 +2176,7 @@ NtProcessStartup(
     }
     if (!NT_SUCCESS(Status))
     {
+        S1LogFlushDeferred();
         S1Log(L"S1: plan read failed, exit 0");
         NtTerminateProcess(NtCurrentProcess(), 0);
     }
@@ -2093,6 +2186,7 @@ NtProcessStartup(
     if (!S1PlanParse((const char *)PlanData, PlanSize, &Plan) ||
         !S1PlanCheckTransactionId(&Plan))
     {
+        S1LogFlushDeferred();               /* a broken plan cannot be a swap: writes are fine */
         S1JournalLoad(&Journal, &ChainIntact);
         S1JournalOrHalt(&Journal, "unknown", "verify", -1, "failed", "0xC0000001");
         RtlFreeHeap(RtlGetProcessHeap(), 0, PlanData);
@@ -2110,6 +2204,7 @@ NtProcessStartup(
     {
         NTSTATUS Clean = S1CheckVolumeClean();
 
+        S1LogFlushDeferred();               /* the verdict is in: from here on writes are allowed */
         if (!NT_SUCCESS(Clean))
         {
             char Err[16];
@@ -2128,6 +2223,8 @@ NtProcessStartup(
             NtTerminateProcess(NtCurrentProcess(), 0);
         }
     }
+    else
+        S1LogFlushDeferred();               /* nothing to swap: no dirty check needed */
 
     /* 3. Trust root: the signed package manifest (never the plan). */
     Status = S1VerifyPlanAgainstManifest(&Plan);
