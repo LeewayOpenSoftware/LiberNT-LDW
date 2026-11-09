@@ -1099,15 +1099,15 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     return ERROR_SUCCESS;
 }
 
-/* "The previous kernel set is NOT running" gate plus a size sanity check. This is NOT an identity check
- * (B1 review N4, addendum 2b). SystemModuleInformation carries the real file path and SizeOfImage, not
- * TimeDateStamp/CheckSum, and an old and a new build of one kernel often have the same SizeOfImage. What it
- * does prove: no loaded module comes from a *.old file (freeldr keeps the real path in FullDllName while it
- * registers the alias as BaseDllName, so a fallback boot shows ntoskrnl.old / hal.old / bootvid.old), and the
- * module the alias names (load order 0 = kernel, 1 = HAL, bootvid by file name) has the SizeOfImage of the new
- * file. The on-disk hash of each target was already proven equal to the manifest by the caller. Known gap: "the
- * loaded new-named file IS the new build" needs SystemModuleInformationEx (class 77, kernel side, follow-up);
- * LnPeIdentity already extracts TimeDateStamp/CheckSum for that comparison. */
+/* Boot-class identity at confirm (B1 review N4). Three independent witnesses, all must hold:
+ *   1. no loaded module comes from a *.old file (freeldr keeps the real path in FullDllName while the alias is
+ *      the BaseDllName), and the load options name none (checked by the caller);
+ *   2. the on-disk target equals the manifest hash (checked by the caller);
+ *   3. the module the alias names (load order 0 = kernel, 1 = HAL, bootvid by file name) IS the new build:
+ *      SystemModuleInformationEx (class 77) gives its PE ImageCheckSum and TimeDateStamp, compared with
+ *      LnPeIdentity of the new file, plus SizeOfImage.
+ * A kernel without class 77 (STATUS_INVALID_INFO_CLASS) falls back to the size gate on class 11 alone, which is a
+ * "previous set not running" check and NOT an identity check; the fallback is logged. */
 typedef struct _LN_SYS_MODULE
 {
     PVOID Section;
@@ -1119,46 +1119,75 @@ typedef struct _LN_SYS_MODULE
     UCHAR FullPathName[256];
 } LN_SYS_MODULE;
 
-static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const LN_MANIFEST *m, char *why, size_t whyCch)
+typedef struct _LN_SYS_MODULE_EX
+{
+    ULONG NextOffset;
+    LN_SYS_MODULE Base;
+    ULONG ImageCheckSum;
+    ULONG TimeDateStamp;
+    PVOID DefaultBase;
+} LN_SYS_MODULE_EX;
+
+#define LN_STATUS_INVALID_INFO_CLASS ((LONG)0xC0000003L)
+
+/* Query a system information class into a growing buffer. Returns the NTSTATUS; *out is malloc'd on success. */
+static LONG QuerySystemInfoGrow(ULONG infoClass, BYTE **out, ULONG *outLen)
 {
     typedef LONG (NTAPI *PFN_QSI)(ULONG, PVOID, ULONG, PULONG);
     PFN_QSI qsi = (PFN_QSI)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation");
-    ULONG cb = 0, i;
+    ULONG cb = 0x10000, i;
     BYTE *buf = NULL;
-    LONG st;
-    ULONG count;
+    LONG st = (LONG)0xC0000001L;
+
+    *out = NULL;
+    if (!qsi)
+        return st;
+    for (i = 0; i < 6; i++)
+    {
+        ULONG got = 0;
+        BYTE *nb = (BYTE *)realloc(buf, cb);
+
+        if (!nb)
+        {
+            free(buf);
+            return (LONG)0xC0000017L;
+        }
+        buf = nb;
+        st = qsi(infoClass, buf, cb, &got);
+        if (st >= 0)
+        {
+            *out = buf;
+            *outLen = cb;
+            return st;
+        }
+        if (st != (LONG)0xC0000004L)            /* STATUS_INFO_LENGTH_MISMATCH: grow, anything else: stop */
+            break;
+        cb = (got > cb) ? got + 4096 : cb * 2;
+    }
+    free(buf);
+    return st;
+}
+
+static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const char *txid, const LN_MANIFEST *m, char *why, size_t whyCch)
+{
+    BYTE *buf = NULL, *bufx = NULL;
+    ULONG cb = 0, cbx = 0, count = 0, i;
     const LN_SYS_MODULE *mods;
+    const LN_SYS_MODULE_EX *exs[512];
+    ULONG nex = 0;
+    LONG st, stx;
     size_t k;
     DWORD result = ERROR_SUCCESS;
 
-    if (!qsi)
-    {
-        strcpy(why, "cannot query the loaded modules");
-        return LN_E_PRECONDITION;
-    }
-    for (i = 0; i < 4; i++)
-    {
-        cb = cb ? cb * 2 : 0x10000;
-        buf = (BYTE *)realloc(buf, cb);
-        if (!buf)
-            return ERROR_NOT_ENOUGH_MEMORY;
-        ULONG got = 0;
-
-        st = qsi(11 /* SystemModuleInformation */, buf, cb, &got);
-        if (st >= 0)
-            break;
-        if (got > cb)
-            cb = got;
-    }
+    st = QuerySystemInfoGrow(11 /* SystemModuleInformation */, &buf, &cb);
     if (st < 0)
     {
-        free(buf);
         strcpy(why, "cannot read the loaded module list");
         return LN_E_PRECONDITION;
     }
     count = *(ULONG *)buf;
     mods = (const LN_SYS_MODULE *)(buf + sizeof(PVOID));            /* RTL_PROCESS_MODULES: ULONG + padding */
-    if ((BYTE *)(mods + 0) + (size_t)count * sizeof(LN_SYS_MODULE) > buf + cb)
+    if ((BYTE *)mods + (size_t)count * sizeof(LN_SYS_MODULE) > buf + cb)
         count = (ULONG)((buf + cb - (BYTE *)mods) / sizeof(LN_SYS_MODULE));
 
     for (i = 0; i < count; i++)
@@ -1173,13 +1202,43 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const LN_MANIFEST *m, char *
             goto out;
         }
     }
+
+    stx = QuerySystemInfoGrow(77 /* SystemModuleInformationEx */, &bufx, &cbx);
+    if (stx >= 0)
+    {
+        const BYTE *p = bufx;
+
+        for (;;)
+        {
+            const LN_SYS_MODULE_EX *e = (const LN_SYS_MODULE_EX *)p;
+
+            if (p + sizeof(*e) > bufx + cbx || nex >= RTL_NUMBER_OF(exs))
+                break;
+            exs[nex++] = e;
+            if (!e->NextOffset)
+                break;
+            p += e->NextOffset;
+        }
+    }
+    else if (stx == LN_STATUS_INVALID_INFO_CLASS)
+    {
+        LogLine(t, txid, "confirm: SystemModuleInformationEx is not available on this kernel; only the size gate applies");
+    }
+    else
+    {
+        strcpy(why, "cannot read the extended loaded module list");
+        result = LN_E_PRECONDITION;
+        goto out;
+    }
+
     for (k = 0; k < m->itemCount; k++)
     {
         WCHAR *tp;
         BYTE hdr[1024];
         DWORD got = 0, size = 0, sum = 0, ts = 0;
         HANDLE h;
-        BOOL found = FALSE;
+        ULONG idx = (ULONG)-1;
+        const WCHAR *base;
 
         if (!m->items[k].bootClass)
             continue;
@@ -1202,39 +1261,44 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const LN_MANIFEST *m, char *
             goto out;
         }
         CloseHandle(h);
+
+        /* only the module the alias names: kernel = load order 0, HAL = 1, bootvid by file name */
+        base = wcsrchr(m->items[k].target, L'\\');
+        base = base ? base + 1 : m->items[k].target;
+        if (!_wcsnicmp(base, L"nt", 2))
+            idx = 0;
+        else if (!_wcsnicmp(base, L"hal", 3))
+            idx = 1;
+        else if (!_wcsicmp(base, L"bootvid.dll"))
         {
-            /* only the module the alias names: kernel = load order 0, HAL = 1, bootvid by file name */
-            const WCHAR *base = wcsrchr(m->items[k].target, L'\\');
-            ULONG idx = (ULONG)-1;
-
-            base = base ? base + 1 : m->items[k].target;
-            if (!_wcsnicmp(base, L"nt", 2))
-                idx = 0;
-            else if (!_wcsnicmp(base, L"hal", 3))
-                idx = 1;
-            else if (!_wcsicmp(base, L"bootvid.dll"))
+            for (i = 0; i < count; i++)
             {
-                for (i = 0; i < count; i++)
-                {
-                    const char *p = (const char *)mods[i].FullPathName + mods[i].OffsetToFileName;
+                const char *p = (const char *)mods[i].FullPathName + mods[i].OffsetToFileName;
 
-                    if (!_stricmp(p, "bootvid.dll"))
-                        idx = i;
-                }
+                if (!_stricmp(p, "bootvid.dll"))
+                    idx = i;
             }
-            if (idx < count && mods[idx].ImageSize == size)
-                found = TRUE;
         }
-        if (!found)
+        if (idx >= count || mods[idx].ImageSize != size)
         {
             strcpy(why, "the module the alias names does not have the SizeOfImage of the new file");
             result = LN_E_PRECONDITION;
             goto out;
         }
+        if (stx >= 0)
+        {
+            if (idx >= nex || exs[idx]->TimeDateStamp != ts || exs[idx]->ImageCheckSum != sum)
+            {
+                strcpy(why, "the loaded module's TimeDateStamp/CheckSum differ from the new file: not the new build");
+                result = LN_E_PRECONDITION;
+                goto out;
+            }
+        }
     }
 out:
     (void)whyCch;
     free(buf);
+    free(bufx);
     return result;
 }
 
@@ -1766,7 +1830,7 @@ DWORD LnServicingConfirmHealth(const LN_TARGET *t, const char *packageId, const 
             char idwhy[160];
 
             idwhy[0] = 0;
-            if (BootLoadedSetIsNew(t, &c.m, idwhy, sizeof(idwhy)) != ERROR_SUCCESS)
+            if (BootLoadedSetIsNew(t, c.txid, &c.m, idwhy, sizeof(idwhy)) != ERROR_SUCCESS)
             {
                 LogLine(t, c.txid, idwhy[0] ? idwhy : "confirm refused: cannot verify the loaded kernel set");
                 why = "confirm refused: the loaded kernel set is not the new one";
