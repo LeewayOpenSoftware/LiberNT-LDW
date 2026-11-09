@@ -1570,6 +1570,21 @@ S1SwapRevert(
     return S1SwapInstall(OldPath, TargetW, Op->OriginalSha256);
 }
 
+/* B2: pending\bootstate is read by freeldr (read-only FS code) to decide whether a boot-try counter in CMOS
+ * means "the new set already failed once". ARMED right before the reboot into the new set, CLEAR when the
+ * transaction is confirmed (libservicing) or rolled back (here). Best effort: with no CMOS byte configured in
+ * freeldr.ini, or on EFI, the file is simply ignored and B1 behaviour applies. */
+static VOID
+S1WriteBootState(_In_ PCSTR Text)
+{
+    WCHAR Path[MAX_PATH * 2];
+
+    if (swprintf(Path, RTL_NUMBER_OF(Path), L"%s\\pending\\bootstate", g_ServicingRoot) < 0)
+        return;
+    if (NT_SUCCESS(S1WriteFileDirect(Path, (PVOID)Text, (ULONG)strlen(Text))))
+        S1VolumeFlush();
+}
+
 static VOID
 S1RebootNow(VOID)
 {
@@ -1946,6 +1961,7 @@ NtProcessStartup(
             }
         }
         S1JournalOrHalt(&Journal, Plan.TransactionId, "rolled-back", -1, "ok", NULL);
+        S1WriteBootState("CLEAR\n");
         Attempt.Attempt = 0;
         Attempt.FailureRecorded = S1_FALSE;
         snprintf(Attempt.LastResult, sizeof(Attempt.LastResult), "%s", "none");
@@ -2065,6 +2081,7 @@ NtProcessStartup(
         snprintf(Attempt.LastResult, sizeof(Attempt.LastResult), "%s", "swapped");
         S1AttemptSave(&Attempt);
         S1Log(L"S1: swapped");
+        S1WriteBootState("ARMED\n");
         S1RebootNow();
         NtTerminateProcess(NtCurrentProcess(), 0);
     }

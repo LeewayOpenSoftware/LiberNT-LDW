@@ -213,7 +213,20 @@ DWORD LnAttemptSetHealth(const LN_TARGET *t, const char *transactionId)
     cur.failureRecorded = FALSE;
     cur.attempt = 0;
     strcpy(cur.lastResult, "applied");
-    return WriteAttempt(t, &cur);
+    err = WriteAttempt(t, &cur);
+    if (!err)
+    {
+        /* B2: tell the boot loader the new set is confirmed, so its boot-try counter is cleared on the next
+         * boot (S1-B2-FREELDR-BOOTTRY.md). Harmless when no boot-class transaction armed it. */
+        WCHAR *bs = LnTargetPath(t, L"pending\\bootstate");
+
+        if (bs)
+        {
+            LnWriteFileAtomic(bs, "CLEAR\n", 6);
+            free(bs);
+        }
+    }
+    return err;
 }
 
 /* The plan is a convenience for the boot applier, not an authority: it must be exactly what the signed
