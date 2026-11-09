@@ -185,6 +185,26 @@ static void TestPaths(void)
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\drivers\\lnfix.sys", 0));                   /* boot-start */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\drivers\\lnfix.sys", 1));                   /* system-start */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\lnfix.sys", 3));                            /* not under drivers\ */
+    /* boot class: the kernel, HAL, ntdll and early drivers are admitted only by the boot-class check */
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\ntoskrnl.exe", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\ntkrnlmp.exe", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\hal.dll", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\halmacpi.dll", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\bootvid.dll", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", -1));               /* a driver declares Start */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", 0));                        /* Start only for a .sys */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\config\\SYSTEM", -1));                  /* hives never */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\freeldr.sys", -1));                     /* loader never */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\notepad.exe", -1));                     /* user component: not boot class */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\LiberNTUpdatePending.exe", -1));        /* the updater itself */
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\hal.dll") == 1);
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\drivers\\ntfs.sys") == 2);
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\ntdll.dll") == 3);
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\notepad.exe") == 0);
+    CHECK(!LnTargetItemAllowed(L"Windows\\System32\\ntdll.dll", -1));                           /* the user route still refuses it */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\a.dll", 3));                                /* Start only for a .sys */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\drivers\\win32k.sys", 3));
 }

@@ -140,9 +140,25 @@ DWORD LnManifestParse(const char *text, size_t len, LN_MANIFEST *m)
                 item->driverStart = (int)ds;
             }
         }
+        {
+            const char *cls = LnJsonGetString(it, "class");
+
+            item->bootClass = FALSE;
+            if (cls)
+            {
+                if (!strcmp(cls, "boot"))
+                    item->bootClass = TRUE;
+                else if (strcmp(cls, "user"))
+                    goto bad;
+            }
+        }
         item->target = LnUtf8ToWide(target);
         m->itemCount++;                                 /* owned from here, freed on failure */
-        if (!item->target || !LnTargetItemAllowed(item->target, item->driverStart))
+        if (item->bootClass && item->isDelete)
+            goto bad;                                   /* the boot route only swaps existing files */
+        if (!item->target ||
+            !(item->bootClass ? LnTargetBootItemAllowed(item->target, item->driverStart)
+                              : LnTargetItemAllowed(item->target, item->driverStart)))
         {
             err = LN_E_FORBIDDEN_TARGET;
             goto fail;
@@ -167,6 +183,48 @@ DWORD LnManifestParse(const char *text, size_t len, LN_MANIFEST *m)
         {
             if (!_wcsicmp(m->items[i].target, m->items[j].target))
                 goto bad;
+        }
+    }
+    /* boot-class rules (S1-BOOT-CLASS-DESIGN.md section 2): one group per package, so a failure is attributable
+     * and only the kernel trio (which has a loader fallback) is swapped together; the kernel, HAL and bootvid
+     * are all-or-none because their import graph is version-coupled. */
+    {
+        int group = 0;
+        BOOL hasKernel = FALSE, hasHal = FALSE, hasBootvid = FALSE;
+
+        for (i = 0; i < m->itemCount; i++)
+        {
+            const LN_ITEM *it2 = &m->items[i];
+            int g;
+            const WCHAR *base;
+
+            if (!it2->bootClass)
+                continue;
+            g = LnTargetBootGroup(it2->target);
+            if (!g || (group && group != g))
+                goto bad;
+            group = g;
+            base = wcsrchr(it2->target, L'\\');
+            base = base ? base + 1 : it2->target;
+            if (!_wcsnicmp(base, L"ntoskrnl", 8) || !_wcsnicmp(base, L"ntkrnl", 6) || !_wcsnicmp(base, L"ntkrpamp", 8))
+                hasKernel = TRUE;
+            else if (!_wcsnicmp(base, L"hal", 3))
+                hasHal = TRUE;
+            else if (!_wcsicmp(base, L"bootvid.dll"))
+                hasBootvid = TRUE;
+        }
+        if (group == 1 && !(hasKernel && hasHal && hasBootvid))
+            goto bad;                                   /* the trio is atomic (BOOT-FALLBACK.md) */
+        if (group != 1 && (hasKernel || hasHal || hasBootvid))
+            goto bad;
+        if (group)
+        {
+            /* a boot package carries only boot-class items: keep the transaction attributable */
+            for (i = 0; i < m->itemCount; i++)
+            {
+                if (!m->items[i].bootClass)
+                    goto bad;
+            }
         }
     }
     LnJsonFree(root);

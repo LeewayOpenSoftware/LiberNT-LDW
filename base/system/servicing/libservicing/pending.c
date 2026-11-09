@@ -262,7 +262,8 @@ DWORD LnServicingValidatePlan(const LN_TARGET *t, const char *planJson)
         BOOL found = FALSE;
         size_t i;
 
-        if (!type || !sha || !source || !wt || (strcmp(type, "replace-file") && strcmp(type, "add-file")))
+        if (!type || !sha || !source || !wt ||
+            (strcmp(type, "replace-file") && strcmp(type, "add-file") && strcmp(type, "swap-file")))
         {
             free(wt);
             goto outm;
@@ -277,8 +278,8 @@ DWORD LnServicingValidatePlan(const LN_TARGET *t, const char *planJson)
         free(wt);
         if (!found || strcmp(source, want))
             goto outm;
-        if ((!strcmp(type, "replace-file")) != (backup && backup->type == LnJsonString))
-            goto outm;                                  /* replace-file has a backup, add-file has none */
+        if ((!strcmp(type, "replace-file") || !strcmp(type, "swap-file")) != (backup && backup->type == LnJsonString))
+            goto outm;                         /* replace-file and swap-file have a backup, add-file has none */
     }
     err = ERROR_SUCCESS;
 outm:

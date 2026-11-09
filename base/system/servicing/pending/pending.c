@@ -364,8 +364,10 @@ S1WriteFileDirect(
     return Status;
 }
 
+/* A real rename only: no copy fallback. The boot-class swap relies on a rename being a single logged NTFS
+ * metadata operation (S1-BOOT-CLASS-DESIGN.md section 6); a copy+delete would leave a torn kernel. */
 static NTSTATUS
-S1MoveFileEx(
+S1RenameStrict(
     _In_ PCWSTR Source,
     _In_ PCWSTR Target,
     _In_ BOOLEAN ReplaceIfExists)
@@ -399,6 +401,19 @@ S1MoveFileEx(
                                   FileRenameInformation);
     RtlFreeHeap(RtlGetProcessHeap(), 0, Rename);
     NtClose(Handle);
+    return Status;
+}
+
+static NTSTATUS
+S1MoveFileEx(
+    _In_ PCWSTR Source,
+    _In_ PCWSTR Target,
+    _In_ BOOLEAN ReplaceIfExists)
+{
+    HANDLE Handle;
+    NTSTATUS Status = S1RenameStrict(Source, Target, ReplaceIfExists);
+    IO_STATUS_BLOCK IoStatus;
+
     if (Status == STATUS_ACCESS_DENIED)
     {
         /* The BootExecute context can hold file rights without directory
@@ -1248,6 +1263,238 @@ S1BuildBackupPath(
     return STATUS_SUCCESS;
 }
 
+/* ------------------------------------------------------- boot class: swap
+ * S1-BOOT-CLASS-DESIGN.md. Per file X: X.old is the verified pre-image (extension replaced, as the freeldr
+ * LiberNT_Fallback entry names it: ntoskrnl.old, hal.old, bootvid.old), X.new the staged copy, X.pre the
+ * displaced file during the two-rename swap. Every state is decided by hashes, never by order, so a boot
+ * after a power cut resolves each op the same way whichever entry booted. */
+
+static ULONG g_SwapWork = 0;    /* swap ops that really changed a file in this run */
+
+static BOOLEAN
+S1FileExists(_In_ PCWSTR Path)
+{
+    HANDLE Probe;
+
+    if (!NT_SUCCESS(S1NtOpen(Path, FILE_READ_DATA, FILE_OPEN, &Probe)))
+        return FALSE;
+    NtClose(Probe);
+    return TRUE;
+}
+
+static VOID
+S1DeleteQuiet(_In_ PCWSTR Path)
+{
+    HANDLE Handle;
+
+    if (NT_SUCCESS(S1NtOpen(Path, DELETE, FILE_OPEN, &Handle)))
+    {
+        FILE_DISPOSITION_INFORMATION DeleteInfo;
+        IO_STATUS_BLOCK IoStatus;
+
+        DeleteInfo.DeleteFile = TRUE;
+        NtSetInformationFile(Handle, &IoStatus, &DeleteInfo, sizeof(DeleteInfo), FileDispositionInformation);
+        NtClose(Handle);
+    }
+}
+
+/* 1 = the file hashes to Want, 0 = it exists but differs, -1 = absent or unreadable */
+static int
+S1HashIs(_In_ PCWSTR Path, _In_ const uint8_t Want[S1_SHA256_SIZE])
+{
+    uint8_t Actual[S1_SHA256_SIZE];
+
+    if (!S1FileExists(Path) || !NT_SUCCESS(S1HashFile(Path, Actual)))
+        return -1;
+    return memcmp(Actual, Want, S1_SHA256_SIZE) == 0 ? 1 : 0;
+}
+
+static NTSTATUS
+S1SwapSidePath(
+    _In_ PCWSTR Target,
+    _In_ PCWSTR Suffix,
+    _In_ BOOLEAN ReplaceExtension,
+    _Out_ PWSTR Out,
+    _In_ size_t OutCch)
+{
+    PCWSTR Slash = wcsrchr(Target, L'\\');
+    PCWSTR Dot = wcsrchr(Target, L'.');
+    size_t Keep = wcslen(Target);
+
+    if (ReplaceExtension && Dot && (!Slash || Dot > Slash))
+        Keep = (size_t)(Dot - Target);
+    if (Keep + wcslen(Suffix) + 1 > OutCch)
+        return STATUS_INVALID_PARAMETER;
+    memcpy(Out, Target, Keep * sizeof(WCHAR));
+    wcscpy(Out + Keep, Suffix);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+S1CopyFileVerified(
+    _In_ PCWSTR Source,
+    _In_ PCWSTR Target,
+    _In_ const uint8_t Want[S1_SHA256_SIZE])
+{
+    PVOID Data;
+    ULONG Size;
+    NTSTATUS Status = S1ReadWholeFile(Source, &Data, &Size);
+
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = S1WriteFileDirect(Target, Data, Size);
+    RtlFreeHeap(RtlGetProcessHeap(), 0, Data);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    if (S1HashIs(Target, Want) != 1)
+    {
+        S1DeleteQuiet(Target);
+        return STATUS_S1_HASH_MISMATCH;
+    }
+    return STATUS_SUCCESS;
+}
+
+/* Stage Source as TargetW.new (hash verified), then displace the target and rename the staged file in.
+ * The target never holds a partial file: it is either the old file or the complete new one, and a renamed-away
+ * target is restored if the second rename fails. */
+static NTSTATUS
+S1SwapInstall(
+    _In_ PCWSTR Source,
+    _In_ PCWSTR TargetW,
+    _In_ const uint8_t Want[S1_SHA256_SIZE])
+{
+    WCHAR NewPath[MAX_PATH * 2], PrePath[MAX_PATH * 2];
+    NTSTATUS Status;
+
+    Status = S1SwapSidePath(TargetW, L".new", FALSE, NewPath, RTL_NUMBER_OF(NewPath));
+    if (NT_SUCCESS(Status))
+        Status = S1SwapSidePath(TargetW, L".pre", FALSE, PrePath, RTL_NUMBER_OF(PrePath));
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    S1DeleteQuiet(NewPath);
+    Status = S1CopyFileVerified(Source, NewPath, Want);
+    if (!NT_SUCCESS(Status))
+    {
+        S1DeleteQuiet(NewPath);
+        return Status;
+    }
+    S1DeleteQuiet(PrePath);
+    if (S1FileExists(TargetW))
+    {
+        Status = S1RenameStrict(TargetW, PrePath, FALSE);
+        if (!NT_SUCCESS(Status))
+        {
+            S1DeleteQuiet(NewPath);
+            return Status;
+        }
+    }
+    Status = S1RenameStrict(NewPath, TargetW, FALSE);
+    if (!NT_SUCCESS(Status))
+    {
+        if (S1FileExists(PrePath))
+            S1RenameStrict(PrePath, TargetW, TRUE);
+        S1DeleteQuiet(NewPath);
+        return Status;
+    }
+    if (S1HashIs(TargetW, Want) != 1)
+        return STATUS_S1_HASH_MISMATCH;     /* the caller reverts from X.old */
+    S1DeleteQuiet(PrePath);                 /* best effort: a mapped, renamed image cannot be deleted yet */
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+S1SwapApply(
+    _In_ const S1_PLAN_OP *Op,
+    _In_ PCWSTR ObjectPath,
+    _In_ PCWSTR TargetW)
+{
+    WCHAR OldPath[MAX_PATH * 2], NewPath[MAX_PATH * 2], PrePath[MAX_PATH * 2];
+    NTSTATUS Status;
+    int Now = S1HashIs(TargetW, Op->ExpectedSha256);
+
+    if (Now == 1)
+        return STATUS_SUCCESS;              /* already in place (second boot, or a resumed swap) */
+
+    Status = S1SwapSidePath(TargetW, L".old", TRUE, OldPath, RTL_NUMBER_OF(OldPath));
+    if (NT_SUCCESS(Status))
+        Status = S1SwapSidePath(TargetW, L".new", FALSE, NewPath, RTL_NUMBER_OF(NewPath));
+    if (NT_SUCCESS(Status))
+        Status = S1SwapSidePath(TargetW, L".pre", FALSE, PrePath, RTL_NUMBER_OF(PrePath));
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    if (!S1FileExists(TargetW))
+    {
+        /* a swap that was interrupted between its two renames */
+        if (S1HashIs(NewPath, Op->ExpectedSha256) == 1)
+        {
+            Status = S1RenameStrict(NewPath, TargetW, FALSE);
+            if (NT_SUCCESS(Status) && S1HashIs(TargetW, Op->ExpectedSha256) == 1)
+            {
+                g_SwapWork++;
+                return STATUS_SUCCESS;
+            }
+            return NT_SUCCESS(Status) ? STATUS_S1_HASH_MISMATCH : Status;
+        }
+        if (S1HashIs(PrePath, Op->OriginalSha256) == 1)
+        {
+            Status = S1RenameStrict(PrePath, TargetW, FALSE);
+            if (!NT_SUCCESS(Status))
+                return Status;
+        }
+        else if (S1HashIs(OldPath, Op->OriginalSha256) != 1)
+            return STATUS_S1_HASH_MISMATCH; /* nothing to go back to: fail closed */
+    }
+    else if (S1HashIs(TargetW, Op->OriginalSha256) != 1)
+        return STATUS_S1_HASH_MISMATCH;     /* the target drifted from what the plan recorded */
+
+    /* Pre-image first: X.old must be complete and verified before X is touched, so the Fallback entry is valid
+     * at every later instant. One generation only. */
+    if (S1FileExists(TargetW) && S1HashIs(OldPath, Op->OriginalSha256) != 1)
+    {
+        Status = S1CopyFileVerified(TargetW, OldPath, Op->OriginalSha256);
+        if (!NT_SUCCESS(Status))
+            return Status;
+    }
+    Status = S1SwapInstall(ObjectPath, TargetW, Op->ExpectedSha256);
+    if (NT_SUCCESS(Status))
+        g_SwapWork++;
+    return Status;
+}
+
+static NTSTATUS
+S1SwapRevert(
+    _In_ const S1_PLAN_OP *Op,
+    _In_ PCWSTR TargetW)
+{
+    WCHAR OldPath[MAX_PATH * 2];
+    NTSTATUS Status;
+
+    if (S1HashIs(TargetW, Op->OriginalSha256) == 1)
+        return STATUS_SUCCESS;              /* nothing was swapped, or it is already back */
+    Status = S1SwapSidePath(TargetW, L".old", TRUE, OldPath, RTL_NUMBER_OF(OldPath));
+    if (!NT_SUCCESS(Status))
+        return Status;
+    if (S1HashIs(OldPath, Op->OriginalSha256) != 1)
+        return STATUS_S1_HASH_MISMATCH;     /* fail closed: never restore an unverified pre-image */
+    return S1SwapInstall(OldPath, TargetW, Op->OriginalSha256);
+}
+
+static VOID
+S1RebootNow(VOID)
+{
+#ifndef S1_HOST_APPLIER
+    BOOLEAN Was;
+
+    S1Log(L"S1: boot-class change, rebooting into the new set");
+    RtlAdjustPrivilege(19 /* SE_SHUTDOWN_PRIVILEGE */, TRUE, FALSE, &Was);
+    NtShutdownSystem(ShutdownReboot);
+#else
+    S1Log(L"S1: (host) boot-class change, reboot requested");
+#endif
+}
+
 static NTSTATUS
 S1ApplyOperation(
     _In_ const S1_PLAN *Plan,
@@ -1274,6 +1521,8 @@ S1ApplyOperation(
     Status = S1BuildObjectPath(Op, ObjectPath, MAX_PATH * 2);
     if (!NT_SUCCESS(Status))
         return Status;
+    if (Op->Type == S1_OP_SWAP_FILE)
+        return S1SwapApply(Op, ObjectPath, TargetW);
     Status = S1BuildBackupPath(Plan, Op, BackupPath, MAX_PATH * 2);
     if (!NT_SUCCESS(Status))
         return Status;
@@ -1392,6 +1641,8 @@ S1RevertOperation(
                      g_VolumeRoot, TargetW) > 0)
             wcscpy(TargetW, FullTarget);
     }
+    if (Op->Type == S1_OP_SWAP_FILE)
+        return S1SwapRevert(Op, TargetW);
     Status = S1BuildBackupPath(Plan, Op, BackupPath, MAX_PATH * 2);
     if (!NT_SUCCESS(Status))
         return Status;
@@ -1638,6 +1889,17 @@ NtProcessStartup(
                 }
             }
         }
+        {
+            BOOLEAN HadSwap = FALSE;
+
+            for (i = 0; i < Plan.OperationCount; i++)
+            {
+                if (Plan.Operations[i].Type == S1_OP_SWAP_FILE)
+                    HadSwap = TRUE;
+            }
+            if (HadSwap)
+                S1RebootNow();          /* the old set is back on disk; boot it */
+        }
         NtTerminateProcess(NtCurrentProcess(), 0);
     }
 
@@ -1701,6 +1963,21 @@ NtProcessStartup(
         }
         S1JournalOrHalt(&Journal, Plan.TransactionId, "applying",
                         (int)Plan.Operations[i].Seq, "ok", NULL);
+    }
+
+    /* 6b. Boot class: the files used by THIS boot were swapped on disk, so the new set only runs after a
+     * reboot. Record pending-first-boot, restart the attempt count (the next boot is the first boot of the new
+     * set, and two unconfirmed boots must not already count this one), and reboot before logon. */
+    if (g_SwapWork != 0)
+    {
+        S1JournalOrHalt(&Journal, Plan.TransactionId, "pending-first-boot", -1, "ok", NULL);
+        Attempt.Attempt = 0;
+        Attempt.FailureRecorded = S1_FALSE;
+        snprintf(Attempt.LastResult, sizeof(Attempt.LastResult), "%s", "swapped");
+        S1AttemptSave(&Attempt);
+        S1Log(L"S1: swapped");
+        S1RebootNow();
+        NtTerminateProcess(NtCurrentProcess(), 0);
     }
 
     /* 7. Applied, not confirmed: confirmation requires the service health

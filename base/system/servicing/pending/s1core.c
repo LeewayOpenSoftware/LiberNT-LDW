@@ -845,6 +845,7 @@ S1PlanParse(const char *Text, size_t Length, S1_PLAN *Plan)
         {
             { "replace-file", S1_OP_REPLACE_FILE },
             { "add-file", S1_OP_ADD_FILE },
+            { "swap-file", S1_OP_SWAP_FILE },
         };
         size_t t;
         S1Bool TypeOk = S1_FALSE;
@@ -883,7 +884,7 @@ S1PlanParse(const char *Text, size_t Length, S1_PLAN *Plan)
          * fail closed): the rollback re-hashes the backup against it, and
          * a plan that drops or mismatches it must be refused, never
          * silently restored. add-file has no backup and carries none. */
-        if (Op->Type == S1_OP_REPLACE_FILE)
+        if (Op->Type == S1_OP_REPLACE_FILE || Op->Type == S1_OP_SWAP_FILE)
         {
             snprintf(Path, sizeof(Path), "operations.%lu.originalSha256", (unsigned long)i);
             if (!S1JsonGetString(Root, Path, &S, &SL) || SL != S1_SHA256_SIZE * 2 ||

@@ -79,6 +79,7 @@ typedef enum _S1_OP_TYPE
 {
     S1_OP_REPLACE_FILE,
     S1_OP_ADD_FILE,
+    S1_OP_SWAP_FILE,      /* boot class: X.new staged, X.old kept, rename swap, reboot into the new set */
     S1_OP_UNSUPPORTED
 } S1_OP_TYPE;
 

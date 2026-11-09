@@ -139,6 +139,13 @@ WCHAR *LnTargetFile(const LN_TARGET *t, const WCHAR *relInRoot);            /* f
  * for anything that is not a driver. The kernel, the HAL and boot-start/system-start drivers are refused. */
 BOOL LnTargetItemAllowed(const WCHAR *relInRoot, int driverStart);
 BOOL LnTargetPathAllowed(const WCHAR *relInRoot);                          /* LnTargetItemAllowed(rel, -1) */
+/* Boot-class route (owner directive 2026-11-08, stage-1 condition 5 lifted): the kernel, HAL, bootvid, kdcom,
+ * ntdll, win32k*, the critical processes and drivers (driverStart 0..4, REQUIRED for a .sys) may be replaced,
+ * but only by items that declare "class":"boot" in the signed manifest. The hives, System32\boot, LiberNT\
+ * and the loader files stay refused. Group: 1 = kernel trio + kdcom, 2 = drivers, 3 = ntdll, win32k* and the
+ * critical processes; 0 = not a boot-class target. */
+BOOL LnTargetBootItemAllowed(const WCHAR *relInRoot, int driverStart);
+int LnTargetBootGroup(const WCHAR *relInRoot);
 /* Parents must not be reparse points, and the real path must equal the lexical one (8.3, junctions). */
 DWORD LnTargetValidateReal(const LN_TARGET *t, const WCHAR *relInRoot);
 
@@ -147,7 +154,8 @@ typedef struct _LN_ITEM
 {
     WCHAR *path;                  /* inside payload\  (NULL for delete) */
     WCHAR *target;                /* inside the target root */
-    int driverStart;              /* Start value declared for a .sys (2..4), -1 otherwise */
+    int driverStart;              /* Start value declared for a .sys (2..4; 0..4 for a boot-class item), -1 otherwise */
+    BOOL bootClass;               /* "class":"boot": swapped in by the boot applier, never applied inline */
     char sha256[65];              /* of the new content ("" for delete) */
     BOOL isDelete;
 } LN_ITEM;

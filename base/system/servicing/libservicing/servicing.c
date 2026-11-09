@@ -667,6 +667,20 @@ static DWORD ApplyItem(const CTX *c, const LN_ITEM *it, BOOL *pending)
     if (!strcmp(cur, it->sha256))
         goto verify;                                    /* already in place (resumed transaction) */
 
+    /* boot class: never applied inline. The boot applier stages X.new beside the target, keeps the previous
+     * file as X.old and swaps by rename, then reboots into the new set (S1-BOOT-CLASS-DESIGN.md). It can only
+     * swap a file that exists. */
+    if (it->bootClass)
+    {
+        if (!cur[0])
+        {
+            err = LN_E_PRECONDITION;
+            goto out;
+        }
+        *pending = TRUE;
+        goto out;
+    }
+
     /* only an existing file can be a mapped image: a brand-new file (add-file) applies inline */
     if ((c->t->mode == LnTargetOnline || TEST_LOCKED_AS_PENDING) && cur[0] && IsUnderSystemDir(it->target))
     {
@@ -1115,7 +1129,8 @@ static DWORD WritePlan(const CTX *c, const BOOL *pending)
 
         err |= LnBufAppendStr(&b, "{\"seq\":");
         err |= LnBufAppendStr(&b, idx);
-        err |= LnBufAppendStr(&b, oldSha[0] ? ",\"type\":\"replace-file\"" : ",\"type\":\"add-file\"");
+        err |= LnBufAppendStr(&b, it->bootClass ? ",\"type\":\"swap-file\""
+                                                : (oldSha[0] ? ",\"type\":\"replace-file\"" : ",\"type\":\"add-file\""));
         err |= LnBufAppendStr(&b, ",\"component\":");
         err |= LnBufAppendJsonString(&b, c->m.packageId);
         err |= LnBufAppendStr(&b, ",\"version\":");

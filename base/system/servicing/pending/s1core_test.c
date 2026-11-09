@@ -161,6 +161,24 @@ TestPlanAndSignature(const char *FixtureDir)
         CHECK(S1PlanParse(AddNoOriginal, sizeof(AddNoOriginal) - 1, &Plan),
               "add-file without originalSha256 accepted (no backup)");
     }
+    {
+        static const char SwapNoOriginal[] =
+            "{\"schema\":1,\"transactionId\":\"t\",\"target\":{\"machineId\":\"m\",\"arch\":\"a\"},"
+            "\"package\":{\"id\":\"p\",\"version\":\"v\",\"digest\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+            "\"operation\":\"install\",\"operations\":[{\"seq\":1,\"type\":\"swap-file\","
+            "\"component\":\"c\",\"source\":\"s\",\"target\":\"t\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"}]}";
+        static const char SwapOk[] =
+            "{\"schema\":1,\"transactionId\":\"t\",\"target\":{\"machineId\":\"m\",\"arch\":\"a\"},"
+            "\"package\":{\"id\":\"p\",\"version\":\"v\",\"digest\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+            "\"operation\":\"install\",\"operations\":[{\"seq\":1,\"type\":\"swap-file\","
+            "\"component\":\"c\",\"source\":\"s\",\"target\":\"t\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
+            "\"originalSha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"}]}";
+        CHECK(!S1PlanParse(SwapNoOriginal, sizeof(SwapNoOriginal) - 1, &Plan),
+              "swap-file without originalSha256 rejected (the pre-image must be verifiable)");
+        CHECK(S1PlanParse(SwapOk, sizeof(SwapOk) - 1, &Plan) && Plan.Operations[0].Type == S1_OP_SWAP_FILE &&
+              Plan.Operations[0].HasOriginal == S1_TRUE,
+              "swap-file with originalSha256 accepted as S1_OP_SWAP_FILE");
+    }
     free(PlanText);
     free(Sig);
     return 0;

@@ -100,6 +100,82 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
     return !_wcsicmp(ext, L".dll") || !_wcsicmp(ext, L".exe");
 }
 
+/* ---- boot class ------------------------------------------------------------------------------ */
+
+static BOOL BootBaseIs(const WCHAR *base, const WCHAR *const *names, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++)
+    {
+        if (!_wcsicmp(base, names[i]))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+int LnTargetBootGroup(const WCHAR *rel)
+{
+    static const WCHAR *kernel[] = { L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe",
+                                     L"bootvid.dll", L"kdcom.dll" };
+    static const WCHAR *critical[] = { L"ntdll.dll", L"smss.exe", L"csrss.exe", L"wininit.exe", L"winlogon.exe",
+                                       L"services.exe", L"lsass.exe", L"ci.dll", L"win32k.sys", L"win32kbase.sys",
+                                       L"win32kfull.sys" };
+    const WCHAR *base = wcsrchr(rel, L'\\');
+    size_t bl;
+
+    base = base ? base + 1 : rel;
+    bl = wcslen(base);
+    if (!StartsWithNoCase(rel, L"Windows\\System32\\"))
+        return 0;
+    if (BootBaseIs(base, kernel, RTL_NUMBER_OF(kernel)) ||
+        (!_wcsnicmp(base, L"hal", 3) && bl > 4 && !_wcsicmp(base + bl - 4, L".dll")))
+        return 1;
+    if (BootBaseIs(base, critical, RTL_NUMBER_OF(critical)))
+        return 3;
+    if (bl > 4 && !_wcsicmp(base + bl - 4, L".sys") && StartsWithNoCase(rel, L"Windows\\System32\\drivers\\"))
+        return 2;
+    return 0;
+}
+
+BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)
+{
+    static const WCHAR *deniedPrefix[] =
+    {
+        L"Windows\\System32\\config\\", L"Windows\\System32\\boot\\", L"LiberNT\\"
+    };
+    /* loader files and the updater's own binaries are never replaced by this route */
+    static const WCHAR *deniedName[] =
+    {
+        L"ntldr", L"bootmgr", L"freeldr.sys", L"freeldr.ini", L"rosload.exe", L"autochk.exe",
+        L"LiberNTUpdatePending.exe", L"libernt-update.exe"
+    };
+    size_t i;
+    int group;
+    const WCHAR *base;
+
+    if (!LnIsSafeRelativePath(rel))
+        return FALSE;
+    for (i = 0; i < RTL_NUMBER_OF(deniedPrefix); i++)
+    {
+        if (StartsWithNoCase(rel, deniedPrefix[i]))
+            return FALSE;
+    }
+    base = wcsrchr(rel, L'\\');
+    base = base ? base + 1 : rel;
+    for (i = 0; i < RTL_NUMBER_OF(deniedName); i++)
+    {
+        if (!_wcsicmp(base, deniedName[i]))
+            return FALSE;
+    }
+    group = LnTargetBootGroup(rel);
+    if (!group)
+        return FALSE;
+    if (group == 2)
+        return driverStart >= 0 && driverStart <= 4;    /* a driver must declare its Start in the signed manifest */
+    return driverStart == -1;                           /* win32k*.sys is a kernel module, not a service */
+}
+
 BOOL LnTargetPathAllowed(const WCHAR *rel)
 {
     return LnTargetItemAllowed(rel, -1);
