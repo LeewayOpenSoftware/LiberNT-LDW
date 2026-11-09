@@ -689,7 +689,12 @@ NtfsOpenNamedDataStream(
                         Disposition == FILE_OVERWRITE ||
                         Disposition == FILE_OVERWRITE_IF;
     NTSTATUS Status;
+#if DBG
+    /* The mapped-file check below was made while MainResource was held. */
+    BOOLEAN TruncationCheckedUnderMain = FALSE;
+#endif
 
+    NTFS_ASSERT_IRQL_APC();
     *Created = FALSE;
     *Overwritten = FALSE;
     KeEnterCriticalRegion();
@@ -706,6 +711,10 @@ NtfsOpenNamedDataStream(
             Status = STATUS_USER_MAPPED_FILE;
             goto Done;
         }
+#if DBG
+        NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+        TruncationCheckedUnderMain = TRUE;
+#endif
         if (FileObject->SectionObjectPointer->SharedCacheMap)
         {
             CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, &FlushStatus);
@@ -797,6 +806,13 @@ NtfsOpenNamedDataStream(
         }
         else
         {
+            /* P3: the stream is emptied only after the section check was
+             * repeated under MainResource, which is still held, and with the
+             * paging resource and the metadata lock held after it. */
+            ASSERT(!Overwrite || TruncationCheckedUnderMain);
+            NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_METADATA_HELD(VolCB);
             Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, TypeData,
                                                    FileCB->RequestedStream, 0);
             *Overwritten = NT_SUCCESS(Status);
