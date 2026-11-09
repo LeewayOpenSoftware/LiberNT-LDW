@@ -1041,13 +1041,35 @@ S1Log(
     }
 }
 #else
+/* Host harness: the boot.log append is a counted mutation (it is the write that marked the volume dirty before the
+ * dirty check in the real applier), and the same in-memory deferral applies. */
+static BOOLEAN g_S1LogDeferred = FALSE;
+static ULONG g_S1LogHeldLines = 0;
+
+static VOID
+S1LogDefer(VOID)
+{
+    g_S1LogDeferred = TRUE;
+}
+
+static VOID
+S1LogFlushDeferred(VOID)
+{
+    g_S1LogDeferred = FALSE;
+    if (g_S1LogHeldLines)
+        g_ShimMutations++;                  /* one append of the held lines */
+    g_S1LogHeldLines = 0;
+}
+
 static VOID
 S1Log(_In_ PCWSTR Msg)
 {
     (void)Msg;
+    if (g_S1LogDeferred)
+        g_S1LogHeldLines++;
+    else
+        g_ShimMutations++;                  /* a boot.log append */
 }
-static VOID S1LogDefer(VOID) { }
-static VOID S1LogFlushDeferred(VOID) { }
 #endif
 
 #define S1JournalOrHalt(j, tx, ph, op, res, err) \
@@ -1379,6 +1401,26 @@ S1DeleteQuiet(_In_ PCWSTR Path)
         DeleteInfo.DeleteFile = TRUE;
         NtSetInformationFile(Handle, &IoStatus, &DeleteInfo, sizeof(DeleteInfo), FileDispositionInformation);
         NtClose(Handle);
+    }
+}
+
+/* Remove the displaced X.pre after a good swap. A scanner can hold a just-renamed file for a moment, and a
+ * renamed MAPPED image cannot be deleted until it is unmapped, so: a few retries, then leave it (the next swap
+ * deletes a stale X.pre first). Never an error. */
+static VOID
+S1DeleteRetry(_In_ PCWSTR Path)
+{
+    ULONG Try;
+
+    for (Try = 0; Try < 10 && S1FileExists(Path); Try++)
+    {
+        LARGE_INTEGER Delay;
+
+        S1DeleteQuiet(Path);
+        if (!S1FileExists(Path))
+            break;
+        Delay.QuadPart = -1000000;          /* 100 ms */
+        NtDelayExecution(FALSE, &Delay);
     }
 }
 
@@ -1721,7 +1763,7 @@ S1SwapApplyGroup(_In_ const S1_PLAN *Plan)
         }
     }
     for (i = 0; i < n; i++)
-        S1DeleteQuiet(PreP[i]);             /* best effort: a mapped, renamed image cannot be deleted yet */
+        S1DeleteRetry(PreP[i]);             /* best effort: a mapped, renamed image cannot be deleted yet */
     g_SwapWork += n;
     return STATUS_SUCCESS;
 
@@ -2149,12 +2191,13 @@ NtProcessStartup(
 
     (void)ProcessParameters;
 
+    S1LogDefer();                           /* no volume write until the boot-class dirty check (review M4) */
+
 #ifndef S1_HOST_APPLIER
     /* Find the servicing tree first: everything below reads and writes
      * under it. Failing here means the applier cannot do anything
      * meaningful at all, so exit loudly (smss survives a BootExecute
      * failure; sminit.c discards the status). */
-    S1LogDefer();                           /* no volume write until the boot-class dirty check (review M4) */
     Status = S1ResolveServicingRoot();
     if (!NT_SUCCESS(Status))
     {

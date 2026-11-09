@@ -330,9 +330,17 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
                 LnfCopy(secs[cur].path, sizeof(secs[cur].path), val, strlen(val));
             }
             else if (!_stricmp(key, "Kernel"))
+            {
+                if (strlen(val) >= sizeof(secs[cur].kernel))
+                    secs[cur].truncated = 1;
                 LnfCopy(secs[cur].kernel, sizeof(secs[cur].kernel), val, strlen(val));
+            }
             else if (!_stricmp(key, "Hal"))
+            {
+                if (strlen(val) >= sizeof(secs[cur].hal))
+                    secs[cur].truncated = 1;
                 LnfCopy(secs[cur].hal, sizeof(secs[cur].hal), val, strlen(val));
+            }
         }
     }
     free(buf);

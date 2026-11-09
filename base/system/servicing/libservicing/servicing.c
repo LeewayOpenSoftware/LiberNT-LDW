@@ -1099,11 +1099,15 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     return ERROR_SUCCESS;
 }
 
-/* Boot-class identity (B1 review N4, kernel half). The kernel's module list (SystemModuleInformation) is the only
- * view of the loaded set a user-mode process has: it carries path and SizeOfImage, not TimeDateStamp/CheckSum
- * (those need a kernel-side query, a follow-up). So: for every boot-class item the NEW file's SizeOfImage must be
- * present among the loaded modules, and no loaded module may come from a *.old file. The on-disk hash of each
- * target was already proven equal to the manifest by the caller. */
+/* "The previous kernel set is NOT running" gate plus a size sanity check. This is NOT an identity check
+ * (B1 review N4, addendum 2b). SystemModuleInformation carries the real file path and SizeOfImage, not
+ * TimeDateStamp/CheckSum, and an old and a new build of one kernel often have the same SizeOfImage. What it
+ * does prove: no loaded module comes from a *.old file (freeldr keeps the real path in FullDllName while it
+ * registers the alias as BaseDllName, so a fallback boot shows ntoskrnl.old / hal.old / bootvid.old), and the
+ * module the alias names (load order 0 = kernel, 1 = HAL, bootvid by file name) has the SizeOfImage of the new
+ * file. The on-disk hash of each target was already proven equal to the manifest by the caller. Known gap: "the
+ * loaded new-named file IS the new build" needs SystemModuleInformationEx (class 77, kernel side, follow-up);
+ * LnPeIdentity already extracts TimeDateStamp/CheckSum for that comparison. */
 typedef struct _LN_SYS_MODULE
 {
     PVOID Section;
@@ -1198,14 +1202,32 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const LN_MANIFEST *m, char *
             goto out;
         }
         CloseHandle(h);
-        for (i = 0; i < count; i++)
         {
-            if (mods[i].ImageSize == size)
+            /* only the module the alias names: kernel = load order 0, HAL = 1, bootvid by file name */
+            const WCHAR *base = wcsrchr(m->items[k].target, L'\\');
+            ULONG idx = (ULONG)-1;
+
+            base = base ? base + 1 : m->items[k].target;
+            if (!_wcsnicmp(base, L"nt", 2))
+                idx = 0;
+            else if (!_wcsnicmp(base, L"hal", 3))
+                idx = 1;
+            else if (!_wcsicmp(base, L"bootvid.dll"))
+            {
+                for (i = 0; i < count; i++)
+                {
+                    const char *p = (const char *)mods[i].FullPathName + mods[i].OffsetToFileName;
+
+                    if (!_stricmp(p, "bootvid.dll"))
+                        idx = i;
+                }
+            }
+            if (idx < count && mods[idx].ImageSize == size)
                 found = TRUE;
         }
         if (!found)
         {
-            strcpy(why, "no loaded module has the SizeOfImage of the new file: the new set is not what is running");
+            strcpy(why, "the module the alias names does not have the SizeOfImage of the new file");
             result = LN_E_PRECONDITION;
             goto out;
         }
