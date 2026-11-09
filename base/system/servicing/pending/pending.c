@@ -1279,12 +1279,23 @@ S1BuildBackupPath(
 }
 
 /* ------------------------------------------------------- boot class: swap
- * S1-BOOT-CLASS-DESIGN.md. Per file X: X.old is the verified pre-image (extension replaced, as the freeldr
- * LiberNT_Fallback entry names it: ntoskrnl.old, hal.old, bootvid.old), X.new the staged copy, X.pre the
- * displaced file during the two-rename swap. Every state is decided by hashes, never by order, so a boot
- * after a power cut resolves each op the same way whichever entry booted. */
+ * S1-BOOT-CLASS-DESIGN.md + fs-review/S1-BOOT-CLASS-REVIEW.md (Stanley). ntfs_new has no journal: a rename is not
+ * atomic across a power cut and a file can end up missing or in \found.NNN. So nothing here trusts order or
+ * atomicity: every state is decided by CONTENT HASH, a device-level flush (volume handle) follows each durable
+ * step, and "X is missing or unknown" is a normal state resolved by COPYING the verified X.old back.
+ * Per file X: X.old is the verified pre-image (extension replaced, as the freeldr LiberNT_Fallback entry names it:
+ * ntoskrnl.old, hal.old, bootvid.old), X.old.tmp the pre-image being written, X.new the staged copy, X.pre the
+ * displaced file. X.old is never renamed or overwritten in place by a swap. */
 
-static ULONG g_SwapWork = 0;    /* swap ops that really changed a file in this run */
+static ULONG g_SwapWork = 0;            /* swap ops that really changed a file in this run */
+static BOOLEAN g_DirtyChecked = FALSE;  /* the swap-boot dirty check ran (before the first write) */
+
+#ifndef STATUS_S1_VOLUME_DIRTY
+#define STATUS_S1_VOLUME_DIRTY ((NTSTATUS)0xE0000002L)
+#endif
+#ifndef FSCTL_IS_VOLUME_DIRTY
+#define FSCTL_IS_VOLUME_DIRTY 0x00090078
+#endif
 
 static BOOLEAN
 S1FileExists(_In_ PCWSTR Path)
@@ -1311,6 +1322,59 @@ S1DeleteQuiet(_In_ PCWSTR Path)
         NtSetInformationFile(Handle, &IoStatus, &DeleteInfo, sizeof(DeleteInfo), FileDispositionInformation);
         NtClose(Handle);
     }
+}
+
+/* Volume flush: FlushFileBuffers on the VOLUME handle, which reaches the device only when the file system sends
+ * IRP_MJ_FLUSH_BUFFERS down (NTFS dev-line 2f1be760b5d, review M1). Fails closed on the real box: a swap whose
+ * steps cannot be made durable is not started. */
+static NTSTATUS
+S1VolumeFlush(VOID)
+{
+#ifndef S1_HOST_APPLIER
+    HANDLE Volume;
+    IO_STATUS_BLOCK IoStatus;
+    NTSTATUS Status = S1NtOpen(g_VolumeRoot, FILE_READ_DATA | FILE_WRITE_DATA, FILE_OPEN, &Volume);
+
+    if (!NT_SUCCESS(Status))
+    {
+        S1LogWriteStep(L"volume-open", Status);
+        return Status;
+    }
+    Status = NtFlushBuffersFile(Volume, &IoStatus);
+    NtClose(Volume);
+    if (!NT_SUCCESS(Status))
+        S1LogWriteStep(L"volume-flush", Status);
+    return Status;
+#else
+    return STATUS_SUCCESS;
+#endif
+}
+
+/* The swap-boot dirty check (review M4): valid only here, after autochk has repaired the volume and before this
+ * applier's own first write. Dirty now = unrepaired; the transaction is refused (verified failure). */
+static NTSTATUS
+S1CheckVolumeCleanOnce(VOID)
+{
+#ifndef S1_HOST_APPLIER
+    HANDLE Volume;
+    IO_STATUS_BLOCK IoStatus;
+    ULONG Flags = 0;
+    NTSTATUS Status;
+
+    if (g_DirtyChecked)
+        return STATUS_SUCCESS;
+    Status = S1NtOpen(g_VolumeRoot, FILE_READ_DATA, FILE_OPEN, &Volume);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = NtFsControlFile(Volume, NULL, NULL, NULL, &IoStatus, FSCTL_IS_VOLUME_DIRTY, NULL, 0, &Flags, sizeof(Flags));
+    NtClose(Volume);
+    if (!NT_SUCCESS(Status))
+        return Status;                  /* cannot tell: refuse */
+    if (Flags & 1 /* VOLUME_IS_DIRTY */)
+        return STATUS_S1_VOLUME_DIRTY;
+    g_DirtyChecked = TRUE;
+#endif
+    return STATUS_SUCCESS;
 }
 
 /* 1 = the file hashes to Want, 0 = it exists but differs, -1 = absent or unreadable */
@@ -1345,6 +1409,7 @@ S1SwapSidePath(
     return STATUS_SUCCESS;
 }
 
+/* Copy Source to Target, check the hash, then a volume flush. Target is deleted again on any failure. */
 static NTSTATUS
 S1CopyFileVerified(
     _In_ PCWSTR Source,
@@ -1359,19 +1424,17 @@ S1CopyFileVerified(
         return Status;
     Status = S1WriteFileDirect(Target, Data, Size);
     RtlFreeHeap(RtlGetProcessHeap(), 0, Data);
+    if (NT_SUCCESS(Status))
+        Status = S1VolumeFlush();
+    if (NT_SUCCESS(Status) && S1HashIs(Target, Want) != 1)
+        Status = STATUS_S1_HASH_MISMATCH;
     if (!NT_SUCCESS(Status))
-        return Status;
-    if (S1HashIs(Target, Want) != 1)
-    {
         S1DeleteQuiet(Target);
-        return STATUS_S1_HASH_MISMATCH;
-    }
-    return STATUS_SUCCESS;
+    return Status;
 }
 
-/* Stage Source as TargetW.new (hash verified), then displace the target and rename the staged file in.
- * The target never holds a partial file: it is either the old file or the complete new one, and a renamed-away
- * target is restored if the second rename fails. */
+/* Stage Source as TargetW.new (hash verified), then displace the target and rename the staged file in, with a
+ * volume flush after each step. X.old is not touched. A failure leaves X as the old file when it can. */
 static NTSTATUS
 S1SwapInstall(
     _In_ PCWSTR Source,
@@ -1390,85 +1453,96 @@ S1SwapInstall(
     S1DeleteQuiet(NewPath);
     Status = S1CopyFileVerified(Source, NewPath, Want);
     if (!NT_SUCCESS(Status))
-    {
-        S1DeleteQuiet(NewPath);
         return Status;
-    }
     S1DeleteQuiet(PrePath);
     if (S1FileExists(TargetW))
     {
         Status = S1RenameStrict(TargetW, PrePath, FALSE);
+        if (NT_SUCCESS(Status))
+            Status = S1VolumeFlush();
         if (!NT_SUCCESS(Status))
         {
+            if (!S1FileExists(TargetW) && S1FileExists(PrePath))
+                S1RenameStrict(PrePath, TargetW, FALSE);
             S1DeleteQuiet(NewPath);
             return Status;
         }
     }
     Status = S1RenameStrict(NewPath, TargetW, FALSE);
+    if (NT_SUCCESS(Status))
+        Status = S1VolumeFlush();
     if (!NT_SUCCESS(Status))
     {
-        if (S1FileExists(PrePath))
-            S1RenameStrict(PrePath, TargetW, TRUE);
+        if (!S1FileExists(TargetW) && S1FileExists(PrePath))
+            S1RenameStrict(PrePath, TargetW, FALSE);
         S1DeleteQuiet(NewPath);
         return Status;
     }
     if (S1HashIs(TargetW, Want) != 1)
-        return STATUS_S1_HASH_MISMATCH;     /* the caller reverts from X.old */
+        return STATUS_S1_HASH_MISMATCH;     /* the caller restores from X.old */
     S1DeleteQuiet(PrePath);                 /* best effort: a mapped, renamed image cannot be deleted yet */
     return STATUS_SUCCESS;
 }
 
+/* Total, hash-only resolution (review M2). Known hashes: Orig (the file before) and New (the file after).
+ *   X == New                          -> done.
+ *   X == Orig                         -> take the pre-image if needed, then swap.
+ *   anything else for X (absent, torn, two entries, only under \found.NNN): restore X by COPYING a verified
+ *   copy of Orig (X.old, else X.pre, else X.old.tmp), then proceed as "X == Orig". None verified: fail closed.
+ * X.old is replaced only through X.old.tmp (review M5): X stays good and X.old is absent only briefly. */
 static NTSTATUS
 S1SwapApply(
     _In_ const S1_PLAN_OP *Op,
     _In_ PCWSTR ObjectPath,
     _In_ PCWSTR TargetW)
 {
-    WCHAR OldPath[MAX_PATH * 2], NewPath[MAX_PATH * 2], PrePath[MAX_PATH * 2];
+    WCHAR OldPath[MAX_PATH * 2], OldTmpPath[MAX_PATH * 2], PrePath[MAX_PATH * 2];
     NTSTATUS Status;
-    int Now = S1HashIs(TargetW, Op->ExpectedSha256);
 
-    if (Now == 1)
+    if (S1HashIs(TargetW, Op->ExpectedSha256) == 1)
         return STATUS_SUCCESS;              /* already in place (second boot, or a resumed swap) */
 
     Status = S1SwapSidePath(TargetW, L".old", TRUE, OldPath, RTL_NUMBER_OF(OldPath));
     if (NT_SUCCESS(Status))
-        Status = S1SwapSidePath(TargetW, L".new", FALSE, NewPath, RTL_NUMBER_OF(NewPath));
+        Status = S1SwapSidePath(TargetW, L".old.tmp", TRUE, OldTmpPath, RTL_NUMBER_OF(OldTmpPath));
     if (NT_SUCCESS(Status))
         Status = S1SwapSidePath(TargetW, L".pre", FALSE, PrePath, RTL_NUMBER_OF(PrePath));
     if (!NT_SUCCESS(Status))
         return Status;
 
-    if (!S1FileExists(TargetW))
-    {
-        /* a swap that was interrupted between its two renames */
-        if (S1HashIs(NewPath, Op->ExpectedSha256) == 1)
-        {
-            Status = S1RenameStrict(NewPath, TargetW, FALSE);
-            if (NT_SUCCESS(Status) && S1HashIs(TargetW, Op->ExpectedSha256) == 1)
-            {
-                g_SwapWork++;
-                return STATUS_SUCCESS;
-            }
-            return NT_SUCCESS(Status) ? STATUS_S1_HASH_MISMATCH : Status;
-        }
-        if (S1HashIs(PrePath, Op->OriginalSha256) == 1)
-        {
-            Status = S1RenameStrict(PrePath, TargetW, FALSE);
-            if (!NT_SUCCESS(Status))
-                return Status;
-        }
-        else if (S1HashIs(OldPath, Op->OriginalSha256) != 1)
-            return STATUS_S1_HASH_MISMATCH; /* nothing to go back to: fail closed */
-    }
-    else if (S1HashIs(TargetW, Op->OriginalSha256) != 1)
-        return STATUS_S1_HASH_MISMATCH;     /* the target drifted from what the plan recorded */
+    /* First write of this run: the volume must be clean after autochk (review M4). */
+    Status = S1CheckVolumeCleanOnce();
+    if (!NT_SUCCESS(Status))
+        return Status;
 
-    /* Pre-image first: X.old must be complete and verified before X is touched, so the Fallback entry is valid
-     * at every later instant. One generation only. */
-    if (S1FileExists(TargetW) && S1HashIs(OldPath, Op->OriginalSha256) != 1)
+    if (S1HashIs(TargetW, Op->OriginalSha256) != 1)
     {
-        Status = S1CopyFileVerified(TargetW, OldPath, Op->OriginalSha256);
+        PCWSTR Source = NULL;
+
+        if (S1HashIs(OldPath, Op->OriginalSha256) == 1)
+            Source = OldPath;
+        else if (S1HashIs(PrePath, Op->OriginalSha256) == 1)
+            Source = PrePath;
+        else if (S1HashIs(OldTmpPath, Op->OriginalSha256) == 1)
+            Source = OldTmpPath;
+        if (!Source)
+            return STATUS_S1_HASH_MISMATCH; /* nothing verified to go back to: fail closed */
+        Status = S1SwapInstall(Source, TargetW, Op->OriginalSha256);
+        if (!NT_SUCCESS(Status))
+            return Status;
+    }
+
+    /* X == Orig. Pre-image through .old.tmp. */
+    if (S1HashIs(OldPath, Op->OriginalSha256) != 1)
+    {
+        S1DeleteQuiet(OldTmpPath);
+        Status = S1CopyFileVerified(TargetW, OldTmpPath, Op->OriginalSha256);
+        if (!NT_SUCCESS(Status))
+            return Status;
+        S1DeleteQuiet(OldPath);
+        Status = S1RenameStrict(OldTmpPath, OldPath, FALSE);
+        if (NT_SUCCESS(Status))
+            Status = S1VolumeFlush();
         if (!NT_SUCCESS(Status))
             return Status;
     }

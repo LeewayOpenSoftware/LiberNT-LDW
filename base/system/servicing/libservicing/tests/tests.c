@@ -191,11 +191,12 @@ static void TestPaths(void)
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\hal.dll", -1));
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\halmacpi.dll", -1));
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\bootvid.dll", -1));
-    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
-    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
-    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));
-    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", -1));               /* a driver declares Start */
-    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", 0));                        /* Start only for a .sys */
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\kdcom.dll", -1));
+    /* review M3: ntdll, win32k and boot-start drivers (ntfs.sys) have no loader fallback: not in the first delivery */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\hal.dll", 0));                          /* Start only for a .sys */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\config\\SYSTEM", -1));                  /* hives never */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\freeldr.sys", -1));                     /* loader never */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\notepad.exe", -1));                     /* user component: not boot class */

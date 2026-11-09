@@ -114,6 +114,8 @@ static BOOL BootBaseIs(const WCHAR *base, const WCHAR *const *names, size_t n)
     return FALSE;
 }
 
+#define LN_BOOT_GROUPS_ENABLED (1 << 1)         /* bit n = group n; 1 = kernel trio */
+
 int LnTargetBootGroup(const WCHAR *rel)
 {
     static const WCHAR *kernel[] = { L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe",
@@ -170,6 +172,11 @@ BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)
     }
     group = LnTargetBootGroup(rel);
     if (!group)
+        return FALSE;
+    /* First delivery: the kernel/HAL/bootvid trio only (review M3). Boot-start drivers (ntfs.sys, disk class)
+     * and ntdll/win32k/the critical processes have no loader fallback, so they wait for the control-set
+     * fallback design. Enable more groups by widening this mask, with that design in place. */
+    if (!((1 << group) & LN_BOOT_GROUPS_ENABLED))
         return FALSE;
     if (group == 2)
         return driverStart >= 0 && driverStart <= 4;    /* a driver must declare its Start in the signed manifest */
