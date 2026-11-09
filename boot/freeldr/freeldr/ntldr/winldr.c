@@ -1460,15 +1460,17 @@ NtLdrNormalizeOptions(
 #define LN_BOOTTRY_MAGIC0 'L'
 #define LN_BOOTTRY_MAGIC1 'N'
 
+/* Port 0x70 bit 7 is the NMI mask (write-only): a plain index write would ENABLE NMI, so the access is done
+ * with bit 7 set, as firmware does, and NMI stays masked. */
 static UCHAR WinLdrBootTryCmosRead(UCHAR Index)
 {
-    __outbyte(0x70, (UCHAR)(Index & 0x7F));     /* bit 7 clear: leave NMI as it is */
+    __outbyte(0x70, (UCHAR)(0x80 | (Index & 0x7F)));
     return __inbyte(0x71);
 }
 
 static VOID WinLdrBootTryCmosWrite(UCHAR Index, UCHAR Value)
 {
-    __outbyte(0x70, (UCHAR)(Index & 0x7F));
+    __outbyte(0x70, (UCHAR)(0x80 | (Index & 0x7F)));
     __outbyte(0x71, Value);
 }
 
@@ -1510,6 +1512,9 @@ static BOOLEAN WinLdrBootTryShouldFallback(PCSTR BootPath, ULONG Argc, PCHAR Arg
     Index = strtoul(Value, NULL, 0);
     if (Index < 0x40 || Index > 0x7D)
         return FALSE;                       /* outside the range allowed for this record: disabled */
+    /* The usual RTC century byte (0x32) is below this range. The install-time check must still compare the triple
+     * against the board's ACPI FADT Century index and the vendor's second-checksum area (review M3). */
+
 
     Armed = WinLdrBootTryIsArmed(BootPath);
     Valid = (WinLdrBootTryCmosRead((UCHAR)Index) == LN_BOOTTRY_MAGIC0 &&
@@ -1530,8 +1535,9 @@ static BOOLEAN WinLdrBootTryShouldFallback(PCSTR BootPath, ULONG Argc, PCHAR Arg
     return FALSE;
 }
 
-/* Replace the trio overrides with their .old names (extension replaced, as the updater keeps them). */
-static VOID WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
+/* Replace the trio overrides with their .old names (extension replaced, as the updater keeps them).
+ * FALSE (nothing changed) when a name would not fit: never boot a truncated, wrong file name (review S2). */
+static BOOLEAN WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
 {
     static const struct { PCSTR Option; PCSTR Default; } Trio[] =
     {
@@ -1557,7 +1563,7 @@ static VOID WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
             Value += strlen(Trio[i].Option);
             Length -= (ULONG)strlen(Trio[i].Option);
             if (Length >= sizeof(Names[i]) - 5)
-                Length = sizeof(Names[i]) - 5;
+                return FALSE;
             memcpy(Names[i], Value, Length);
         }
         else
@@ -1572,7 +1578,8 @@ static VOID WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
         RtlStringCbCatA(Added, sizeof(Added), Trio[i].Option);
         RtlStringCbCatA(Added, sizeof(Added), Names[i]);
     }
-    RtlStringCbCopyA(RemoveBuf, sizeof(RemoveBuf), "/KERNEL= /HAL= /BOOTVID=");
+    /* /DETECTHAL overrides /HAL= in the loader (BOOT-FALLBACK.md): remove it too (review S1) */
+    RtlStringCbCopyA(RemoveBuf, sizeof(RemoveBuf), "/KERNEL= /HAL= /BOOTVID= /DETECTHAL");
     OptionsToRemove[0] = RemoveBuf;
     OptionsToRemove[1] = NULL;
     {
@@ -1582,6 +1589,7 @@ static VOID WinLdrBootTryUseOldTrio(PSTR BootOptions, ULONG BufferSize)
         OptionsToAdd[1] = NULL;
         NtLdrUpdateOptions(BootOptions, BufferSize, TRUE, (PCSTR*)OptionsToAdd, OptionsToRemove);
     }
+    return TRUE;
 }
 #endif /* boot-try */
 
@@ -1740,8 +1748,10 @@ LoadAndBootWindows(
     /* LiberNT boot-try: after an unconfirmed boot-class swap, boot the old kernel/HAL/bootvid automatically */
     if (WinLdrBootTryShouldFallback(BootPath, Argc, Argv))
     {
-        ERR("Boot-try: the new kernel set did not confirm, booting the previous set (*.old)\n");
-        WinLdrBootTryUseOldTrio(BootOptions, sizeof(BootOptions));
+        if (WinLdrBootTryUseOldTrio(BootOptions, sizeof(BootOptions)))
+            ERR("Boot-try: the new kernel set did not confirm, booting the previous set (*.old)\n");
+        else
+            ERR("Boot-try: a kernel/HAL/bootvid override name is too long for the fallback, booting as configured\n");
     }
 #endif
 
