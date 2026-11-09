@@ -1171,6 +1171,21 @@ S1VerifyPlanAgainstManifest(
                 break;
             }
         }
+        if (Found)
+        {
+            /* The signed manifest alone decides the class: a swap-file op must name a payload that declares
+             * class:"boot", and a boot payload must never be applied as an ordinary replace (it would skip
+             * the pre-image and the swap). A plan cannot upgrade or downgrade an item. */
+            const char *ClassA;
+            size_t ClassLen;
+            S1Bool IsBoot = S1_FALSE;
+
+            snprintf(Path, sizeof(Path), "payloads.%zu.class", f);
+            if (S1JsonGetString(Root, Path, &ClassA, &ClassLen) && ClassLen == 4 && memcmp(ClassA, "boot", 4) == 0)
+                IsBoot = S1_TRUE;
+            if ((Op->Type == S1_OP_SWAP_FILE) != (IsBoot == S1_TRUE))
+                Found = S1_FALSE;
+        }
         if (!Found)
         {
             RtlFreeHeap(RtlGetProcessHeap(), 0, ManifestData);
