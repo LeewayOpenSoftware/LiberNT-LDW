@@ -23,6 +23,9 @@ CcFlushCache(
     NTSTATUS Status = STATUS_SUCCESS;
     ULONG Flushed = 0;
 
+    /* Starts paging writes and waits for them. */
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
+
     if (NtMap != NULL)
     {
         Status = CcNtFlushMap(NtMap, Offset, Bytes, ~0u, &Flushed);
@@ -72,6 +75,9 @@ CcPurgeCacheSection(
     ULONG64 Offset = (FileOffset != NULL) ? (ULONG64)FileOffset->QuadPart : 0;
     ULONG64 Bytes = (FileOffset != NULL && Length != 0) ? Length : 0;
     BOOLEAN Purged = TRUE;
+
+    /* Detaches views and purges the segment under its locks. */
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
 
     if (NtMap != NULL)
     {

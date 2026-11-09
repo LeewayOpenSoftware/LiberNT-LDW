@@ -42,7 +42,10 @@ CcInitializeCacheMap(
     ULONG64 SectionSize;
     NTSTATUS Status;
 
+    /* Allocates, may raise and takes the map's locks. */
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
     ASSERT(Pointers != NULL);
+    ASSERT(FileSizes != NULL);
 
     if (FileObject->PrivateCacheMap != NULL)
         return;
@@ -115,7 +118,11 @@ CcUninitializeCacheMap(
     _In_opt_ PCACHE_UNINITIALIZE_EVENT UninitializeEvent)
 {
     PCC_NT_PRIVATE Private = FileObject->PrivateCacheMap;
-    PCC_NT_MAP NtMap = CcNtReferenceFileMap(FileObject);
+    PCC_NT_MAP NtMap;
+
+    /* May discard dirty data and wait on the map. */
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
+    NtMap = CcNtReferenceFileMap(FileObject);
 
     if (NtMap == NULL)
     {
@@ -170,9 +177,13 @@ CcSetFileSizes(
     _In_ PFILE_OBJECT FileObject,
     _In_ PCC_FILE_SIZES FileSizes)
 {
-    PCC_NT_MAP NtMap = CcNtReferenceFileMap(FileObject);
+    PCC_NT_MAP NtMap;
     ULONG64 NewFileSize = (ULONG64)FileSizes->FileSize.QuadPart;
     ULONG64 SectionSize;
+
+    /* Extends the segment and may discard views and dirty pages. */
+    ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
+    NtMap = CcNtReferenceFileMap(FileObject);
 
     if (NtMap == NULL)
         return;

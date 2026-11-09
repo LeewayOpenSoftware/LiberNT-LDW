@@ -149,6 +149,8 @@ CcCopyWrite(
     LONG64 DirtyBefore;
     NTSTATUS Status;
 
+    /* Touches user and pageable memory and may wait for a view. */
+    ASSERT(KeGetCurrentIrql() < DISPATCH_LEVEL);
     if (FileObject == NULL || FileOffset == NULL)
         ExRaiseStatus(STATUS_ACCESS_VIOLATION);
     Offset = (ULONG64)FileOffset->QuadPart;
