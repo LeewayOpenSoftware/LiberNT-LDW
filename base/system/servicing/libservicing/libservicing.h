@@ -146,6 +146,10 @@ BOOL LnTargetPathAllowed(const WCHAR *relInRoot);                          /* Ln
  * critical processes; 0 = not a boot-class target. */
 BOOL LnTargetBootItemAllowed(const WCHAR *relInRoot, int driverStart);
 int LnTargetBootGroup(const WCHAR *relInRoot);
+/* TRUE when a load-option string names a *.old file for /KERNEL=, /HAL= or /BOOTVID= (the previous kernel set). */
+BOOL LnOptionsUseOldTrio(const WCHAR *options);
+/* Clears pending\bootstate (CLEAR) if present; the error is returned (B2 review M2). */
+DWORD LnBootStateClear(const LN_TARGET *t);
 /* Read-only check of freeldr.ini against a kernel-trio swap (review N2). The package targets must be exactly the
  * default entry's effective /KERNEL, /HAL and /BOOTVID files (defaults ntoskrnl.exe, hal.dll, bootvid.dll, also
  * taken from Kernel=/Hal= keys), and another entry of [Operating Systems] must load the same three files with

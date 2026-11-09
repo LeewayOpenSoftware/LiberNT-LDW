@@ -1702,6 +1702,114 @@ S1WriteBootState(_In_ PCSTR Text)
         S1VolumeFlush();
 }
 
+/* B2 review M1: did THIS boot load the previous kernel set? SystemStartOptions (HKLM\SYSTEM\CurrentControlSet\
+ * Control) is the load option string the loader handed the kernel, and both the automatic and the manual
+ * Fallback entry put /KERNEL=, /HAL= or /BOOTVID= with a *.old file in it. No loader marker needed. */
+static BOOLEAN
+S1OptionsUseOldTrio(_In_ PCWSTR Options)
+{
+    static const PCWSTR Keys[] = { L"/KERNEL=", L"/HAL=", L"/BOOTVID=" };
+    ULONG k;
+
+    for (k = 0; k < RTL_NUMBER_OF(Keys); k++)
+    {
+        size_t KeyLen = wcslen(Keys[k]);
+        PCWSTR p = Options;
+
+        while (*p)
+        {
+            if ((p == Options || p[-1] == L' ' || p[-1] == L'\t') && _wcsnicmp(p, Keys[k], KeyLen) == 0)
+            {
+                PCWSTR Value = p + KeyLen;
+                size_t Len = 0;
+
+                while (Value[Len] && Value[Len] != L' ' && Value[Len] != L'\t')
+                    Len++;
+                if (Len >= 4 && _wcsnicmp(Value + Len - 4, L".old", 4) == 0)
+                    return TRUE;
+            }
+            p++;
+        }
+    }
+    return FALSE;
+}
+
+static BOOLEAN
+S1BootIsFallback(VOID)
+{
+#ifndef S1_HOST_APPLIER
+    static const PCWSTR Keys[] =
+    {
+        L"\\Registry\\Machine\\System\\CurrentControlSet\\Control",
+        L"\\Registry\\Machine\\System\\ControlSet001\\Control"
+    };
+    ULONG i;
+
+    for (i = 0; i < RTL_NUMBER_OF(Keys); i++)
+    {
+        UNICODE_STRING Name, Value;
+        OBJECT_ATTRIBUTES Attr;
+        HANDLE Key;
+        UCHAR Buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 1024];
+        PKEY_VALUE_PARTIAL_INFORMATION Info = (PKEY_VALUE_PARTIAL_INFORMATION)Buffer;
+        ULONG Length;
+        NTSTATUS Status;
+
+        RtlInitUnicodeString(&Name, Keys[i]);
+        InitializeObjectAttributes(&Attr, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        if (!NT_SUCCESS(NtOpenKey(&Key, KEY_QUERY_VALUE, &Attr)))
+            continue;
+        RtlInitUnicodeString(&Value, L"SystemStartOptions");
+        Status = NtQueryValueKey(Key, &Value, KeyValuePartialInformation, Buffer, sizeof(Buffer) - sizeof(WCHAR), &Length);
+        NtClose(Key);
+        if (NT_SUCCESS(Status) && Info->Type == REG_SZ)
+        {
+            ((PWCHAR)Info->Data)[Info->DataLength / sizeof(WCHAR)] = 0;
+            return S1OptionsUseOldTrio((PCWSTR)Info->Data);
+        }
+    }
+#endif
+    return FALSE;                           /* unreadable here: B1 behaviour (confirm is stricter) */
+}
+
+/* a boot-class plan, and this boot is running the previous kernel set */
+static BOOLEAN
+S1FallbackBootWithSwap(_In_ const S1_PLAN *Plan)
+{
+    ULONG i;
+
+    for (i = 0; i < Plan->OperationCount; i++)
+    {
+        if (Plan->Operations[i].Type == S1_OP_SWAP_FILE)
+            return S1BootIsFallback();
+    }
+    return FALSE;
+}
+
+/* B2 review M2: no live transaction but bootstate still says ARMED (a CLEAR was lost): clear it, or the loader
+ * keeps booting the old set of an updated, confirmed system. */
+static VOID
+S1HealBootState(VOID)
+{
+#ifndef S1_HOST_APPLIER
+    WCHAR Path[MAX_PATH * 2];
+    PVOID Data;
+    ULONG Size;
+
+    if (swprintf(Path, RTL_NUMBER_OF(Path), L"%s\\pending\\bootstate", g_ServicingRoot) < 0)
+        return;
+    if (!NT_SUCCESS(S1ReadWholeFile(Path, &Data, &Size)))
+        return;
+    if (Size >= 5 && memcmp(Data, "ARMED", 5) == 0)
+    {
+        S1Log(L"S1: stale ARMED boot state without a plan, clearing it");
+        S1WriteFileDirect(Path, (PVOID)"CLEAR\n", 6);
+        S1VolumeFlush();
+    }
+    RtlFreeHeap(RtlGetProcessHeap(), 0, Data);
+#endif
+}
+
 static VOID
 S1RebootNow(VOID)
 {
@@ -1967,6 +2075,7 @@ NtProcessStartup(
         {
             NtClose(RootProbe);
             S1Log(L"S1: no plan, exit 0");
+            S1HealBootState();
         }
 #else
         S1Log(L"S1: no plan, exit 0");
@@ -2071,12 +2180,13 @@ NtProcessStartup(
     }
 
     /* 5. Two attempts without a health confirmation revert. */
-    if (S1ShouldRollback(Attempt.Attempt, Attempt.HealthConfirmed))
+    if (S1ShouldRollback(Attempt.Attempt, Attempt.HealthConfirmed) || S1FallbackBootWithSwap(&Plan))
     {
         const char *Reason = (Attempt.FailureRecorded || strcmp(Attempt.LastResult, "started") == 0)
                             ? (Attempt.FailureRecorded ? "verifiable-failure" : "unexpected-reboot")
                             : "unexpected-reboot";
-        S1Log(L"S1: two attempts without health, rolling back");
+        S1Log(S1FallbackBootWithSwap(&Plan) ? L"S1: booted the previous kernel set, rolling back now"
+                                            : L"S1: two attempts without health, rolling back");
         S1JournalOrHalt(&Journal, Plan.TransactionId, "rollback-prepared", -1,
                         "started", Reason);
         {

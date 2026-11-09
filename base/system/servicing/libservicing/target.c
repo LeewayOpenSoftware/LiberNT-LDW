@@ -403,6 +403,33 @@ out_msg:
     return FALSE;
 }
 
+BOOL LnOptionsUseOldTrio(const WCHAR *options)
+{
+    static const WCHAR *keys[] = { L"/KERNEL=", L"/HAL=", L"/BOOTVID=" };
+    size_t k;
+
+    for (k = 0; k < RTL_NUMBER_OF(keys); k++)
+    {
+        size_t kl = wcslen(keys[k]);
+        const WCHAR *p = options;
+
+        for (; *p; p++)
+        {
+            if ((p == options || p[-1] == L' ' || p[-1] == L'\t') && !_wcsnicmp(p, keys[k], kl))
+            {
+                const WCHAR *v = p + kl;
+                size_t l = 0;
+
+                while (v[l] && v[l] != L' ' && v[l] != L'\t')
+                    l++;
+                if (l >= 4 && !_wcsnicmp(v + l - 4, L".old", 4))
+                    return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
 BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)
 {
     static const WCHAR *deniedPrefix[] =

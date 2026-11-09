@@ -1601,6 +1601,41 @@ DWORD LnServicingConfirmHealth(const LN_TARGET *t, const char *packageId, const 
         LnManifestFree(&c.m);
         return err;
     }
+    /* boot class (B2 review M1 + B1 N4): the swap boot has not proven anything, and a boot that loaded the
+     * previous set (the Fallback entry, automatic or manual) must NEVER confirm the new one. The loader's own
+     * option string says which set is loaded. Unreadable = refuse. */
+    for (i = 0; i < c.m.itemCount; i++)
+    {
+        if (c.m.items[i].bootClass)
+            break;
+    }
+    if (i < c.m.itemCount)
+    {
+        WCHAR opts[1024];
+        DWORD cb = sizeof(opts) - sizeof(WCHAR);
+        const char *why = NULL;
+
+        if (early)
+            why = "confirm refused: the swap boot has not rebooted into the new kernel set yet";
+        else if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", L"SystemStartOptions",
+                              RRF_RT_REG_SZ, NULL, opts, &cb) != ERROR_SUCCESS)
+            why = "confirm refused: cannot read the load options to tell which kernel set is running";
+        else if (LnOptionsUseOldTrio(opts))
+            why = "confirm refused: the previous kernel set is running, not the new one";
+        if (why)
+        {
+            LogLine(t, c.txid, why);
+            LnManifestFree(&c.m);
+            return LN_E_PRECONDITION;
+        }
+        err = LnBootStateClear(t);              /* BEFORE health or the journal; a failure fails the confirm */
+        if (err)
+        {
+            LogLine(t, c.txid, "confirm refused: could not clear the boot-try state");
+            LnManifestFree(&c.m);
+            return err;
+        }
+    }
     err = Journal(&c, "confirmed", "ok", NULL);
     if (!err)
     {

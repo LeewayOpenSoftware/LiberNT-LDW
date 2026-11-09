@@ -206,6 +206,13 @@ static void TestPaths(void)
     CHECK(LnTargetBootGroup(L"Windows\\System32\\ntdll.dll") == 3);
     CHECK(LnTargetBootGroup(L"Windows\\System32\\notepad.exe") == 0);
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\ntdll.dll", -1));                           /* the user route still refuses it */
+    /* which kernel set is running (B2 review M1): the load options name *.old files on a fallback boot */
+    CHECK(LnOptionsUseOldTrio(L"/KERNEL=ntkrnlmp.old /HAL=hal.old /BOOTVID=bootvid.old /FASTDETECT"));
+    CHECK(LnOptionsUseOldTrio(L"/FASTDETECT /kernel=ntoskrnl.OLD"));
+    CHECK(LnOptionsUseOldTrio(L"/HAL=hal.old"));
+    CHECK(!LnOptionsUseOldTrio(L"/KERNEL=ntkrnlmp.exe /FASTDETECT /KDWATCHDOG=0"));
+    CHECK(!LnOptionsUseOldTrio(L""));
+    CHECK(!LnOptionsUseOldTrio(L"/DEBUG /DEBUGPORT=COM1 /SOMEKERNEL=x.old"));       /* only the trio keys count */
     {
         /* freeldr.ini fallback check (review N2) against the dx2400 layout */
         static const char ok[] =

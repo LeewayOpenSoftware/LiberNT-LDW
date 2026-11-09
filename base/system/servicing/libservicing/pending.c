@@ -213,19 +213,22 @@ DWORD LnAttemptSetHealth(const LN_TARGET *t, const char *transactionId)
     cur.failureRecorded = FALSE;
     cur.attempt = 0;
     strcpy(cur.lastResult, "applied");
-    err = WriteAttempt(t, &cur);
-    if (!err)
-    {
-        /* B2: tell the boot loader the new set is confirmed, so its boot-try counter is cleared on the next
-         * boot (S1-B2-FREELDR-BOOTTRY.md). Harmless when no boot-class transaction armed it. */
-        WCHAR *bs = LnTargetPath(t, L"pending\\bootstate");
+    return WriteAttempt(t, &cur);
+}
 
-        if (bs)
-        {
-            LnWriteFileAtomic(bs, "CLEAR\n", 6);
-            free(bs);
-        }
-    }
+/* B2 review M2: tell the boot loader the new set is confirmed. Called by confirm BEFORE anything else is
+ * recorded, and a failure fails the confirm, so a "confirmed" transaction can never leave ARMED behind. Only
+ * acts when the file exists (a boot-class transaction armed it). */
+DWORD LnBootStateClear(const LN_TARGET *t)
+{
+    WCHAR *bs = LnTargetPath(t, L"pending\\bootstate");
+    DWORD err = ERROR_SUCCESS;
+
+    if (!bs)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    if (LnPathExists(bs))
+        err = LnWriteFileAtomic(bs, "CLEAR\n", 6);
+    free(bs);
     return err;
 }
 
