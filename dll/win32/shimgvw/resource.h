@@ -12,6 +12,8 @@
 
 /* Control IDs */
 #define IDC_TOOLBAR     40
+#define IDC_STATUSBAR   41
+#define IDC_ZOOMSLIDER  42
 
 /* Toolbar images */
 #define IDB_PREV_PIC    50
@@ -79,6 +81,7 @@
 #define IDS_SETASDESKBG 101
 #define IDS_NOPREVIEW   102
 #define IDS_PREVIEW     550
+#define IDS_OPEN_ALLPICTURES 103
 
 /* Friendly File Type Names */
 #define IDS_EMF_FILE    301

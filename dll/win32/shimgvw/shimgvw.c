@@ -13,6 +13,7 @@
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include "vribbon.h"
 
 EXTERN_C PCWSTR GetExtraExtensionsGdipList(VOID);
 EXTERN_C HRESULT LoadImageFromPath(LPCWSTR Path, GpImage** ppImage);
@@ -120,6 +121,19 @@ typedef struct tagPREVIEW_DATA
     UINT m_nTimerInterval;
     BOOL m_bHideCursor;
     POINT m_ptOrigin;
+    /* Ribbon chrome (main window only). The pill toolbar and the ribbon are
+     * two surfaces over the same command table; m_hwndToolBar is NULL in
+     * ribbon chrome, m_pRibbon is NULL in pill chrome. */
+    VRB_RIBBON *m_pRibbon;
+    HWND m_hwndStatus;
+    HWND m_hwndSlider;
+    BOOL m_bStatusShown;
+    BOOL m_bSliderSync;
+    BOOL m_bFit;                 /* best-fit mode is active */
+    /* Enabled state of the toolbar commands, as the toolbar had it. Both
+     * surfaces read these; the verb checks and the file check set them. */
+    BOOL m_bEnBestFit, m_bEnRealSize, m_bEnZoomIn, m_bEnZoomOut;
+    BOOL m_bEnDelete, m_bEnSaveAs, m_bEnPrint, m_bEnModify;
 } PREVIEW_DATA, *PPREVIEW_DATA;
 
 static VOID Preview_ToggleSlideShowEx(PPREVIEW_DATA pData, BOOL StartTimer);
@@ -238,23 +252,123 @@ ZoomWnd_UpdateScroll(PPREVIEW_DATA pData, BOOL bResetPos)
     InvalidateRect(hwnd, NULL, TRUE);
 }
 
+/* ---- command state shared by the pill toolbar and the ribbon ---- */
+
+static VOID
+Preview_RibbonInvalidate(PPREVIEW_DATA pData, UINT CmdId)
+{
+    if (pData && pData->m_pRibbon)
+        VRB_RibbonInvalidate(pData->m_pRibbon, CmdId);
+}
+
+static VOID
+Preview_RibbonInvalidateAll(PPREVIEW_DATA pData)
+{
+    if (pData && pData->m_pRibbon)
+        VRB_RibbonInvalidateAll(pData->m_pRibbon);
+}
+
+static BOOL *
+Preview_EnabledFlag(PPREVIEW_DATA pData, UINT CmdId)
+{
+    switch (CmdId)
+    {
+        case IDC_BEST_FIT:  return &pData->m_bEnBestFit;
+        case IDC_REAL_SIZE: return &pData->m_bEnRealSize;
+        case IDC_ZOOM_IN:   return &pData->m_bEnZoomIn;
+        case IDC_ZOOM_OUT:  return &pData->m_bEnZoomOut;
+        case IDC_DELETE:    return &pData->m_bEnDelete;
+        case IDC_SAVEAS:    return &pData->m_bEnSaveAs;
+        case IDC_PRINT:     return &pData->m_bEnPrint;
+        case IDC_MODIFY:    return &pData->m_bEnModify;
+    }
+    return NULL;
+}
+
+static VOID
+Preview_SetEnabled(PPREVIEW_DATA pData, UINT CmdId, BOOL bEnable)
+{
+    BOOL *pFlag = Preview_EnabledFlag(pData, CmdId);
+    if (pFlag)
+        *pFlag = bEnable;
+    if (pData->m_hwndToolBar)
+        SendMessageW(pData->m_hwndToolBar, TB_ENABLEBUTTON, CmdId, bEnable);
+    Preview_RibbonInvalidate(pData, CmdId);
+}
+
+/* S_OK: on the toolbar and enabled. S_FALSE: on the toolbar and disabled.
+ * E_FAIL: not a toolbar command. The state is that of the main window, also
+ * when the command comes from the slide show window. */
+static HRESULT
+IsCommandEnabled(UINT nCmdId)
+{
+    PPREVIEW_DATA pMain = Preview_GetData(g_hMainWnd);
+    BOOL *pFlag = pMain ? Preview_EnabledFlag(pMain, nCmdId) : NULL;
+    if (pFlag)
+        return *pFlag ? S_OK : S_FALSE;
+    return (nCmdId >= IDC_PREV_PIC && nCmdId <= IDC_HELP_TOC) ? S_OK : E_FAIL;
+}
+
+static UINT
+Preview_ZoomSliderPos(PPREVIEW_DATA pData)
+{
+    return VRB_NearestZoomIndex(pData->m_nZoomPercents);
+}
+
+/* Status bar text and slider follow the zoom; the ribbon re-reads its state. */
+static VOID
+Preview_SyncZoomUi(PPREVIEW_DATA pData)
+{
+    WCHAR szText[32];
+
+    if (pData->m_hwndStatus)
+    {
+        szText[0] = UNICODE_NULL;
+        if (pData->m_nZoomPercents > 0)
+            StringCchPrintfW(szText, _countof(szText), L"%d%%", pData->m_nZoomPercents);
+        SendMessageW(pData->m_hwndStatus, SB_SETTEXTW, 1, (LPARAM)szText);
+    }
+    if (pData->m_hwndSlider)
+    {
+        pData->m_bSliderSync = TRUE;
+        SendMessageW(pData->m_hwndSlider, TBM_SETPOS, TRUE, Preview_ZoomSliderPos(pData));
+        pData->m_bSliderSync = FALSE;
+    }
+    Preview_RibbonInvalidate(pData, IDC_BEST_FIT);
+    Preview_RibbonInvalidate(pData, IDC_REAL_SIZE);
+    Preview_RibbonInvalidate(pData, IDC_ZOOM_IN);
+    Preview_RibbonInvalidate(pData, IDC_ZOOM_OUT);
+    Preview_RibbonInvalidate(pData, VRB_CMD_ZOOMLEVEL);
+}
+
+/* Status bar segment 0: the size of the image in pixels. */
+static VOID
+Preview_UpdateStatusInfo(PPREVIEW_DATA pData)
+{
+    WCHAR szText[64];
+    UINT w = 0, h = 0;
+
+    if (!pData->m_hwndStatus)
+        return;
+    szText[0] = UNICODE_NULL;
+    if (g_pImage && GdipGetImageWidth(g_pImage, &w) == Ok && GdipGetImageHeight(g_pImage, &h) == Ok)
+        StringCchPrintfW(szText, _countof(szText), L"%u x %u", w, h);
+    SendMessageW(pData->m_hwndStatus, SB_SETTEXTW, 0, (LPARAM)szText);
+}
+
 static VOID
 Preview_UpdateZoom(PPREVIEW_DATA pData, UINT NewZoom, BOOL bEnableBestFit, BOOL bEnableRealSize)
 {
-    BOOL bEnableZoomIn, bEnableZoomOut;
-    HWND hToolBar = pData->m_hwndToolBar;
-
     pData->m_nZoomPercents = NewZoom;
+    pData->m_bFit = !bEnableBestFit;
 
-    /* Check if a zoom button of the toolbar must be grayed */
-    bEnableZoomIn  = (NewZoom < MAX_ZOOM);
-    bEnableZoomOut = (NewZoom > MIN_ZOOM);
-
-    /* Update toolbar buttons */
-    SendMessageW(hToolBar, TB_ENABLEBUTTON, IDC_BEST_FIT, bEnableBestFit);
-    SendMessageW(hToolBar, TB_ENABLEBUTTON, IDC_REAL_SIZE, NewZoom != 100);
-    SendMessageW(hToolBar, TB_ENABLEBUTTON, IDC_ZOOM_IN,  bEnableZoomIn);
-    SendMessageW(hToolBar, TB_ENABLEBUTTON, IDC_ZOOM_OUT, bEnableZoomOut);
+    /* Zoom buttons are grayed at the ends of the zoom range, Fit while it
+     * is the active mode, Actual size while the zoom is 100 %. */
+    Preview_SetEnabled(pData, IDC_BEST_FIT, bEnableBestFit);
+    Preview_SetEnabled(pData, IDC_REAL_SIZE, NewZoom != 100);
+    Preview_SetEnabled(pData, IDC_ZOOM_IN,  NewZoom < MAX_ZOOM);
+    Preview_SetEnabled(pData, IDC_ZOOM_OUT, NewZoom > MIN_ZOOM);
+    Preview_SyncZoomUi(pData);
 
     /* Redraw the display window */
     InvalidateRect(pData->m_hwndZoom, NULL, TRUE);
@@ -387,7 +501,7 @@ Preview_pLoadImage(PPREVIEW_DATA pData, LPCWSTR szOpenFileName)
     GetFullPathNameW(szOpenFileName, _countof(g_szFile), g_szFile, NULL);
     hr = LoadImageFromPath(szOpenFileName, &g_pImage);
     bCanDel = hr != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) && hr != HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
-    SendDlgItemMessageW(g_hMainWnd, IDC_TOOLBAR, TB_ENABLEBUTTON, IDC_DELETE, bCanDel);
+    Preview_SetEnabled(Preview_GetData(g_hMainWnd), IDC_DELETE, bCanDel);
     if (FAILED(hr))
     {
         DPRINT1("GdipLoadImageFromStream() failed, %d\n", hr);
@@ -568,10 +682,12 @@ static VOID
 Preview_UpdateUI(PPREVIEW_DATA pData)
 {
     BOOL bEnable = (g_pImage != NULL);
-    SendMessageW(pData->m_hwndToolBar, TB_ENABLEBUTTON, IDC_SAVEAS, bEnable);
+    Preview_SetEnabled(pData, IDC_SAVEAS, bEnable);
     // These will be validated and enabled later by EnableCommandIfVerbExists
-    SendMessageW(pData->m_hwndToolBar, TB_ENABLEBUTTON, IDC_PRINT, FALSE);
-    SendMessageW(pData->m_hwndToolBar, TB_ENABLEBUTTON, IDC_MODIFY, FALSE);
+    Preview_SetEnabled(pData, IDC_PRINT, FALSE);
+    Preview_SetEnabled(pData, IDC_MODIFY, FALSE);
+    Preview_UpdateStatusInfo(pData);
+    Preview_RibbonInvalidateAll(pData);
 }
 
 static VOID
@@ -943,6 +1059,167 @@ ImageView_SaveSettings(VOID)
     RegCloseKey(hKey);
 }
 
+/* ---- ribbon chrome: host side of the command model ---- */
+
+#define STATUS_ZOOM_WIDTH   56
+#define STATUS_SLIDER_WIDTH 150
+
+static BOOL
+Preview_HasEncoders(VOID)
+{
+    static BOOL s_bKnown = FALSE, s_bHas = FALSE;
+    if (!s_bKnown)
+    {
+        UINT num = 0, size = 0;
+        s_bHas = (GdipGetImageEncodersSize(&num, &size) == Ok && num > 0);
+        s_bKnown = TRUE;
+    }
+    return s_bHas;
+}
+
+static BOOL
+RibbonPredicate(void *ctx, VRB_PRED pred)
+{
+    PPREVIEW_DATA pData = (PPREVIEW_DATA)ctx;
+    PPREVIEW_DATA pFull;
+
+    switch (pred)
+    {
+        case VRB_P_ALWAYS:          return TRUE;
+        case VRB_P_HAS_IMAGE:       return g_pImage != NULL;
+        case VRB_P_HAS_LIST:
+            return g_pCurrentFile && g_pCurrentFile->Next && g_pCurrentFile->Next != g_pCurrentFile;
+        case VRB_P_CAN_ZOOM_IN:     return pData->m_nZoomPercents < (INT)MAX_ZOOM;
+        case VRB_P_CAN_ZOOM_OUT:    return pData->m_nZoomPercents > (INT)MIN_ZOOM;
+        case VRB_P_IS_FIT:          return g_pImage && pData->m_bFit;
+        case VRB_P_IS_ACTUAL:       return g_pImage && pData->m_nZoomPercents == 100;
+        case VRB_P_IS_FULLSCREEN:   return IsWindowVisible(g_hwndFullscreen);
+        case VRB_P_SLIDESHOW_RUNNING:
+            pFull = IsWindowVisible(g_hwndFullscreen) ? Preview_GetData(g_hwndFullscreen) : NULL;
+            return pFull && pFull->m_nTimerInterval != 0;
+        case VRB_P_IS_ANIMATED:     return g_pImage && pData->m_Anime.m_nFrameCount > 1;
+        case VRB_P_CAN_SAVE:        return g_pImage && Preview_HasEncoders();
+        /* Same gates as the toolbar: the file is there, the shell verb exists. */
+        case VRB_P_CAN_DELETE:      return g_szFile[0] && pData->m_bEnDelete;
+        case VRB_P_CAN_PRINT:       return g_szFile[0] && pData->m_bEnPrint;
+        case VRB_P_CAN_EDIT:        return g_szFile[0] && pData->m_bEnModify;
+        case VRB_P_STATUSBAR_SHOWN: return pData->m_bStatusShown;
+        case VRB_P_RIBBON_MINIMIZED:return FALSE; /* the framework owns it */
+        default:                    break;
+    }
+    return FALSE;
+}
+
+static HRESULT
+RibbonExecute(void *ctx, UINT CmdId)
+{
+    PPREVIEW_DATA pData = (PPREVIEW_DATA)ctx;
+    /* Every command goes through WM_COMMAND, as an accelerator does, so the
+     * ribbon, the accelerators and the toolbar share one handler. */
+    SendMessageW(pData->m_hwnd, WM_COMMAND, CmdId, 0);
+    return S_OK;
+}
+
+static UINT
+RibbonZoomPercent(void *ctx)
+{
+    return (UINT)((PPREVIEW_DATA)ctx)->m_nZoomPercents;
+}
+
+static VOID
+Preview_CreateStatusBar(PPREVIEW_DATA pData)
+{
+    DWORD vis = pData->m_bStatusShown ? WS_VISIBLE : 0;
+
+    pData->m_hwndStatus = CreateWindowExW(0, STATUSCLASSNAMEW, NULL,
+                                          WS_CHILD | vis | CCS_BOTTOM | SBARS_SIZEGRIP,
+                                          0, 0, 0, 0, pData->m_hwnd,
+                                          (HMENU)IDC_STATUSBAR, g_hInstance, NULL);
+    if (!pData->m_hwndStatus)
+        return;
+
+    /* Zoom slider over the last segment; its positions are the ten zoom
+     * levels of the gallery, so both share one table. */
+    pData->m_hwndSlider = CreateWindowExW(0, TRACKBAR_CLASSW, NULL,
+                                          WS_CHILD | vis | TBS_HORZ | TBS_NOTICKS,
+                                          0, 0, 0, 0, pData->m_hwnd,
+                                          (HMENU)IDC_ZOOMSLIDER, g_hInstance, NULL);
+    if (pData->m_hwndSlider)
+    {
+        SendMessageW(pData->m_hwndSlider, TBM_SETRANGE, TRUE, MAKELONG(0, VRB_ZOOM_LEVELS - 1));
+        SendMessageW(pData->m_hwndSlider, TBM_SETPAGESIZE, 0, 1);
+        SendMessageW(pData->m_hwndSlider, TBM_SETLINESIZE, 0, 1);
+    }
+}
+
+static BOOL
+Preview_CreateRibbonChrome(PPREVIEW_DATA pData)
+{
+    VRB_HOST host;
+
+    host.ctx = pData;
+    host.Predicate = RibbonPredicate;
+    host.Execute = RibbonExecute;
+    host.GetZoomPercent = RibbonZoomPercent;
+
+    if (FAILED(VRB_RibbonCreate(pData->m_hwnd, g_hInstance, &host, &pData->m_pRibbon)))
+    {
+        pData->m_pRibbon = NULL;
+        return FALSE;
+    }
+    pData->m_bStatusShown = VRB_ReadStatusBarShown();
+    Preview_CreateStatusBar(pData);
+    return TRUE;
+}
+
+/* Places the ribbon on top, the status bar or the toolbar at the bottom and
+ * the image between them. */
+static VOID
+Preview_LayoutMain(PPREVIEW_DATA pData, INT cx, INT cy)
+{
+    RECT rc;
+    INT top = 0, bottom = 0;
+
+    if (pData->m_pRibbon)
+    {
+        top = (INT)VRB_RibbonHeight(pData->m_pRibbon);
+        MoveWindow(VRB_RibbonWindow(pData->m_pRibbon), 0, 0, cx, top, TRUE);
+    }
+
+    if (pData->m_hwndToolBar)
+    {
+        SendMessageW(pData->m_hwndToolBar, TB_AUTOSIZE, 0, 0);
+        GetWindowRect(pData->m_hwndToolBar, &rc);
+        bottom += rc.bottom - rc.top;
+    }
+
+    if (pData->m_hwndStatus && pData->m_bStatusShown)
+    {
+        INT parts[3];
+        RECT rcPart;
+        INT sliderLeft = max(cx - STATUS_SLIDER_WIDTH, 0);
+
+        SendMessageW(pData->m_hwndStatus, WM_SIZE, 0, 0);
+        GetWindowRect(pData->m_hwndStatus, &rc);
+        bottom += rc.bottom - rc.top;
+
+        parts[0] = max(sliderLeft - STATUS_ZOOM_WIDTH, 0);
+        parts[1] = sliderLeft;
+        parts[2] = -1;
+        SendMessageW(pData->m_hwndStatus, SB_SETPARTS, 3, (LPARAM)parts);
+
+        if (pData->m_hwndSlider &&
+            SendMessageW(pData->m_hwndStatus, SB_GETRECT, 2, (LPARAM)&rcPart))
+        {
+            MapWindowPoints(pData->m_hwndStatus, pData->m_hwnd, (LPPOINT)&rcPart, 2);
+            MoveWindow(pData->m_hwndSlider, rcPart.left, rcPart.top,
+                       rcPart.right - rcPart.left, rcPart.bottom - rcPart.top, TRUE);
+        }
+    }
+
+    MoveWindow(pData->m_hwndZoom, 0, top, cx, max(cy - top - bottom, 0), TRUE);
+}
+
 static BOOL
 Preview_CreateToolBar(PPREVIEW_DATA pData)
 {
@@ -952,6 +1229,14 @@ Preview_CreateToolBar(PPREVIEW_DATA pData)
 
     if (!Preview_IsMainWnd(pData->m_hwnd))
         return TRUE; /* FIXME */
+
+    /* ChromeStyle ribbon: the ribbon and the status bar replace the toolbar.
+     * If the ribbon cannot be made the pill toolbar below is the fallback. */
+    if (VRB_RibbonIsDefaultChrome() && Preview_CreateRibbonChrome(pData))
+    {
+        Preview_SyncZoomUi(pData);
+        return TRUE;
+    }
 
     style |= CCS_BOTTOM;
     hwndToolBar = CreateWindowExW(0, TOOLBARCLASSNAMEW, NULL, style,
@@ -993,6 +1278,7 @@ Preview_EndSlideShow(HWND hwnd)
     ShowWindow(g_hMainWnd, SW_SHOW);
     ShowWindow(hwnd, SW_HIDE);
     Preview_ResetZoom(Preview_GetData(g_hMainWnd));
+    Preview_RibbonInvalidateAll(Preview_GetData(g_hMainWnd));
 }
 
 static VOID
@@ -1263,6 +1549,9 @@ Preview_OnCreate(HWND hwnd, LPCREATESTRUCT pCS)
     HWND hwndZoom;
     PPREVIEW_DATA pData = QuickAlloc(sizeof(PREVIEW_DATA), TRUE);
     pData->m_hwnd = hwnd;
+    /* The toolbar starts with every button enabled. */
+    pData->m_bEnBestFit = pData->m_bEnRealSize = pData->m_bEnZoomIn = pData->m_bEnZoomOut = TRUE;
+    pData->m_bEnDelete = pData->m_bEnSaveAs = pData->m_bEnPrint = pData->m_bEnModify = TRUE;
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
 
     DragAcceptFiles(hwnd, TRUE);
@@ -1339,9 +1628,8 @@ Preview_OnMoveSize(HWND hwnd)
 static VOID
 Preview_OnSize(HWND hwnd)
 {
-    RECT rc, rcClient;
+    RECT rcClient;
     PPREVIEW_DATA pData = Preview_GetData(hwnd);
-    HWND hToolBar = pData->m_hwndToolBar;
     INT cx, cy;
 
     /* We want 32-bit values. Don't use WM_SIZE lParam */
@@ -1351,10 +1639,7 @@ Preview_OnSize(HWND hwnd)
 
     if (Preview_IsMainWnd(pData->m_hwnd))
     {
-        SendMessageW(hToolBar, TB_AUTOSIZE, 0, 0);
-        GetWindowRect(hToolBar, &rc);
-
-        MoveWindow(pData->m_hwndZoom, 0, 0, cx, cy - (rc.bottom - rc.top), TRUE);
+        Preview_LayoutMain(pData, cx, cy);
 
         if (pData->m_nZoomPercents > 100)
             ZoomWnd_UpdateScroll(pData, FALSE);
@@ -1433,6 +1718,7 @@ Preview_ToggleSlideShowEx(PPREVIEW_DATA pData, BOOL StartTimer)
         Preview_ResetZoom(pSlideData);
         Preview_RestartTimer(g_hwndFullscreen);
         PostMessage(pSlideData->m_hwndZoom, WM_MOUSEMOVE, 0, 0); /* Start hide cursor */
+        Preview_RibbonInvalidateAll(Preview_GetData(g_hMainWnd));
     }
 }
 
@@ -1456,12 +1742,178 @@ Preview_GoNextPic(PPREVIEW_DATA pData, BOOL bNext)
     }
 }
 
-static HRESULT
-IsCommandEnabled(UINT nCmdId)
+/* Absolute zoom, the setter behind the zoom gallery and the slider. */
+static VOID
+Preview_SetZoomLevel(PPREVIEW_DATA pData, UINT Percent)
 {
-    HWND hToolbar = GetDlgItem(g_hMainWnd, IDC_TOOLBAR);
-    LRESULT Ok = SendMessageW(hToolbar, TB_ISBUTTONENABLED, nCmdId, 0);
-    return Ok ? S_OK : SendMessageW(hToolbar, TB_COMMANDTOINDEX, nCmdId, 0) != -1 ? S_FALSE : E_FAIL;
+    if (g_pImage == NULL)
+        return;
+    Preview_UpdateZoom(pData, Percent, TRUE, TRUE);
+}
+
+/* Open...: the codec filter is the one of the folder list, plus "all". */
+static VOID
+Preview_Open(PPREVIEW_DATA pData)
+{
+    OPENFILENAMEW ofn;
+    ImageCodecInfo *codecInfo;
+    WCHAR szFile[MAX_PATH], szAll[64];
+    WCHAR *szFilter, *szAllExts, *c;
+    UINT num = 0, size = 0, j;
+    SIZE_T cchFilter, cchAllExts;
+    PCWSTR pszExtra = GetExtraExtensionsGdipList();
+
+    if (GdipGetImageDecodersSize(&num, &size) != Ok || !num)
+        return;
+    codecInfo = QuickAlloc(size, FALSE);
+    if (!codecInfo)
+        return;
+    GdipGetImageDecoders(num, size, codecInfo);
+
+    cchFilter = 128;
+    cchAllExts = wcslen(pszExtra) + 2;
+    for (j = 0; j < num; ++j)
+    {
+        cchFilter += wcslen(codecInfo[j].FormatDescription) + wcslen(codecInfo[j].FilenameExtension) * 2 + 8;
+        cchAllExts += wcslen(codecInfo[j].FilenameExtension) + 1;
+    }
+    cchFilter += cchAllExts;
+    szFilter = QuickAlloc(cchFilter * sizeof(WCHAR), TRUE);
+    szAllExts = QuickAlloc(cchAllExts * sizeof(WCHAR), TRUE);
+    if (!szFilter || !szAllExts)
+    {
+        QuickFree(szFilter);
+        QuickFree(szAllExts);
+        QuickFree(codecInfo);
+        return;
+    }
+
+    for (j = 0; j < num; ++j)
+    {
+        if (szAllExts[0])
+            StringCchCatW(szAllExts, cchAllExts, L";");
+        StringCchCatW(szAllExts, cchAllExts, codecInfo[j].FilenameExtension);
+    }
+    if (pszExtra[0])
+    {
+        if (szAllExts[0])
+            StringCchCatW(szAllExts, cchAllExts, L";");
+        StringCchCatW(szAllExts, cchAllExts, pszExtra);
+    }
+
+    szAll[0] = UNICODE_NULL;
+    LoadStringW(g_hInstance, IDS_OPEN_ALLPICTURES, szAll, _countof(szAll));
+
+    /* "All pictures", then one pair per decoder; each part ends in a NUL. */
+    c = szFilter;
+    StringCchPrintfExW(c, cchFilter, &c, &cchFilter, 0, L"%ls", szAll);
+    ++c; --cchFilter;
+    StringCchPrintfExW(c, cchFilter, &c, &cchFilter, 0, L"%ls", szAllExts);
+    ++c; --cchFilter;
+    for (j = 0; j < num; ++j)
+    {
+        StringCchPrintfExW(c, cchFilter, &c, &cchFilter, 0, L"%ls (%ls)",
+                           codecInfo[j].FormatDescription, codecInfo[j].FilenameExtension);
+        ++c; --cchFilter;
+        StringCchPrintfExW(c, cchFilter, &c, &cchFilter, 0, L"%ls", codecInfo[j].FilenameExtension);
+        ++c; --cchFilter;
+    }
+
+    ZeroMemory(szFile, sizeof(szFile));
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = pData->m_hwnd;
+    ofn.lpstrFile   = szFile;
+    ofn.nMaxFile    = _countof(szFile);
+    ofn.lpstrFilter = szFilter;
+    ofn.nFilterIndex = 1;
+    ofn.Flags       = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+
+    if (GetOpenFileNameW(&ofn))
+    {
+        pFreeFileList(g_pCurrentFile);
+        g_pCurrentFile = pBuildFileList(szFile);
+        Preview_LoadImage(pData, g_pCurrentFile);
+    }
+
+    QuickFree(szFilter);
+    QuickFree(szAllExts);
+    QuickFree(codecInfo);
+}
+
+/* Set as desktop background: the desktop takes a bitmap, so anything that is
+ * not one is written out as a BMP under %APPDATA%\Leeway\PhotoViewer. */
+static VOID
+Preview_SetWallpaper(PPREVIEW_DATA pData)
+{
+    WCHAR szPath[MAX_PATH];
+    PCWSTR pszSource = g_szFile;
+    PCWSTR pszExt = PathFindExtensionW(g_szFile);
+
+    if (g_pImage == NULL || !g_szFile[0])
+        return;
+
+    if (_wcsicmp(pszExt, L".bmp") != 0)
+    {
+        ImageCodecInfo *codecInfo;
+        UINT num = 0, size = 0, j;
+        BOOL bSaved = FALSE;
+
+        if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL,
+                                    SHGFP_TYPE_CURRENT, szPath)) ||
+            !PathAppendW(szPath, L"Leeway"))
+        {
+            ErrorBox(pData->m_hwnd, ERROR_PATH_NOT_FOUND);
+            return;
+        }
+        CreateDirectoryW(szPath, NULL);
+        if (!PathAppendW(szPath, L"PhotoViewer"))
+            return;
+        CreateDirectoryW(szPath, NULL);
+        if (!PathAppendW(szPath, L"wallpaper.bmp"))
+            return;
+
+        if (GdipGetImageEncodersSize(&num, &size) != Ok || !num)
+            return;
+        codecInfo = QuickAlloc(size, FALSE);
+        if (!codecInfo)
+            return;
+        GdipGetImageEncoders(num, size, codecInfo);
+        for (j = 0; j < num; ++j)
+        {
+            if (IsEqualGUID(&ImageFormatBMP, &codecInfo[j].FormatID))
+            {
+                Anime_Pause(&pData->m_Anime);
+                bSaved = (GdipSaveImageToFile(g_pImage, szPath, &codecInfo[j].Clsid, NULL) == Ok);
+                Anime_Start(&pData->m_Anime, 0);
+                break;
+            }
+        }
+        QuickFree(codecInfo);
+        if (!bSaved)
+        {
+            ErrorBox(pData->m_hwnd, ERROR_WRITE_FAULT);
+            return;
+        }
+        pszSource = szPath;
+    }
+
+    if (!SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, (PVOID)pszSource,
+                               SPIF_UPDATEINIFILE | SPIF_SENDCHANGE))
+        ErrorBox(pData->m_hwnd, GetLastError());
+}
+
+static VOID
+Preview_SetStatusBarShown(PPREVIEW_DATA pData, BOOL bShow)
+{
+    pData->m_bStatusShown = bShow;
+    VRB_WriteStatusBarShown(bShow);
+    if (pData->m_hwndStatus)
+        ShowWindow(pData->m_hwndStatus, bShow ? SW_SHOW : SW_HIDE);
+    if (pData->m_hwndSlider)
+        ShowWindow(pData->m_hwndSlider, bShow ? SW_SHOW : SW_HIDE);
+    Preview_OnSize(pData->m_hwnd);
+    Preview_RibbonInvalidate(pData, VRB_LWUI_STATUSBAR_TOGGLE);
 }
 
 static VOID
@@ -1579,11 +2031,41 @@ Preview_OnCommand(HWND hwnd, WPARAM wParam, LPARAM lParam)
             break;
 
         case IDC_HELP_TOC:
+        case VRB_LWUI_HELP:
             DisplayHelp(hwnd);
             break;
 
-        default:
+        case VRB_CMD_OPEN:
+            Preview_Open(pData);
             break;
+
+        case VRB_CMD_WALLPAPER:
+            Preview_SetWallpaper(pData);
+            break;
+
+        case VRB_CMD_EXIT:
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            break;
+
+        case VRB_LWUI_STATUSBAR_TOGGLE:
+            Preview_SetStatusBarShown(pData, !pData->m_bStatusShown);
+            break;
+
+        case VRB_CMD_ZOOM_FIT:
+            Preview_ResetZoom(pData);
+            break;
+
+        case VRB_CMD_ZOOM_ACTUAL:
+            Preview_UpdateZoom(pData, 100, TRUE, FALSE);
+            break;
+
+        default:
+        {
+            UINT Percent;
+            if (VRB_ZoomPercentOfCommand(nCommandID, &Percent))
+                Preview_SetZoomLevel(pData, Percent);
+            break;
+        }
     }
 }
 
@@ -1622,6 +2104,13 @@ Preview_OnDestroy(HWND hwnd)
 
     DestroyWindow(pData->m_hwndToolBar);
     pData->m_hwndToolBar = NULL;
+
+    VRB_RibbonDestroy(pData->m_pRibbon);
+    pData->m_pRibbon = NULL;
+    DestroyWindow(pData->m_hwndSlider);
+    pData->m_hwndSlider = NULL;
+    DestroyWindow(pData->m_hwndStatus);
+    pData->m_hwndStatus = NULL;
 
     SetWindowLongPtrW(pData->m_hwnd, GWLP_USERDATA, 0);
     QuickFree(pData);
@@ -1691,6 +2180,27 @@ PreviewWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             PPREVIEW_DATA pData = Preview_GetData(hwnd);
             InvalidateRect(pData->m_hwnd, NULL, TRUE);
             InvalidateRect(pData->m_hwndZoom, NULL, TRUE);
+            VRB_RibbonOnThemeChanged(pData->m_pRibbon);
+            break;
+        }
+        case WM_DPICHANGED:
+        {
+            PPREVIEW_DATA pData = Preview_GetData(hwnd);
+            VRB_RibbonOnDpiChanged(pData->m_pRibbon, HIWORD(wParam));
+            Preview_OnSize(hwnd);
+            return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+        }
+        case WM_HSCROLL:
+        {
+            /* The status bar zoom slider; the zoom window has its own. */
+            PPREVIEW_DATA pData = Preview_GetData(hwnd);
+            if (pData && pData->m_hwndSlider && (HWND)lParam == pData->m_hwndSlider &&
+                !pData->m_bSliderSync)
+            {
+                UINT Pos = (UINT)SendMessageW(pData->m_hwndSlider, TBM_GETPOS, 0, 0);
+                if (Pos < VRB_ZOOM_LEVELS)
+                    Preview_SetZoomLevel(pData, g_VrbZoomPercents[Pos]);
+            }
             break;
         }
         case WM_DESTROY:
@@ -1718,7 +2228,7 @@ PreviewWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         {
             PPREVIEW_DATA pData = Preview_GetData(g_hMainWnd);
             if (g_ImageId == lParam)
-                SendMessage(pData->m_hwndToolBar, TB_ENABLEBUTTON, LOWORD(wParam), HIWORD(wParam));
+                Preview_SetEnabled(pData, LOWORD(wParam), HIWORD(wParam));
             break;
         }
         default:
