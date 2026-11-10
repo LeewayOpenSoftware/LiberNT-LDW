@@ -10,6 +10,6 @@ printf '#include <windows.h>
 ' > ${OUT%.exe}.rc
 windres -I.. -I. ${OUT%.exe}.rc -O coff -o ${OUT%.exe}_rc.o
 gcc -std=gnu11 -Wall -Wextra -Wno-unused-parameter -c ../vribbon_model.c -o ${OUT%.exe}_model.o
-g++ -std=gnu++14 -Wall -Wextra -Wno-unused-parameter -DVRB_HAVE_F1 -DDBG=1 -I$INC \
+g++ -std=gnu++14 -Wall -Wextra -Wno-unused-parameter -DDBG=1 -I$INC \
     vribbon_host_test.cpp ../vribbon.cpp ${OUT%.exe}_model.o ${OUT%.exe}_rc.o -o $OUT -ladvapi32 -luser32 -lkernel32
 $OUT ../lang/en-US.rc

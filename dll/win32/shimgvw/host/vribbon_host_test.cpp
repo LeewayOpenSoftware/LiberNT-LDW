@@ -15,23 +15,28 @@
 #include <leewayui/ribbon.h>
 #include "../resource.h"
 #include "../vribbon.h"
-#include "../vribbon_f1.h"
 
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
 
-/* ---- framework stub ---- */
+/* ---- framework stub (ribbon.h F1 free functions) ---- */
 struct ILeewayRibbon
 {
     HWND hwnd;
-    LeewayUILayout layout;
-    bool haveLayout;
+    const LeewayUITab *tabs;
+    const LeewayUIAppMenu *menu;
+    LeewayUIQATItem qat[16];
+    UINT qatCount;
+    bool qatLoaded;
     int invalidateAll;
     UINT lastInvalid;
+    UINT dpi;
+    bool themed, themeDark;
 };
 
-HRESULT LeewayRibbonCreate(HWND, const LeewayUICommand *t, UINT32 n, LeewayUICommandExecuteHandler,
-                           LeewayUICommandStateHandler, void *, ILeewayRibbon **out)
+extern "C" {
+HRESULT WINAPI LeewayRibbonCreate(HWND, const LeewayUICommand *t, UINT32 n, LeewayUICommandExecuteHandler,
+                                  LeewayUICommandStateHandler, void *, ILeewayRibbon **out)
 {
     if (!t || !n)
         return E_INVALIDARG;
@@ -39,19 +44,30 @@ HRESULT LeewayRibbonCreate(HWND, const LeewayUICommand *t, UINT32 n, LeewayUICom
     (*out)->hwnd = (HWND)1;
     return S_OK;
 }
-void LeewayRibbonDestroy(ILeewayRibbon *r) { delete r; }
-HWND LeewayRibbonGetWindowHandle(ILeewayRibbon *r) { return r->hwnd; }
-UINT32 LeewayRibbonGetHeight(ILeewayRibbon *) { return 60; }
-void LeewayRibbonOnThemeChanged(ILeewayRibbon *) {}
-void LeewayRibbonOnDpiChanged(ILeewayRibbon *, UINT32) {}
-HRESULT LeewayRibbonSetLayout(ILeewayRibbon *r, const LeewayUILayout *l)
+HRESULT WINAPI LeewayRibbonDestroy(ILeewayRibbon *r) { delete r; return S_OK; }
+HWND WINAPI LeewayRibbonGetHWND(ILeewayRibbon *r) { return r->hwnd; }
+UINT32 WINAPI LeewayRibbonGetHeight(ILeewayRibbon *) { return 60; }
+HRESULT WINAPI LeewayRibbonSetLayout(ILeewayRibbon *r, const LeewayUITab *t) { r->tabs = t; return S_OK; }
+HRESULT WINAPI LeewayRibbonSetAppMenu(ILeewayRibbon *r, const LeewayUIAppMenu *m) { r->menu = m; return S_OK; }
+HRESULT WINAPI LeewayRibbonSetQAT(ILeewayRibbon *r, const LeewayUIQAT *q)
 {
-    r->layout = *l;
-    r->haveLayout = true;
+    r->qatCount = q->count;
+    for (UINT i = 0; i < q->count; ++i)
+        r->qat[i] = q->items[i];
     return S_OK;
 }
-void LeewayRibbonInvalidateCommand(ILeewayRibbon *r, UINT32 id) { r->lastInvalid = id; }
-void LeewayRibbonInvalidateAll(ILeewayRibbon *r) { ++r->invalidateAll; }
+HRESULT WINAPI LeewayRibbonLoadQATFromRegistry(ILeewayRibbon *r, HKEY, const WCHAR *app)
+{
+    r->qatLoaded = app && !wcscmp(app, L"PhotoViewer");
+    return S_OK;
+}
+HRESULT WINAPI LeewayRibbonSetTheme(ILeewayRibbon *r, const LeewayUITheme *t) { r->themed = true; r->themeDark = t->dark_mode; return S_OK; }
+HRESULT WINAPI LeewayRibbonSetDPI(ILeewayRibbon *r, UINT32 d) { r->dpi = d; return S_OK; }
+HRESULT WINAPI LeewayRibbonInvalidateCommand(ILeewayRibbon *r, UINT32 id) { r->lastInvalid = id; return S_OK; }
+HRESULT WINAPI LeewayRibbonInvalidateAll(ILeewayRibbon *r) { ++r->invalidateAll; return S_OK; }
+}
+
+static int CountSiblings(const LeewayUIPlacement *p) { int n = 0; for (; p; p = p->sibling) ++n; return n; }
 
 /* ---- fake host ---- */
 struct FakeHost
@@ -245,30 +261,52 @@ static void TestAdapter()
     CHECK(VRB_RibbonExecute(r, 713) == S_FALSE && fh.executed == 0);   /* zoom cell, no image */
     CHECK(FAILED(VRB_RibbonExecute(r, 4242)));
 
-    /* F1 layout conversion as the framework would see it. */
+    /* Layout tree as the framework would see it. */
     ILeewayRibbon *fw = *(ILeewayRibbon **)r;                  /* first member */
-    CHECK(fw->haveLayout);
-    if (fw->haveLayout)
+    CHECK(fw->tabs != NULL);
+    if (fw->tabs)
     {
-        const LeewayUILayout &L = fw->layout;
-        CHECK(L.tab_count == 2);
+        const LeewayUITab *home = fw->tabs, *view = home->sibling;
+        CHECK(view && !view->sibling);
         /* Labels come from the string table, linked in from lang/en-US.rc. */
-        CHECK(!wcscmp(L.tabs[0].label, L"Home") && !wcscmp(L.tabs[1].label, L"View"));
-        CHECK(!wcscmp(L.tabs[0].groups[1].label, L"Zoom"));
-        CHECK(!wcscmp(L.tabs[0].keytip, L"H") && !wcscmp(L.tabs[1].keytip, L"V"));
-        CHECK(L.tabs[0].groups[1].count == 5);
-        CHECK(L.tabs[0].groups[1].controls[4].collection &&
-              L.tabs[0].groups[1].controls[4].collection->count == 12);
-        CHECK(L.tabs[0].groups[2].controls[0].kind == LWUI_K_SPLIT_L);
-        CHECK(L.appmenu_count == 7 && L.appmenu_ids[0] == VRB_CMD_OPEN);
-        CHECK(L.qat_count >= 1);
+        CHECK(!wcscmp(home->label, L"Home") && view && !wcscmp(view->label, L"View"));
+        CHECK(home->groups->sibling && !wcscmp(home->groups->sibling->label, L"Zoom"));
+        CHECK(!wcscmp(home->keytip, L"H") && view && !wcscmp(view->keytip, L"V"));
+        const LeewayUIGroup *zoom = home->groups->sibling;
+        CHECK(CountSiblings(zoom->controls) == 5);
+        const LeewayUIPlacement *p = zoom->controls;
+        for (int i = 0; i < 4 && p; ++i)
+            p = p->sibling;
+        CHECK(p && p->kind == LWUI_CONTROL_GALLERY && p->command_id == VRB_CMD_ZOOMLEVEL);
+        CHECK(home->id != view->id);
     }
+    CHECK(fw->menu && fw->menu->items && fw->menu->items->command_id == VRB_CMD_OPEN);
+    {
+        int n = 0;
+        for (const LeewayUIAppMenuItem *m = fw->menu->items; m; m = m->sibling)
+        {
+            CHECK(m->label && m->label[0]);
+            ++n;
+        }
+        CHECK(n == 7);
+    }
+    CHECK(fw->qatCount >= 1 && fw->qat[0].command_id == IDC_PREV_PIC);
+    CHECK(fw->qatLoaded);                                      /* PhotoViewer\QAT is the framework's */
+
+    /* Framework-only buttons not in the model route to the host too. */
+    CHECK(SUCCEEDED(VRB_RibbonQueryState(r, 0xF002, &st)) && st.enabled);
+    fh.executed = 0;
+    CHECK(VRB_RibbonExecute(r, 0xF002) == S_OK && fh.executed == 0xF002);
 
     VRB_RibbonInvalidate(r, IDC_ZOOM_IN);
     CHECK(fw->lastInvalid == IDC_ZOOM_IN);
     VRB_RibbonInvalidateAll(r);
     CHECK(fw->invalidateAll == 1);
     CHECK(VRB_RibbonHeight(r) == 60);
+    VRB_RibbonOnDpiChanged(r, 144);
+    CHECK(fw->dpi == 144);
+    VRB_RibbonOnThemeChanged(r);
+    CHECK(fw->themed);
 
     VRB_RibbonDestroy(r);
 }

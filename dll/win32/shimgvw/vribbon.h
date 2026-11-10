@@ -5,18 +5,15 @@
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  *
  * The viewer talks only to this header. The model (vribbon_model.h) is data
- * and predicates; vribbon.cpp turns it into calls on the framework. Until
- * the F1 framework lands (VRB_HAVE_F1 undefined) the adapter creates the F0
- * skeleton window and the viewer keeps its pill toolbar as the default chrome.
+ * and predicates; vribbon.cpp turns it into calls on the F1 framework
+ * (ribbon.h, plain C API). ChromeStyle ribbon|pill, default ribbon.
  */
 
 #pragma once
 
 #include "vribbon_model.h"
 
-#ifdef __cplusplus
 #include <leewayui/ribbon.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,10 +40,7 @@ void VRB_RibbonOnDpiChanged(VRB_RIBBON *ribbon, UINT dpi);
 
 /* Framework callbacks, exported for the F1 library to call. */
 HRESULT VRB_RibbonExecute(VRB_RIBBON *ribbon, UINT command_id);
-#ifdef __cplusplus
 HRESULT VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommand *out);
-#endif
-void VRB_RibbonQatChanged(VRB_RIBBON *ribbon, const UINT *ids, UINT count);
 
 #ifdef __cplusplus
 }

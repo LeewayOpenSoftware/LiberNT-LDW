@@ -33,11 +33,11 @@ extern "C" {
 #define VRB_ZOOM_LEVELS     (VRB_CMD_ZOOM_LAST - VRB_CMD_ZOOM_FIRST + 1)
 
 /* Framework-owned commands (spec section 0). */
-#define VRB_LWUI_APPMENU            0xF001
-#define VRB_LWUI_QAT_CUSTOMIZE      0xF002
-#define VRB_LWUI_RIBBON_MINIMIZE    0xF003
-#define VRB_LWUI_HELP               0xF004
-#define VRB_LWUI_STATUSBAR_TOGGLE   0xF005
+/* Values are ribbon.h's LWUI_CMD_* (F1, f92ef283); kept literal so the model stays plain C. */
+#define VRB_LWUI_STATUSBAR_TOGGLE   0xF001  /* LWUI_CMD_STATUSBAR_TOGGLE */
+#define VRB_LWUI_HELP               0xF002  /* LWUI_CMD_HELP */
+#define VRB_LWUI_RIBBON_MINIMIZE    0xF003  /* LWUI_CMD_MINIMIZE */
+#define VRB_LWUI_APPMENU            0xF005  /* LWUI_CMD_MENU */
 
 /* String table layout: label of command N is VRB_IDS_LABEL_BASE + N.
  * Framework ids 0xF00x map to VRB_IDS_LABEL_BASE + 0x100 + x. */
