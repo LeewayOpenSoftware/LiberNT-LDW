@@ -3402,6 +3402,11 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         {
             ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
             NtfsAcquireMetadata(VolCB);
+            /* P3: the stream is emptied only after the mapped-file check
+             * above passed under MainResource. */
+            NTFS_ASSERT_MAIN_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_PAGING_EXCLUSIVE(FileCB);
+            NTFS_ASSERT_METADATA_HELD(VolCB);
             Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, FileCB->RequestedType, FileCB->RequestedStream, 0);
             if (NT_SUCCESS(Status) && !FileCB->RequestedStream)
             {
