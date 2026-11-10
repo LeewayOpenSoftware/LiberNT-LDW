@@ -300,6 +300,8 @@ NTAPI
 NtfsFsdQueryVolumeInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                               _Inout_ PIRP Irp)
 {
+    PAGED_CODE();
+
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
@@ -375,6 +377,8 @@ NTAPI
 NtfsFsdSetVolumeInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                             _Inout_ PIRP Irp)
 {
+    PAGED_CODE();
+
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
@@ -431,6 +435,8 @@ NtfsMountVolume(IN PDEVICE_OBJECT TargetDeviceObject,
     DISK_GEOMETRY DiskGeometry;
     ULONG Index;
     ULONG Size;
+
+    PAGED_CODE();
 
     // Get disk geometry.
     Size = sizeof(DISK_GEOMETRY);

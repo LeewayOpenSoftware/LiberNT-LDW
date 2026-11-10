@@ -145,6 +145,8 @@ NTAPI
 NtfsFsdLockControl(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                    _Inout_ PIRP Irp)
 {
+    PAGED_CODE();
+
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
@@ -173,6 +175,8 @@ NTAPI
 NtfsFsdDeviceControl(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                      _Inout_ PIRP Irp)
 {
+    PAGED_CODE();
+
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
@@ -268,6 +272,8 @@ NtfsFsdShutdown (_In_ PDEVICE_OBJECT VolumeDeviceObject,
                  _Inout_ PIRP Irp)
 {
     PLIST_ENTRY Entry;
+
+    PAGED_CODE();
 
     /* Overview:
      * System shutdown. Flush every mounted volume's cached DATA (NT Cache
@@ -380,6 +386,8 @@ VOID
 NTAPI
 NtfsUnload(_In_ _Unreferenced_parameter_ PDRIVER_OBJECT DriverObject)
 {
+    PAGED_CODE();
+
     UNREFERENCED_PARAMETER(DriverObject);
     NtfsDiskUnloadKm();
     ExDeleteResourceLite(&NtfsGlobalVolumeListResource);
@@ -924,6 +932,8 @@ NTAPI
 NtfsFsdCleanup(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                _Inout_ PIRP Irp)
 {
+    PAGED_CODE();
+
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
