@@ -1477,9 +1477,9 @@ DrawClassicFrame(PDRAW_CONTEXT context, RECT* prcCurrent)
                prcCurrent->right - prcCurrent->left, Height, PATCOPY);
         PatBlt(context->hDC, prcCurrent->left, prcCurrent->top,
                Width, prcCurrent->bottom - prcCurrent->top, PATCOPY);
-        PatBlt(context->hDC, prcCurrent->left, prcCurrent->bottom - 1,
+        PatBlt(context->hDC, prcCurrent->left, prcCurrent->bottom,
                prcCurrent->right - prcCurrent->left, -Height, PATCOPY);
-        PatBlt(context->hDC, prcCurrent->right - 1, prcCurrent->top,
+        PatBlt(context->hDC, prcCurrent->right, prcCurrent->top,
                -Width, prcCurrent->bottom - prcCurrent->top, PATCOPY);
 
         InflateRect(prcCurrent, -Width, -Height);
@@ -1502,9 +1502,9 @@ DrawClassicFrame(PDRAW_CONTEXT context, RECT* prcCurrent)
                prcCurrent->right - prcCurrent->left, Height, PATCOPY);
         PatBlt(context->hDC, prcCurrent->left, prcCurrent->top,
                Width, prcCurrent->bottom - prcCurrent->top, PATCOPY);
-        PatBlt(context->hDC, prcCurrent->left, prcCurrent->bottom - 1,
+        PatBlt(context->hDC, prcCurrent->left, prcCurrent->bottom,
                prcCurrent->right - prcCurrent->left, -Height, PATCOPY);
-        PatBlt(context->hDC, prcCurrent->right - 1, prcCurrent->top,
+        PatBlt(context->hDC, prcCurrent->right, prcCurrent->top,
               -Width, prcCurrent->bottom - prcCurrent->top, PATCOPY);
 
         InflateRect(prcCurrent, -Width, -Height);

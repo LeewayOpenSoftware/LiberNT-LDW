@@ -4,6 +4,7 @@ list(APPEND SOURCE
     ColorPreference.c
     DrawThemeParentBackground.c
     GetThemeParseErrorInfo.c
+    NonClientBorder.c
     NonClientCaption.c
     NonClientHitTest.c
     SetWindowTheme.c
