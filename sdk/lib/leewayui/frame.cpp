@@ -454,14 +454,28 @@ BOOL WINAPI LeewayFrameHandleMessage(LeewayUIFrame *f, UINT msg, WPARAM wp, LPAR
     case WM_THEMECHANGED:
     case WM_SETTINGCHANGE:
         if (f->ribbon)
-        {
-            HWND rw = RibbonWindow(f->ribbon);
-            if (rw)
-                InvalidateRect(rw, NULL, TRUE);
-        }
+            LeewayRibbonOnThemeChanged(f->ribbon);
         if (f->status)
             InvalidateRect(f->status, NULL, TRUE);
         return FALSE;
+
+    case WM_NOTIFY:
+    {
+        const NMHDR *nm = (const NMHDR *)lp;
+        if (f->ribbon && nm && nm->hwndFrom == RibbonWindow(f->ribbon) &&
+            (nm->code == LWUI_RBN_HEIGHTCHANGED || nm->code == LWUI_RBN_MINIMIZED))
+        {
+            RECT rc;
+            LeewayUIFrameRects fr;
+
+            GetClientRect(f->desc.owner, &rc);
+            LeewayFrameLayout(f, &rc, &fr);
+            if (f->desc.on_layout)
+                f->desc.on_layout(&fr, f->desc.app_context);
+            return TRUE;
+        }
+        return FALSE;
+    }
     }
     return FALSE;
 }

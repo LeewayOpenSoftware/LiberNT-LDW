@@ -34,8 +34,8 @@
  * LeewayFrameSetZoom never calls on_zoom (no feedback loop) and snaps the
  * thumb to the nearest level.
  *
- * Message routing: the app forwards WM_HSCROLL, WM_SIZE-independent theme and
- * DPI messages to LeewayFrameHandleMessage and returns the result if it says
+ * Message routing: the app forwards WM_HSCROLL, WM_NOTIFY (ribbon height
+ * changes), theme and DPI messages to LeewayFrameHandleMessage and returns the result if it says
  * TRUE. No subclassing, no hidden hooks.
  */
 
@@ -63,6 +63,16 @@ typedef enum {
 typedef void (*LeewayUIFrameZoomHandler)(UINT32 percent, void *app_context);
 
 typedef struct {
+    RECT chrome;                        /* ribbon or pill band, client coordinates */
+    RECT work;                          /* what is left for the app */
+    RECT status;                        /* empty when the status bar is hidden */
+} LeewayUIFrameRects;
+
+/* The frame re-ran the layout by itself (the ribbon changed height: minimise,
+ * QAT below, DPI). Move the app's content to rects->work. */
+typedef void (*LeewayUIFrameLayoutHandler)(const LeewayUIFrameRects *rects, void *app_context);
+
+typedef struct {
     UINT32 struct_size;                 /* sizeof(LeewayUIFrameDesc) */
     HWND owner;                         /* top-level window that hosts the chrome */
     HINSTANCE instance;
@@ -84,15 +94,10 @@ typedef struct {
     const UINT32 *zoom_levels;          /* ascending percents, at most 32 */
     UINT32 zoom_level_count;
     LeewayUIFrameZoomHandler on_zoom;
+    LeewayUIFrameLayoutHandler on_layout;   /* optional, see above */
 
     void *app_context;                  /* passed to execute, state, on_zoom */
 } LeewayUIFrameDesc;
-
-typedef struct {
-    RECT chrome;                        /* ribbon or pill band, client coordinates */
-    RECT work;                          /* what is left for the app */
-    RECT status;                        /* empty when the status bar is hidden */
-} LeewayUIFrameRects;
 
 HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **out);
 void WINAPI LeewayFrameDestroy(LeewayUIFrame *frame);

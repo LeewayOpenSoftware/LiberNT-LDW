@@ -22,13 +22,17 @@ HRESULT WINAPI LeewayRibbonCreate(HWND parent, const LeewayUICommand *, UINT32, 
 HWND WINAPI LeewayRibbonGetHWND(ILeewayRibbon *) { return g_rw; }
 UINT32 WINAPI LeewayRibbonGetHeight(ILeewayRibbon *) { return g_h; }
 HRESULT WINAPI LeewayRibbonSetDPI(ILeewayRibbon *, UINT32) { g_dpi_calls++; return S_OK; }
+static int g_theme_calls;
+HRESULT WINAPI LeewayRibbonOnThemeChanged(ILeewayRibbon *) { g_theme_calls++; return S_OK; }
 HRESULT WINAPI LeewayRibbonDestroy(ILeewayRibbon *) { g_destroyed++; return S_OK; }
 }
 
 static UINT32 g_zoomed, g_zoomcalls;
+static int g_layouts; static LONG g_lastWorkTop;
+static void OnLayout(const LeewayUIFrameRects *r, void *) { ++g_layouts; g_lastWorkTop = r->work.top; }
 static void OnZoom(UINT32 p, void *) { g_zoomed = p; g_zoomcalls++; }
 static HRESULT Exec(UINT32, void *) { return S_OK; }
-static HRESULT State(UINT32, LeewayUICommand *, void *) { return S_OK; }
+static HRESULT State(UINT32, LeewayUICommandState *, void *) { return S_OK; }
 static const UINT32 kLevels[] = { 10, 25, 50, 75, 100, 150, 200, 400, 800, 1600 };
 static LeewayUICommand kCmd[1] = { { 1, (WCHAR*)L"x", (WCHAR*)L"", (WCHAR*)L"", 0, TRUE, FALSE, TRUE } };
 
@@ -45,7 +49,7 @@ int main(void)
     d.flags = LWUI_FRAME_STATUSBAR | LWUI_FRAME_ZOOM_SLIDER;
     d.default_chrome = LWUI_CHROME_PILL; d.pill_height = 40;
     d.commands = kCmd; d.command_count = 1; d.execute = Exec; d.state = State;
-    d.zoom_levels = kLevels; d.zoom_level_count = 10; d.on_zoom = OnZoom;
+    d.zoom_levels = kLevels; d.zoom_level_count = 10; d.on_zoom = OnZoom; d.on_layout = OnLayout;
 
     /* validation */
     { LeewayUIFrameDesc bad = d; LeewayUIFrame *x = NULL; bad.struct_size = 1; CHECK(LeewayFrameCreate(&bad, &x) == E_INVALIDARG); }
@@ -100,6 +104,18 @@ int main(void)
     /* a ribbon the app built is borrowed: used, never destroyed */
     d.ribbon = &g_stub; g_destroyed = 0;
     CHECK(LeewayFrameCreate(&d, &f) == S_OK && LeewayFrameGetChrome(f) == LWUI_CHROME_RIBBON && LeewayFrameGetRibbon(f) == &g_stub);
+    /* theme change goes to the ribbon; the ribbon's height change re-lays out and tells the app */
+    CHECK(!LeewayFrameHandleMessage(f, WM_THEMECHANGED, 0, 0, &lr) && g_theme_calls == 1);
+    CHECK(!LeewayFrameHandleMessage(f, WM_SYSCOLORCHANGE, 0, 0, &lr) && g_theme_calls == 2);
+    g_layouts = 0;
+    {
+        NMHDR nm; nm.hwndFrom = g_rw; nm.idFrom = 0x4C57; nm.code = LWUI_RBN_HEIGHTCHANGED;
+        g_h = 48;
+        CHECK(LeewayFrameHandleMessage(f, WM_NOTIFY, 0x4C57, (LPARAM)&nm, &lr) && g_layouts == 1 && g_lastWorkTop == 48);
+        nm.hwndFrom = w;                                   /* someone else's notify */
+        CHECK(!LeewayFrameHandleMessage(f, WM_NOTIFY, 0, (LPARAM)&nm, &lr) && g_layouts == 1);
+        g_h = 100;
+    }
     LeewayFrameDestroy(f); f = NULL;
     CHECK(g_destroyed == 0);
     d.ribbon = NULL;
