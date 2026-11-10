@@ -20,7 +20,7 @@ static inline int FrMax(int a, int b) { return a > b ? a : b; }
 #define FRAME_ZOOMTEXT_W        56
 #define FRAME_SLIDER_W          140
 #define FRAME_GRIP_W            16
-#define FRAME_RIBBON_FALLBACK_H 120     /* until ribbon.h grows GetHeight */
+#define FRAME_RIBBON_FALLBACK_H 120     /* only if the ribbon reports height 0 */
 
 struct LeewayUIFrame {
     LeewayUIFrameDesc desc;
@@ -50,24 +50,19 @@ static ILeewayRibbon *RibbonCreate(const LeewayUIFrameDesc *d)
 
 static HWND RibbonWindow(ILeewayRibbon *r)
 {
-    return (r && r->GetHWND) ? r->GetHWND(r) : NULL;
+    return r ? LeewayRibbonGetHWND(r) : NULL;
 }
 
 static void RibbonDestroy(ILeewayRibbon *r)
 {
-    if (r && r->Destroy)
-        r->Destroy(r);
+    if (r)
+        LeewayRibbonDestroy(r);
 }
 
-/* ribbon.h has no GetHeight yet (review MUST 2): use the window's own height,
- * which the ribbon sets for itself, and a default before it has one. */
 static int RibbonHeight(ILeewayRibbon *r, UINT32 dpi)
 {
-    RECT rc;
-    HWND w = RibbonWindow(r);
-    if (w && GetWindowRect(w, &rc) && rc.bottom - rc.top > 0)
-        return rc.bottom - rc.top;
-    return LeewayDpiScale(dpi, FRAME_RIBBON_FALLBACK_H);
+    UINT32 h = r ? LeewayRibbonGetHeight(r) : 0;
+    return h ? (int)h : LeewayDpiScale(dpi, FRAME_RIBBON_FALLBACK_H);
 }
 
 /* ---- registry ---- */
@@ -442,8 +437,8 @@ BOOL WINAPI LeewayFrameHandleMessage(LeewayUIFrame *f, UINT msg, WPARAM wp, LPAR
 
     case WM_DPICHANGED:
         f->dpi = HIWORD(wp);
-        if (f->ribbon && f->ribbon->HandleDPIChanged)
-            f->ribbon->HandleDPIChanged(f->ribbon, f->dpi);
+        if (f->ribbon)
+            LeewayRibbonSetDPI(f->ribbon, f->dpi);
         return FALSE;   /* the app still applies the suggested window rect */
 
     case WM_THEMECHANGED:

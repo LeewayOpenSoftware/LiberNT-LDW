@@ -7,20 +7,22 @@
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); g_fail++; } } while (0)
 
-/* stub ribbon */
-static HWND g_rw; static int g_dpi_calls, g_destroyed, g_ribbon_fail;
-static HWND StubGetHWND(ILeewayRibbon *) { return g_rw; }
-static HRESULT StubDpi(ILeewayRibbon *, UINT32) { g_dpi_calls++; return S_OK; }
-static HRESULT StubDestroy(ILeewayRibbon *) { g_destroyed++; return S_OK; }
+/* stub ribbon: link-time replacement for the ribbon.h free functions */
+static HWND g_rw; static int g_dpi_calls, g_destroyed, g_ribbon_fail; static UINT32 g_h = 100;
+struct ILeewayRibbon { int dummy; };
 static ILeewayRibbon g_stub;
-extern "C" HRESULT WINAPI LeewayRibbonCreate(HWND parent, const LeewayUICommand *, UINT32, LeewayUICommandExecuteHandler,
+extern "C" {
+HRESULT WINAPI LeewayRibbonCreate(HWND parent, const LeewayUICommand *, UINT32, LeewayUICommandExecuteHandler,
     LeewayUICommandStateHandler, void *, ILeewayRibbon **out)
 {
     if (g_ribbon_fail) return E_FAIL;
     g_rw = CreateWindowExW(0, L"STATIC", NULL, WS_CHILD | WS_VISIBLE, 0, 0, 10, 100, parent, NULL, NULL, NULL);
-    ZeroMemory(&g_stub, sizeof(g_stub));
-    g_stub.GetHWND = StubGetHWND; g_stub.HandleDPIChanged = StubDpi; g_stub.Destroy = StubDestroy;
     *out = &g_stub; return S_OK;
+}
+HWND WINAPI LeewayRibbonGetHWND(ILeewayRibbon *) { return g_rw; }
+UINT32 WINAPI LeewayRibbonGetHeight(ILeewayRibbon *) { return g_h; }
+HRESULT WINAPI LeewayRibbonSetDPI(ILeewayRibbon *, UINT32) { g_dpi_calls++; return S_OK; }
+HRESULT WINAPI LeewayRibbonDestroy(ILeewayRibbon *) { g_destroyed++; return S_OK; }
 }
 
 static UINT32 g_zoomed, g_zoomcalls;
@@ -89,6 +91,8 @@ int main(void)
     LeewayFrameLayout(f, &c, &r);
     CHECK(r.chrome.bottom - r.chrome.top == 100);          /* ribbon window height */
     { RECT rc; GetWindowRect(g_rw, &rc); CHECK(rc.right - rc.left == 800); }
+    g_h = 60; LeewayFrameLayout(f, &c, &r); CHECK(r.chrome.bottom - r.chrome.top == 60);   /* minimized height */
+    g_h = 100;
     CHECK(!LeewayFrameHandleMessage(f, WM_DPICHANGED, MAKEWPARAM(144, 144), 0, &lr) && g_dpi_calls == 1);
     LeewayFrameDestroy(f); f = NULL;
     CHECK(g_destroyed == 1);
