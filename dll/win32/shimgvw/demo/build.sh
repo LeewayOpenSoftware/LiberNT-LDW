@@ -12,10 +12,10 @@ OUT="$HERE/viewer_demo.exe"
 OBJ="${TMPDIR:-/tmp}/vdemo.$$"; mkdir -p "$OBJ"
 INC="-I$ROOT/sdk/include -I$SHIM"
 $RC -I"$SHIM" -I"$HERE" "$HERE/demo.rc" -O coff -o "$OBJ/demo_rc.o"
-$CC -std=gnu11 -O1 -DUNICODE -D_UNICODE $INC -c "$SHIM/vribbon_model.c" -o "$OBJ/model.o"
-$CXX -std=gnu++17 -O1 -static -mwindows -municode -DUNICODE -D_UNICODE -Wno-deprecated-declarations $INC \
+$CC -std=gnu11 -O1 -Wall -Wextra -Wno-unused-parameter -DUNICODE -D_UNICODE $INC -c "$SHIM/vribbon_model.c" -o "$OBJ/model.o"
+$CXX -std=gnu++17 -O1 -Wall -Wextra -Wno-unused-parameter -static -mwindows -municode -DUNICODE -D_UNICODE -Wno-deprecated-declarations $INC \
   "$HERE/viewer_demo.cpp" "$SHIM/vribbon.cpp" "$LWUI/ribbon.cpp" "$LWUI/frame.cpp" "$LWUI/dpi.cpp" "$LWUI/theme.cpp" \
   "$OBJ/model.o" "$OBJ/demo_rc.o" -o "$OUT" \
-  -lgdiplus -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -lshlwapi -luuid
+  -lgdiplus -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -lshlwapi -luuid -luxtheme -ldwmapi
 rm -rf "$OBJ"
 echo "built $OUT"

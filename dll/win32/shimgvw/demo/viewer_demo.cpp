@@ -230,6 +230,9 @@ static UINT HostZoom(void *) { return g_zoom; }
 
 static void OnFrameZoom(UINT32 p, void *) { SetZoomPercent(p); }
 
+static void Layout();
+static void OnFrameRelayout(const LeewayUIFrameRects *, void *) { Layout(); }
+
 /* ---- window ---- */
 
 static void Layout()
@@ -407,6 +410,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
     d.zoom_levels = g_VrbZoomPercents;
     d.zoom_level_count = VRB_ZOOM_LEVELS;
     d.on_zoom = OnFrameZoom;
+    d.on_layout = OnFrameRelayout;
     if (FAILED(LeewayFrameCreate(&d, &g_frame)))
     {
         MessageBoxW(NULL, L"Could not create the frame.", L"Photo Viewer demo", MB_ICONERROR);
@@ -425,6 +429,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
     MSG m;
     while (GetMessageW(&m, NULL, 0, 0) > 0)
     {
+        if (g_rib && LeewayRibbonPreTranslateMessage(VRB_RibbonFramework(g_rib), &m))
+            continue;
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }

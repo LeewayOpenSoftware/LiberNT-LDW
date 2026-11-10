@@ -42,7 +42,7 @@ void VRB_RibbonOnDpiChanged(VRB_RIBBON *ribbon, UINT dpi);
 
 /* Framework callbacks, exported for the F1 library to call. */
 HRESULT VRB_RibbonExecute(VRB_RIBBON *ribbon, UINT command_id);
-HRESULT VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommand *out);
+HRESULT VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommandState *out);
 
 #ifdef __cplusplus
 }

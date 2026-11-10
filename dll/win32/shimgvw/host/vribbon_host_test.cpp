@@ -19,19 +19,17 @@
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
 
-/* ---- framework stub (ribbon.h F1 free functions) ---- */
+/* ---- framework stub (ribbon.h, D-R1 plain C) ---- */
 struct ILeewayRibbon
 {
     HWND hwnd;
-    const LeewayUITab *tabs;
-    const LeewayUIAppMenu *menu;
-    LeewayUIQATItem qat[16];
-    UINT qatCount;
-    bool qatLoaded;
-    int invalidateAll;
-    UINT lastInvalid;
-    UINT dpi;
-    bool themed, themeDark;
+    LeewayUILayout layout;
+    bool haveLayout;
+    struct Coll { UINT32 id, count, flags; UINT32 first, last; WCHAR firstLabel[16]; } coll[8];
+    UINT nColl;
+    int invalidateAll, themed;
+    UINT lastInvalid, dpi;
+    bool keyTipsChecked;
 };
 
 extern "C" {
@@ -47,27 +45,26 @@ HRESULT WINAPI LeewayRibbonCreate(HWND, const LeewayUICommand *t, UINT32 n, Leew
 HRESULT WINAPI LeewayRibbonDestroy(ILeewayRibbon *r) { delete r; return S_OK; }
 HWND WINAPI LeewayRibbonGetHWND(ILeewayRibbon *r) { return r->hwnd; }
 UINT32 WINAPI LeewayRibbonGetHeight(ILeewayRibbon *) { return 60; }
-HRESULT WINAPI LeewayRibbonSetLayout(ILeewayRibbon *r, const LeewayUITab *t) { r->tabs = t; return S_OK; }
-HRESULT WINAPI LeewayRibbonSetAppMenu(ILeewayRibbon *r, const LeewayUIAppMenu *m) { r->menu = m; return S_OK; }
-HRESULT WINAPI LeewayRibbonSetQAT(ILeewayRibbon *r, const LeewayUIQAT *q)
+HRESULT WINAPI LeewayRibbonSetLayout(ILeewayRibbon *r, const LeewayUILayout *l)
 {
-    r->qatCount = q->count;
-    for (UINT i = 0; i < q->count; ++i)
-        r->qat[i] = q->items[i];
+    r->layout = *l;
+    r->haveLayout = true;
     return S_OK;
 }
-HRESULT WINAPI LeewayRibbonLoadQATFromRegistry(ILeewayRibbon *r, HKEY, const WCHAR *app)
+HRESULT WINAPI LeewayRibbonSetCollection(ILeewayRibbon *r, UINT32 id, const LeewayUICollectionItem *items, UINT32 count, UINT32 flags)
 {
-    r->qatLoaded = app && !wcscmp(app, L"PhotoViewer");
+    if (r->nColl >= 8 || !count)
+        return E_FAIL;
+    ILeewayRibbon::Coll &c = r->coll[r->nColl++];
+    c.id = id; c.count = count; c.flags = flags; c.first = items[0].id; c.last = items[count - 1].id;
+    lstrcpynW(c.firstLabel, items[0].label, 16);
     return S_OK;
 }
-HRESULT WINAPI LeewayRibbonSetTheme(ILeewayRibbon *r, const LeewayUITheme *t) { r->themed = true; r->themeDark = t->dark_mode; return S_OK; }
+HRESULT WINAPI LeewayRibbonOnThemeChanged(ILeewayRibbon *r) { ++r->themed; return S_OK; }
 HRESULT WINAPI LeewayRibbonSetDPI(ILeewayRibbon *r, UINT32 d) { r->dpi = d; return S_OK; }
 HRESULT WINAPI LeewayRibbonInvalidateCommand(ILeewayRibbon *r, UINT32 id) { r->lastInvalid = id; return S_OK; }
 HRESULT WINAPI LeewayRibbonInvalidateAll(ILeewayRibbon *r) { ++r->invalidateAll; return S_OK; }
 }
-
-static int CountSiblings(const LeewayUIPlacement *p) { int n = 0; for (; p; p = p->sibling) ++n; return n; }
 
 /* ---- fake host ---- */
 struct FakeHost
@@ -243,7 +240,7 @@ static void TestAdapter()
     CHECK(SUCCEEDED(VRB_RibbonCreate((HWND)1, GetModuleHandleW(NULL), &h, &r)) && r);
     if (!r) return;
 
-    LeewayUICommand st;
+    LeewayUICommandState st = {};
     CHECK(SUCCEEDED(VRB_RibbonQueryState(r, VRB_CMD_ZOOMLEVEL, &st)));
     CHECK(!wcscmp(st.label, L"37%"));                         /* label = current zoom */
     CHECK(!st.enabled);                                       /* no image */
@@ -261,42 +258,49 @@ static void TestAdapter()
     CHECK(VRB_RibbonExecute(r, 713) == S_FALSE && fh.executed == 0);   /* zoom cell, no image */
     CHECK(FAILED(VRB_RibbonExecute(r, 4242)));
 
-    /* Layout tree as the framework would see it. */
+    /* Layout as the framework would see it. */
     ILeewayRibbon *fw = *(ILeewayRibbon **)r;                  /* first member */
-    CHECK(fw->tabs != NULL);
-    if (fw->tabs)
+    CHECK(fw->haveLayout);
+    if (fw->haveLayout)
     {
-        const LeewayUITab *home = fw->tabs, *view = home->sibling;
-        CHECK(view && !view->sibling);
+        const LeewayUILayout &L = fw->layout;
+        CHECK(L.app_name && !wcscmp(L.app_name, L"PhotoViewer"));
+        CHECK(L.tab_count == 2);
         /* Labels come from the string table, linked in from lang/en-US.rc. */
-        CHECK(!wcscmp(home->label, L"Home") && view && !wcscmp(view->label, L"View"));
-        CHECK(home->groups->sibling && !wcscmp(home->groups->sibling->label, L"Zoom"));
-        CHECK(!wcscmp(home->keytip, L"H") && view && !wcscmp(view->keytip, L"V"));
-        const LeewayUIGroup *zoom = home->groups->sibling;
-        CHECK(CountSiblings(zoom->controls) == 5);
-        const LeewayUIPlacement *p = zoom->controls;
-        for (int i = 0; i < 4 && p; ++i)
-            p = p->sibling;
-        CHECK(p && p->kind == LWUI_CONTROL_GALLERY && p->command_id == VRB_CMD_ZOOMLEVEL);
-        CHECK(home->id != view->id);
+        CHECK(!wcscmp(L.tabs[0].label, L"Home") && !wcscmp(L.tabs[1].label, L"View"));
+        CHECK(!wcscmp(L.tabs[0].groups[1].label, L"Zoom"));
+        CHECK(!wcscmp(L.tabs[0].keytip, L"H") && !wcscmp(L.tabs[1].keytip, L"V"));
+        CHECK(L.tabs[0].id != L.tabs[1].id);
+        CHECK(L.tabs[0].groups[1].control_count == 5);
+        CHECK(L.tabs[0].groups[1].controls[4].kind == LWUI_CONTROL_GALLERY &&
+              L.tabs[0].groups[1].controls[4].command_id == VRB_CMD_ZOOMLEVEL);
+        CHECK(L.tabs[0].groups[2].controls[0].kind == LWUI_CONTROL_SPLIT_LARGE);
+        CHECK(L.tabs[0].groups[1].variant_order != 0);
+        CHECK(L.appmenu_count == 7 && L.appmenu_ids[0] == VRB_CMD_OPEN);
+        CHECK(L.qat_count >= 1 && L.qat_default_ids[0] == IDC_PREV_PIC);
+        CHECK(L.help_command_id == 0);
     }
-    CHECK(fw->menu && fw->menu->items && fw->menu->items->command_id == VRB_CMD_OPEN);
+    /* Collections: the zoom gallery (710) with the cells, the slide show split menu. */
     {
-        int n = 0;
-        for (const LeewayUIAppMenuItem *m = fw->menu->items; m; m = m->sibling)
+        bool gal = false, split = false;
+        for (UINT i = 0; i < fw->nColl; ++i)
         {
-            CHECK(m->label && m->label[0]);
-            ++n;
+            if (fw->coll[i].id == VRB_CMD_ZOOMLEVEL)
+            {
+                gal = fw->coll[i].count == 12 && fw->coll[i].first == VRB_CMD_ZOOM_FIRST &&
+                      !wcscmp(fw->coll[i].firstLabel, L"10%");
+            }
+            if (fw->coll[i].id == IDC_SLIDE_SHOW && fw->coll[i].count == 2)
+                split = true;
         }
-        CHECK(n == 7);
+        CHECK(gal);
+        CHECK(split);
     }
-    CHECK(fw->qatCount >= 1 && fw->qat[0].command_id == IDC_PREV_PIC);
-    CHECK(fw->qatLoaded);                                      /* PhotoViewer\QAT is the framework's */
 
     /* Framework-only buttons not in the model route to the host too. */
-    CHECK(SUCCEEDED(VRB_RibbonQueryState(r, 0xF002, &st)) && st.enabled);
+    CHECK(SUCCEEDED(VRB_RibbonQueryState(r, 0xF004, &st)) && st.enabled);
     fh.executed = 0;
-    CHECK(VRB_RibbonExecute(r, 0xF002) == S_OK && fh.executed == 0xF002);
+    CHECK(VRB_RibbonExecute(r, 0xF004) == S_OK && fh.executed == 0xF004);
 
     VRB_RibbonInvalidate(r, IDC_ZOOM_IN);
     CHECK(fw->lastInvalid == IDC_ZOOM_IN);
@@ -306,7 +310,7 @@ static void TestAdapter()
     VRB_RibbonOnDpiChanged(r, 144);
     CHECK(fw->dpi == 144);
     VRB_RibbonOnThemeChanged(r);
-    CHECK(fw->themed);
+    CHECK(fw->themed == 1);
 
     VRB_RibbonDestroy(r);
 }

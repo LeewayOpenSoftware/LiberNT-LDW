@@ -41,7 +41,7 @@ STRINGTABLE
 BEGIN
     /* Ribbon: command labels (1000 + command id) */
     1259 "Minimize the ribbon"
-    1257 "Status bar"
+    1261 "Status bar"
     1500 "Previous"
     1501 "Next"
     1502 "Fit"

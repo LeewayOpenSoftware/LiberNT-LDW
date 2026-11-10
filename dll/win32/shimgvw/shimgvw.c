@@ -1112,6 +1112,15 @@ FrameZoom(UINT32 Percent, void *ctx)
     Preview_SetZoomLevel((PPREVIEW_DATA)ctx, Percent);
 }
 
+/* The ribbon changed height (minimise, QAT below, DPI): the frame re-ran the layout. */
+static void
+FrameRelayout(const LeewayUIFrameRects *rects, void *ctx)
+{
+    PPREVIEW_DATA pData = (PPREVIEW_DATA)ctx;
+    MoveWindow(pData->m_hwndZoom, rects->work.left, rects->work.top,
+               rects->work.right - rects->work.left, rects->work.bottom - rects->work.top, TRUE);
+}
+
 static BOOL
 Preview_CreateRibbonChrome(PPREVIEW_DATA pData)
 {
@@ -1142,6 +1151,7 @@ Preview_CreateRibbonChrome(PPREVIEW_DATA pData)
     desc.zoom_levels = g_VrbZoomPercents;
     desc.zoom_level_count = VRB_ZOOM_LEVELS;
     desc.on_zoom = FrameZoom;
+    desc.on_layout = FrameRelayout;
     desc.app_context = pData;
     if (FAILED(LeewayFrameCreate(&desc, &pData->m_pFrame)) ||
         LeewayFrameGetChrome(pData->m_pFrame) != LWUI_CHROME_RIBBON)
@@ -2269,6 +2279,14 @@ ImageView_Main(HWND hwnd, LPCWSTR szFileName)
     while (GetMessageW(&msg, NULL, 0, 0) > 0)
     {
         const HWND hwndFull = g_hwndFullscreen;
+        /* Alt / F10 keytips and Ctrl+F1 of the ribbon, when there is one. */
+        if (IsWindow(hMainWnd))
+        {
+            PPREVIEW_DATA pMain = Preview_GetData(hMainWnd);
+            if (pMain && pMain->m_pRibbon &&
+                LeewayRibbonPreTranslateMessage(VRB_RibbonFramework(pMain->m_pRibbon), &msg))
+                continue;
+        }
         if (IsWindowVisible(hwndFull) && TranslateAcceleratorW(hwndFull, hAccel, &msg))
             continue;
         if (TranslateAcceleratorW(hMainWnd, hAccel, &msg))

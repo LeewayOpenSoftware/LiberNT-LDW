@@ -28,17 +28,19 @@ struct VRB_RIBBON
     WCHAR labels[VRB_MAX_COMMANDS][VRB_LABEL_CHARS];
     WCHAR tips[VRB_MAX_COMMANDS][VRB_LABEL_CHARS * 2];
     WCHAR zoomLabel[VRB_LABEL_CHARS];
-    /* Layout converted for the framework. SetLayout copies; the nodes stay
-     * here so the conversion is plain data and easy to inspect. */
+    /* Layout converted for the framework (arrays + counts). SetLayout and
+     * SetCollection copy, the tables stay here so the conversion is plain
+     * data and easy to inspect. */
     WCHAR tabLabels[8][VRB_LABEL_CHARS];
     WCHAR groupLabels[32][VRB_LABEL_CHARS];
     LeewayUITab fwTabs[8];
     LeewayUIGroup fwGroups[32];
     LeewayUIPlacement fwPlace[96];
-    LeewayUIAppMenuItem fwMenu[16];
-    LeewayUIAppMenu fwAppMenu;
-    LeewayUIQATItem fwQatItems[VRB_QAT_MAX];
-    LeewayUIQAT fwQat;
+    UINT32 fwMenuIds[16];
+    UINT32 fwQatIds[VRB_QAT_MAX];
+    LeewayUILayout fwLayout;
+    LeewayUICollectionItem collItems[16];
+    WCHAR collLabels[16][VRB_LABEL_CHARS];
 };
 
 BOOL
@@ -64,7 +66,7 @@ FwExecute(UINT32 command_id, void *ctx)
 }
 
 static HRESULT
-FwQueryState(UINT32 command_id, LeewayUICommand *out, void *ctx)
+FwQueryState(UINT32 command_id, LeewayUICommandState *out, void *ctx)
 {
     return VRB_RibbonQueryState((VRB_RIBBON *)ctx, command_id, out);
 }
@@ -92,7 +94,7 @@ VRB_RibbonExecute(VRB_RIBBON *ribbon, UINT command_id)
 }
 
 HRESULT
-VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommand *out)
+VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommandState *out)
 {
     UINT i;
     BOOL enabled, checked;
@@ -106,18 +108,15 @@ VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommand *out)
     }
     if (i >= g_VrbCommandCount)
     {
-        /* Framework buttons the model does not list (help, maximize, menu):
-         * always available, the host decides what they do. */
+        /* Framework buttons the model does not list (help, QAT dropdown, app
+         * button): always available; the host decides what they do. */
         if (command_id < 0xF001 || command_id > 0xF005)
             return E_INVALIDARG;
-        ZeroMemory(out, sizeof(*out));
-        out->id = command_id;
         out->enabled = TRUE;
         out->visible = TRUE;
         return S_OK;
     }
 
-    *out = ribbon->table[i];
     VRB_EvalState(&ribbon->host, command_id, &enabled, &checked);
     out->enabled = enabled;
     out->checked = checked;
@@ -133,6 +132,25 @@ VRB_RibbonQueryState(VRB_RIBBON *ribbon, UINT command_id, LeewayUICommand *out)
 }
 
 /* ---- layout conversion (ribbon.h tree) ---- */
+
+static UINT32
+ToFwVariants(VRB_VARIANTS v)
+{
+    switch (v)
+    {
+        case VRB_V_LARGE_COLLAPSED:
+            return LWUI_VARIANT_ORDER(LWUI_VARIANT_LARGE, LWUI_VARIANT_COLLAPSED, 0, 0);
+        case VRB_V_FULL:
+            return LWUI_VARIANT_ORDER(LWUI_VARIANT_LARGE, LWUI_VARIANT_MIXED, LWUI_VARIANT_SMALL, LWUI_VARIANT_COLLAPSED);
+        case VRB_V_MIXED:
+            return LWUI_VARIANT_ORDER(LWUI_VARIANT_MIXED, LWUI_VARIANT_SMALL, LWUI_VARIANT_COLLAPSED, 0);
+        case VRB_V_LARGE_SMALL:
+            return LWUI_VARIANT_ORDER(LWUI_VARIANT_LARGE, LWUI_VARIANT_SMALL, LWUI_VARIANT_COLLAPSED, 0);
+        case VRB_V_SMALL:
+            return LWUI_VARIANT_ORDER(LWUI_VARIANT_SMALL, 0, 0, 0);
+    }
+    return 0;
+}
 
 static LeewayUIControlKind
 ToFwKind(VRB_KIND k)
@@ -150,6 +168,36 @@ ToFwKind(VRB_KIND k)
         case VRB_K_GALLERY:     return LWUI_CONTROL_GALLERY;
     }
     return LWUI_CONTROL_BUTTON_LARGE;
+}
+
+/* Items of a collection: the label is the command's, or the percent for the
+ * zoom cells. */
+static HRESULT
+SetCollectionFor(VRB_RIBBON *r, const VRB_CONTROL *ctl)
+{
+    const VRB_COLLECTION *co = ctl->collection;
+    UINT k, idx, pct;
+
+    if (co->count > 16)
+        return E_FAIL;
+    for (k = 0; k < co->count; ++k)
+    {
+        UINT id = co->ids[k];
+
+        r->collLabels[k][0] = L'\0';
+        for (idx = 0; idx < g_VrbCommandCount; ++idx)
+        {
+            if (g_VrbCommands[idx].id == id)
+                lstrcpynW(r->collLabels[k], r->labels[idx], VRB_LABEL_CHARS);
+        }
+        if (!r->collLabels[k][0] && VRB_ZoomPercentOfCommand(id, &pct))
+            StringCchPrintfW(r->collLabels[k], VRB_LABEL_CHARS, L"%u%%", pct);
+        r->collItems[k].id = id;
+        r->collItems[k].label = r->collLabels[k];
+        r->collItems[k].icon_id = 0;
+    }
+    return LeewayRibbonSetCollection(r->fw, ctl->id, r->collItems, co->count,
+                                     co->last_choice_becomes_primary ? LWUI_COLLECTION_LAST_CHOICE_PRIMARY : 0);
 }
 
 static HRESULT
@@ -184,69 +232,60 @@ SetFrameworkLayout(VRB_RIBBON *r)
 
                 if (nCtl >= 96)
                     return E_FAIL;
-                p = &r->fwPlace[nCtl];
+                p = &r->fwPlace[nCtl++];
                 p->command_id = ctl->id;
                 p->kind = ToFwKind(ctl->kind);
                 p->keytip = ctl->keytip;
-                p->sibling = (c + 1 < grp->count) ? &r->fwPlace[nCtl + 1] : NULL;
-                ++nCtl;
             }
-            fg = &r->fwGroups[nGroup];
-            fg->label = r->groupLabels[nGroup];
+            fg = &r->fwGroups[nGroup++];
+            fg->label = r->groupLabels[nGroup - 1];
             fg->keytip = NULL;
-            fg->min_columns = 0;
-            fg->max_columns = 0;
-            fg->variant_order = 0;      /* framework-set; the model's variant order is not passed */
+            fg->variant_order = ToFwVariants(grp->variants);
             fg->launcher_id = 0;
+            fg->control_count = grp->count;
             fg->controls = &r->fwPlace[firstCtl];
-            fg->sibling = (g + 1 < tab->count) ? &r->fwGroups[nGroup + 1] : NULL;
-            ++nGroup;
         }
         r->fwTabs[t].id = 100 + t;
         r->fwTabs[t].label = r->tabLabels[t];
         r->fwTabs[t].keytip = tab->keytip;
+        r->fwTabs[t].context = NULL;
+        r->fwTabs[t].group_count = tab->count;
         r->fwTabs[t].groups = &r->fwGroups[firstGroup];
-        r->fwTabs[t].sibling = (t + 1 < L->tab_count) ? &r->fwTabs[t + 1] : NULL;
     }
-
-    hr = LeewayRibbonSetLayout(r->fw, &r->fwTabs[0]);
-    if (FAILED(hr))
-        return hr;
-
     for (k = 0; k < L->appmenu_count; ++k)
-    {
-        LeewayUIAppMenuItem *m = &r->fwMenu[k];
-        UINT idx;
-
-        m->command_id = L->appmenu[k].id;
-        m->kind = LWUI_CONTROL_BUTTON_LARGE;
-        m->label = NULL;
-        for (idx = 0; idx < g_VrbCommandCount; ++idx)
-        {
-            if (g_VrbCommands[idx].id == m->command_id)
-                m->label = r->labels[idx];
-        }
-        m->sibling = (k + 1 < L->appmenu_count) ? &r->fwMenu[k + 1] : NULL;
-    }
-    r->fwAppMenu.items = L->appmenu_count ? &r->fwMenu[0] : NULL;
-    hr = LeewayRibbonSetAppMenu(r->fw, &r->fwAppMenu);
-    if (FAILED(hr))
-        return hr;
-
-    /* QAT: defaults first, then whatever the user saved under
-     * HKCU\Software\Leeway\PhotoViewer\QAT (the framework owns persistence). */
+        r->fwMenuIds[k] = L->appmenu[k].id;
     nQat = L->qat_count > VRB_QAT_MAX ? VRB_QAT_MAX : L->qat_count;
     for (k = 0; k < nQat; ++k)
+        r->fwQatIds[k] = L->qat_default[k];
+
+    r->fwLayout.app_name = L"PhotoViewer";      /* QAT: HKCU\Software\Leeway\PhotoViewer\QAT */
+    r->fwLayout.tab_count = L->tab_count;
+    r->fwLayout.tabs = r->fwTabs;
+    r->fwLayout.appmenu_count = L->appmenu_count;
+    r->fwLayout.appmenu_ids = r->fwMenuIds;
+    r->fwLayout.qat_count = nQat;
+    r->fwLayout.qat_default_ids = r->fwQatIds;
+    r->fwLayout.help_command_id = 0;            /* execute(LWUI_HELP) */
+
+    /* Collections first: the gallery and split menus need their items when
+     * the layout is validated against them. */
+    for (t = 0; t < L->tab_count; ++t)
     {
-        r->fwQatItems[k].command_id = L->qat_default[k];
-        r->fwQatItems[k].kind = LWUI_CONTROL_BUTTON_SMALL;
+        for (g = 0; g < L->tabs[t].count; ++g)
+        {
+            const VRB_GROUP *grp = &L->tabs[t].groups[g];
+            for (c = 0; c < grp->count; ++c)
+            {
+                if (grp->controls[c].collection)
+                {
+                    hr = SetCollectionFor(r, &grp->controls[c]);
+                    if (FAILED(hr))
+                        return hr;
+                }
+            }
+        }
     }
-    r->fwQat.items = r->fwQatItems;
-    r->fwQat.count = nQat;
-    hr = LeewayRibbonSetQAT(r->fw, &r->fwQat);
-    if (SUCCEEDED(hr))
-        LeewayRibbonLoadQATFromRegistry(r->fw, HKEY_CURRENT_USER, L"PhotoViewer");  /* absent is fine */
-    return hr;
+    return LeewayRibbonSetLayout(r->fw, &r->fwLayout);
 }
 
 /* ---- lifetime ---- */
@@ -368,20 +407,8 @@ VRB_RibbonInvalidateAll(VRB_RIBBON *ribbon)
 void
 VRB_RibbonOnThemeChanged(VRB_RIBBON *ribbon)
 {
-    LeewayUITheme th;
-    COLORREF face;
-
-    if (!ribbon)
-        return;
-    face = GetSysColor(COLOR_BTNFACE);
-    th.text_color = GetSysColor(COLOR_BTNTEXT);
-    th.bg_color = face;
-    th.border_color = GetSysColor(COLOR_BTNSHADOW);
-    th.hover_color = GetSysColor(COLOR_HOTLIGHT);
-    th.pressed_color = GetSysColor(COLOR_HIGHLIGHT);
-    th.disabled_color = GetSysColor(COLOR_GRAYTEXT);
-    th.dark_mode = (GetRValue(face) * 30 + GetGValue(face) * 59 + GetBValue(face) * 11) / 100 < 128;
-    LeewayRibbonSetTheme(ribbon->fw, &th);
+    if (ribbon)
+        LeewayRibbonOnThemeChanged(ribbon->fw);
 }
 
 void
