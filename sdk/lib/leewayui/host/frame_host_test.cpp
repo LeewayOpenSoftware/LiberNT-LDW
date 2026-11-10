@@ -1,0 +1,110 @@
+/* Host test for frame.cpp (MinGW, real comctl32, stub ribbon). Prints "frame_host_test: ok". */
+#include <windows.h>
+#include <commctrl.h>
+#include <stdio.h>
+#include <leewayui/frame.h>
+
+static int g_fail;
+#define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); g_fail++; } } while (0)
+
+/* stub ribbon */
+static HWND g_rw; static int g_dpi_calls, g_destroyed, g_ribbon_fail;
+static HWND StubGetHWND(ILeewayRibbon *) { return g_rw; }
+static HRESULT StubDpi(ILeewayRibbon *, UINT32) { g_dpi_calls++; return S_OK; }
+static HRESULT StubDestroy(ILeewayRibbon *) { g_destroyed++; return S_OK; }
+static ILeewayRibbon g_stub;
+extern "C" HRESULT WINAPI LeewayRibbonCreate(HWND parent, const LeewayUICommand *, UINT32, LeewayUICommandExecuteHandler,
+    LeewayUICommandStateHandler, void *, ILeewayRibbon **out)
+{
+    if (g_ribbon_fail) return E_FAIL;
+    g_rw = CreateWindowExW(0, L"STATIC", NULL, WS_CHILD | WS_VISIBLE, 0, 0, 10, 100, parent, NULL, NULL, NULL);
+    ZeroMemory(&g_stub, sizeof(g_stub));
+    g_stub.GetHWND = StubGetHWND; g_stub.HandleDPIChanged = StubDpi; g_stub.Destroy = StubDestroy;
+    *out = &g_stub; return S_OK;
+}
+
+static UINT32 g_zoomed, g_zoomcalls;
+static void OnZoom(UINT32 p, void *) { g_zoomed = p; g_zoomcalls++; }
+static HRESULT Exec(UINT32, void *) { return S_OK; }
+static HRESULT State(UINT32, LeewayUICommand *, void *) { return S_OK; }
+static const UINT32 kLevels[] = { 10, 25, 50, 75, 100, 150, 200, 400, 800, 1600 };
+static LeewayUICommand kCmd[1] = { { 1, (WCHAR*)L"x", (WCHAR*)L"", (WCHAR*)L"", 0, TRUE, FALSE, TRUE } };
+
+#define TESTKEY L"Software\\Leeway\\FrameTest"
+static void DelKey(void) { RegDeleteKeyW(HKEY_CURRENT_USER, TESTKEY); }
+
+int main(void)
+{
+    HWND w = CreateWindowExW(0, L"STATIC", L"t", WS_OVERLAPPEDWINDOW, 0, 0, 800, 600, NULL, NULL, NULL, NULL);
+    LeewayUIFrameDesc d; LeewayUIFrame *f = NULL; LeewayUIFrameRects r; RECT c = { 0, 0, 800, 500 }; LRESULT lr;
+    DelKey();
+    ZeroMemory(&d, sizeof(d));
+    d.struct_size = sizeof(d); d.owner = w; d.app_name = L"FrameTest";
+    d.flags = LWUI_FRAME_STATUSBAR | LWUI_FRAME_ZOOM_SLIDER;
+    d.default_chrome = LWUI_CHROME_PILL; d.pill_height = 40;
+    d.commands = kCmd; d.command_count = 1; d.execute = Exec; d.state = State;
+    d.zoom_levels = kLevels; d.zoom_level_count = 10; d.on_zoom = OnZoom;
+
+    /* validation */
+    { LeewayUIFrameDesc bad = d; LeewayUIFrame *x = NULL; bad.struct_size = 1; CHECK(LeewayFrameCreate(&bad, &x) == E_INVALIDARG); }
+    { LeewayUIFrameDesc bad = d; LeewayUIFrame *x = NULL; UINT32 desc[3] = { 10, 10, 20 }; bad.zoom_levels = desc; bad.zoom_level_count = 3; CHECK(LeewayFrameCreate(&bad, &x) == E_INVALIDARG); }
+    { LeewayUIFrameDesc bad = d; LeewayUIFrame *x = NULL; bad.flags = LWUI_FRAME_ZOOM_SLIDER; CHECK(LeewayFrameCreate(&bad, &x) == E_INVALIDARG); }
+
+    /* pill (default), registry default */
+    CHECK(LeewayFrameCreate(&d, &f) == S_OK);
+    CHECK(LeewayFrameGetChrome(f) == LWUI_CHROME_PILL && !LeewayFrameGetRibbon(f));
+    LeewayFrameLayout(f, &c, &r);
+    CHECK(r.chrome.bottom - r.chrome.top == 40);
+    CHECK(r.status.bottom == 500 && r.status.bottom - r.status.top == 22);
+    CHECK(r.work.top == 40 && r.work.bottom == r.status.top);
+    CHECK(IsWindowVisible(LeewayFrameGetStatusWindow(f)) || !IsWindowVisible(w)); /* owner hidden: just no crash */
+
+    /* zoom: SetZoom snaps, no callback; drag calls back */
+    LeewayFrameSetZoom(f, 100);
+    CHECK(LeewayFrameGetZoom(f) == 100 && g_zoomcalls == 0);
+    LeewayFrameSetZoom(f, 130);               /* nearest = 150 for slider, text shows 130 */
+    { HWND s = FindWindowExW(w, NULL, L"msctls_trackbar32", NULL);
+      CHECK(s && SendMessageW(s, TBM_GETPOS, 0, 0) == 5);
+      SendMessageW(s, TBM_SETPOS, TRUE, 7);
+      CHECK(LeewayFrameHandleMessage(f, WM_HSCROLL, TB_THUMBTRACK, (LPARAM)s, &lr));
+      CHECK(g_zoomed == 400 && g_zoomcalls == 1 && LeewayFrameGetZoom(f) == 400);
+      CHECK(LeewayFrameHandleMessage(f, WM_HSCROLL, TB_ENDTRACK, (LPARAM)s, &lr) && g_zoomcalls == 1); /* same level: no dup */
+      CHECK(!LeewayFrameHandleMessage(f, WM_HSCROLL, 0, (LPARAM)w, &lr)); /* not ours */
+      LeewayFrameEnableZoom(f, FALSE); CHECK(!IsWindowEnabled(s)); LeewayFrameEnableZoom(f, TRUE); }
+
+    /* status text + hide/persist */
+    LeewayFrameSetStatusText(f, 0, L"640 x 480");
+    { WCHAR t[32]; SendMessageW(LeewayFrameGetStatusWindow(f), SB_GETTEXTW, 0, (LPARAM)t); CHECK(!lstrcmpW(t, L"640 x 480")); }
+    CHECK(LeewayFrameShowStatusBar(f, FALSE, TRUE));
+    LeewayFrameLayout(f, &c, &r);
+    CHECK(IsRectEmpty(&r.status) && r.work.bottom == 500);
+    LeewayFrameDestroy(f); f = NULL;
+    CHECK(LeewayFrameCreate(&d, &f) == S_OK && !LeewayFrameIsStatusBarShown(f));  /* persisted */
+    LeewayFrameDestroy(f); f = NULL;
+
+    /* ribbon via registry */
+    CHECK(LeewayFrameWriteChromeStyle(L"FrameTest", LWUI_CHROME_RIBBON));
+    CHECK(LeewayFrameReadChromeStyle(L"FrameTest", LWUI_CHROME_PILL) == LWUI_CHROME_RIBBON);
+    CHECK(LeewayFrameCreate(&d, &f) == S_OK && LeewayFrameGetChrome(f) == LWUI_CHROME_RIBBON && LeewayFrameGetRibbon(f));
+    LeewayFrameLayout(f, &c, &r);
+    CHECK(r.chrome.bottom - r.chrome.top == 100);          /* ribbon window height */
+    { RECT rc; GetWindowRect(g_rw, &rc); CHECK(rc.right - rc.left == 800); }
+    CHECK(!LeewayFrameHandleMessage(f, WM_DPICHANGED, MAKEWPARAM(144, 144), 0, &lr) && g_dpi_calls == 1);
+    LeewayFrameDestroy(f); f = NULL;
+    CHECK(g_destroyed == 1);
+
+    /* ribbon creation failure falls back to pill */
+    g_ribbon_fail = 1;
+    CHECK(LeewayFrameCreate(&d, &f) == S_OK && LeewayFrameGetChrome(f) == LWUI_CHROME_PILL);
+    LeewayFrameLayout(f, &c, &r); CHECK(r.chrome.bottom - r.chrome.top == 40);
+    LeewayFrameDestroy(f);
+
+    /* garbage registry value -> default */
+    { HKEY k; RegCreateKeyExW(HKEY_CURRENT_USER, TESTKEY, 0, NULL, 0, KEY_WRITE, NULL, &k, NULL);
+      RegSetValueExW(k, L"ChromeStyle", 0, REG_SZ, (const BYTE *)L"bogus", 12); RegCloseKey(k);
+      CHECK(LeewayFrameReadChromeStyle(L"FrameTest", LWUI_CHROME_RIBBON) == LWUI_CHROME_RIBBON); }
+
+    DelKey(); DestroyWindow(w);
+    if (!g_fail) printf("frame_host_test: ok\n");
+    return g_fail ? 1 : 0;
+}

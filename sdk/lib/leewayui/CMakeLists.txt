@@ -1,5 +1,6 @@
 add_library(leewayui_static STATIC
     ribbon.cpp
+    frame.cpp
     theme.cpp
     dpi.cpp
 )
