@@ -32,6 +32,7 @@
 #define IDT_CABINET_STATUS 1
 #define IDT_CABINET_SEARCH 2
 #define IDT_CABINET_SELECTION 3
+#define IDT_CABINET_SELECTION_SIZE 4
 #define CABINET_SELECTION_IDLE_MS 200
 
 HINSTANCE
@@ -107,6 +108,15 @@ CCabinetWindow::CCabinetWindow() :
     m_ViewBar(NULL),
     m_Status(NULL),
     m_SelectionMousePosition(),
+    m_SelectionSizeView(NULL),
+    m_SelectionSizeGeneration(0),
+    m_SelectionSizeIndex(0),
+    m_SelectionSizeCount(0),
+    m_SelectionSizeVisited(0),
+    m_SelectionSizeLimit(0),
+    m_SelectionSize(0),
+    m_SelectionSizeReady(FALSE),
+    m_SelectionSizeHaveSize(FALSE),
     m_DetailsIcon(NULL),
     m_DetailsName(NULL),
     m_DetailsList(NULL),
@@ -151,6 +161,7 @@ CCabinetWindow::CCabinetWindow() :
 
 CCabinetWindow::~CCabinetWindow()
 {
+    CancelSelectionSize();
     ClearPreview();
     if (m_DetailsIconHandle)
         DestroyIcon(m_DetailsIconHandle);
@@ -1094,33 +1105,12 @@ CCabinetWindow::UpdateDetails()
     }
     if (selected > 1)
     {
-        IShellItemArray *items = NULL;
-        ULONGLONG size = 0;
-        BOOL haveSize = FALSE;
+        ULONGLONG size = m_SelectionSize;
+        BOOL haveSize = m_SelectionSizeReady && m_SelectionSizeCount == selected && m_SelectionSizeHaveSize;
 
         LoadText(IDS_CAB_SELECTED, format, _countof(format));
         StringCchPrintfW(name, _countof(name), format, selected);
         m_DetailsIconHandle = JumboIcon(tab->Pidl);
-        if (SUCCEEDED(folderView->Items(SVGIO_SELECTION, IID_PPV_ARG(IShellItemArray, &items))))
-        {
-            DWORD itemCount = 0;
-            items->GetCount(&itemCount);
-            for (DWORD i = 0; i < itemCount && i < 4096; i++)
-            {
-                IShellItem *one = NULL;
-                ULONGLONG oneSize = 0;
-                if (SUCCEEDED(items->GetItemAt(i, &one)))
-                {
-                    if (GetSelectionItemSize(one, &oneSize))
-                    {
-                        size += oneSize;
-                        haveSize = TRUE;
-                    }
-                    one->Release();
-                }
-            }
-            items->Release();
-        }
         if (haveSize)
         {
             IPropertyDescription *desc = NULL;
@@ -1244,6 +1234,7 @@ CCabinetWindow::SetPane(BOOL details, BOOL preview)
     if (m_DetailsBar)
         SendMessageW(m_DetailsBar, TB_CHECKBUTTON, IDC_COMMAND(CabinetCommand::Details), MAKELONG(details, 0));
     OnSize();
+    UpdateStatus();
     UpdateDetails();
     UpdatePreview();
 }
@@ -2013,6 +2004,8 @@ CCabinetWindow::CloseTab(int index)
 
     if (index < 0 || index >= m_TabCount)
         return;
+    if (index == m_ActiveTab)
+        CancelSelectionSize();
     tab = &m_Tabs[index];
     if (tab->ViewEvents)
     {
@@ -2059,6 +2052,7 @@ CCabinetWindow::ActivateTab(int index)
 {
     if (index < 0 || index >= m_TabCount)
         return;
+    CancelSelectionSize();
     m_ActiveTab = index;
     SyncTabs();
     PlaceBrowsers();
@@ -2158,6 +2152,7 @@ CCabinetWindow::NavigateUp()
 void
 CCabinetWindow::Refresh()
 {
+    CancelSelectionSize();
     IShellView *view = CurrentView();
 
     if (view)
@@ -2180,6 +2175,8 @@ CCabinetWindow::OnNavigationComplete(IExplorerBrowser *browser, PCIDLIST_ABSOLUT
     }
     if (!tab)
         return;
+    if (tab == ActiveTab())
+        CancelSelectionSize();
     FreeIdList(&tab->Pidl);
     tab->Pidl = ILClone(pidl);
     if (!m_InHistoryNavigation)
@@ -2310,6 +2307,7 @@ CCabinetWindow::OnViewCreated(IExplorerBrowser *browser, IShellView *view)
 void
 CCabinetWindow::OnSelectionChanged()
 {
+    CancelSelectionSize();
     if (DeferSelectionUpdate())
         return;
 
@@ -2552,12 +2550,99 @@ CCabinetWindow::DeferSelectionUpdate()
 }
 
 void
+CCabinetWindow::CancelSelectionSize()
+{
+    IShellItemArray *view = m_SelectionSizeView;
+
+    ++m_SelectionSizeGeneration;
+    m_SelectionSizeView = NULL;
+    m_SelectionSizeIndex = 0;
+    m_SelectionSizeCount = 0;
+    m_SelectionSizeVisited = 0;
+    m_SelectionSizeLimit = 0;
+    m_SelectionSize = 0;
+    m_SelectionSizeReady = FALSE;
+    m_SelectionSizeHaveSize = FALSE;
+    if (m_hwnd)
+        KillTimer(m_hwnd, IDT_CABINET_SELECTION_SIZE);
+    if (view)
+        view->Release();
+}
+
+void
+CCabinetWindow::UpdateSelectionSize()
+{
+    IShellItemArray *view = m_SelectionSizeView;
+    ULONG generation = m_SelectionSizeGeneration;
+    int index = m_SelectionSizeIndex, visited = m_SelectionSizeVisited;
+    DWORD limit = m_SelectionSizeLimit;
+    ULONGLONG total = m_SelectionSize;
+    BOOL haveSize = m_SelectionSizeHaveSize, done = FALSE;
+    DWORD start = GetTickCount();
+
+    KillTimer(m_hwnd, IDT_CABINET_SELECTION_SIZE);
+    if (!view)
+        return;
+    view->AddRef();
+    do
+    {
+        IShellItem *item = NULL;
+        ULONGLONG size = 0;
+        HRESULT hr = view->GetItemAt(index, &item);
+        index++;
+        visited++;
+        if (generation != m_SelectionSizeGeneration)
+        {
+            if (item)
+                item->Release();
+            break;
+        }
+        if (SUCCEEDED(hr) && item)
+        {
+            if (GetSelectionItemSize(item, &size))
+            {
+                total += size;
+                haveSize = TRUE;
+            }
+            item->Release();
+        }
+        if (generation != m_SelectionSizeGeneration)
+            break;
+        if ((DWORD)visited >= limit)
+            done = TRUE;
+    } while (!done && GetTickCount() - start < 8);
+    view->Release();
+    if (generation != m_SelectionSizeGeneration)
+        return;
+    m_SelectionSizeIndex = index;
+    m_SelectionSizeVisited = visited;
+    m_SelectionSize = total;
+    m_SelectionSizeHaveSize = haveSize;
+    if (!done)
+    {
+        if (!SetTimer(m_hwnd, IDT_CABINET_SELECTION_SIZE, 1, NULL))
+            CancelSelectionSize();
+        return;
+    }
+    view = m_SelectionSizeView;
+    m_SelectionSizeView = NULL;
+    m_SelectionSizeReady = TRUE;
+    view->Release();
+    if (generation != m_SelectionSizeGeneration || !m_hwnd)
+        return;
+    UpdateStatus(TRUE);
+    if (generation == m_SelectionSizeGeneration && m_DetailsPane)
+        UpdateDetails();
+}
+
+void
 CCabinetWindow::UpdateStatus(BOOL mouseIdle)
 {
     if (!mouseIdle && (GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0) &&
         DeferSelectionUpdate())
         return;
 
+    ULONG generation = m_SelectionSizeGeneration;
     IShellView *view = CurrentView();
     IFolderView *folderView = NULL;
     int count = 0, selected = 0;
@@ -2569,33 +2654,58 @@ CCabinetWindow::UpdateStatus(BOOL mouseIdle)
         return;
     if (SUCCEEDED(view->QueryInterface(IID_PPV_ARG(IFolderView, &folderView))))
     {
-        IShellItemArray *array = NULL;
         folderView->ItemCount(SVGIO_ALLVIEW, &count);
         folderView->ItemCount(SVGIO_SELECTION, &selected);
-        if (selected && selected <= 4096 &&
-            SUCCEEDED(folderView->Items(SVGIO_SELECTION, IID_PPV_ARG(IShellItemArray, &array))))
+        if (generation != m_SelectionSizeGeneration || !m_hwnd)
         {
-            DWORD itemCount = 0;
-            array->GetCount(&itemCount);
-            for (DWORD i = 0; i < itemCount; i++)
+            folderView->Release();
+            view->Release();
+            return;
+        }
+        if ((m_SelectionSizeView || m_SelectionSizeReady) && m_SelectionSizeCount != selected)
+        {
+            CancelSelectionSize();
+            folderView->Release();
+            view->Release();
+            if (m_hwnd)
+                PostMessageW(m_hwnd, WM_CABINET_STATUS, 0, 0);
+            return;
+        }
+        if (selected && (selected <= 4096 || m_DetailsPane) &&
+            !m_SelectionSizeView && !m_SelectionSizeReady)
+        {
+            IShellItemArray *array = NULL;
+            DWORD arrayCount = 0;
+            HRESULT hr = folderView->Items(SVGIO_SELECTION, IID_PPV_ARG(IShellItemArray, &array));
+            if (SUCCEEDED(hr) && array)
+                hr = array->GetCount(&arrayCount);
+            if (generation == m_SelectionSizeGeneration && m_hwnd)
             {
-                IShellItem *item = NULL;
-                ULONGLONG size = 0;
-                if (SUCCEEDED(array->GetItemAt(i, &item)))
+                m_SelectionSizeCount = selected;
+                m_SelectionSizeLimit = min(arrayCount, 4096);
+                if (SUCCEEDED(hr) && array && m_SelectionSizeLimit)
                 {
-                    if (GetSelectionItemSize(item, &size))
-                    {
-                        selectedSize += size;
-                        haveSize = TRUE;
-                    }
-                    item->Release();
+                    m_SelectionSizeView = array;
+                    array = NULL;
+                    if (!SetTimer(m_hwnd, IDT_CABINET_SELECTION_SIZE, 1, NULL))
+                        CancelSelectionSize();
                 }
+                else if (SUCCEEDED(hr))
+                    m_SelectionSizeReady = TRUE;
             }
-            array->Release();
+            if (array)
+                array->Release();
+        }
+        if (selected <= 4096 && m_SelectionSizeReady && m_SelectionSizeCount == selected)
+        {
+            selectedSize = m_SelectionSize;
+            haveSize = m_SelectionSizeHaveSize;
         }
         folderView->Release();
     }
     view->Release();
+    if (generation != m_SelectionSizeGeneration || !m_hwnd)
+        return;
     if (count == 1)
         LoadText(IDS_CAB_ITEM, items, _countof(items));
     else
@@ -3526,12 +3636,18 @@ CCabinetWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             UpdatePreview();
             return 0;
         case WM_CABINET_CHANGED:
+            CancelSelectionSize();
             SetTimer(m_hwnd, IDT_CABINET_STATUS, 200, NULL);
             return 0;
         case WM_CABINET_FOCUSVIEW:
             FocusView();
             return 0;
         case WM_TIMER:
+            if (wParam == IDT_CABINET_SELECTION_SIZE)
+            {
+                UpdateSelectionSize();
+                return 0;
+            }
             if (wParam == IDT_CABINET_SELECTION)
             {
                 POINT position;
@@ -3623,6 +3739,7 @@ CCabinetWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             CloseTab(0);
             return 0;
         case WM_DESTROY:
+            CancelSelectionSize();
             ClearPreview();
             if (m_ChangeNotify)
                 SHChangeNotifyDeregister(m_ChangeNotify);
