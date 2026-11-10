@@ -29,6 +29,8 @@ BOOL VRB_RibbonIsDefaultChrome(void);
 HRESULT VRB_RibbonCreate(HWND parent, HINSTANCE instance, const VRB_HOST *host, VRB_RIBBON **out);
 void VRB_RibbonDestroy(VRB_RIBBON *ribbon);
 HWND VRB_RibbonWindow(VRB_RIBBON *ribbon);
+/* The framework ribbon, for LeewayUIFrameDesc.ribbon (borrowed: this adapter keeps ownership). */
+ILeewayRibbon *VRB_RibbonFramework(VRB_RIBBON *ribbon);
 UINT VRB_RibbonHeight(VRB_RIBBON *ribbon);
 
 /* The host calls these after any change a predicate depends on. */

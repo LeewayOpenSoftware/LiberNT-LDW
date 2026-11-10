@@ -30,6 +30,7 @@ struct LeewayUIFrame {
     HWND status;
     HWND slider;
     BOOL shown;
+    BOOL ownsRibbon;            /* FALSE when the app passed its own */
     BOOL syncing;               /* SetZoom in progress: do not call on_zoom */
     UINT32 zoom;
     UINT32 dpi;
@@ -220,7 +221,13 @@ HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **
     f->chrome = LeewayFrameReadChromeStyle(desc->app_name, desc->default_chrome);
     if (f->chrome == LWUI_CHROME_RIBBON)
     {
-        f->ribbon = RibbonCreate(&f->desc);
+        if (desc->ribbon)
+            f->ribbon = desc->ribbon;
+        else
+        {
+            f->ribbon = RibbonCreate(&f->desc);
+            f->ownsRibbon = TRUE;
+        }
         if (!f->ribbon)
             f->chrome = LWUI_CHROME_PILL;       /* fall back, app keeps its toolbar */
     }
@@ -233,7 +240,8 @@ HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **
                                     0, 0, 0, 0, desc->owner, NULL, desc->instance, NULL);
         if (!f->status)
         {
-            RibbonDestroy(f->ribbon);
+            if (f->ownsRibbon)
+                RibbonDestroy(f->ribbon);
             HeapFree(GetProcessHeap(), 0, f);
             return HRESULT_FROM_WIN32(GetLastError());
         }
@@ -265,7 +273,8 @@ void WINAPI LeewayFrameDestroy(LeewayUIFrame *f)
         DestroyWindow(f->slider);
     if (f->status)
         DestroyWindow(f->status);
-    RibbonDestroy(f->ribbon);
+    if (f->ownsRibbon)
+        RibbonDestroy(f->ribbon);
     HeapFree(GetProcessHeap(), 0, f);
 }
 
@@ -441,6 +450,7 @@ BOOL WINAPI LeewayFrameHandleMessage(LeewayUIFrame *f, UINT msg, WPARAM wp, LPAR
             LeewayRibbonSetDPI(f->ribbon, f->dpi);
         return FALSE;   /* the app still applies the suggested window rect */
 
+    case WM_SYSCOLORCHANGE:
     case WM_THEMECHANGED:
     case WM_SETTINGCHANGE:
         if (f->ribbon)

@@ -337,6 +337,12 @@ VRB_RibbonWindow(VRB_RIBBON *ribbon)
     return ribbon ? LeewayRibbonGetHWND(ribbon->fw) : NULL;
 }
 
+ILeewayRibbon *
+VRB_RibbonFramework(VRB_RIBBON *ribbon)
+{
+    return ribbon ? ribbon->fw : NULL;
+}
+
 UINT
 VRB_RibbonHeight(VRB_RIBBON *ribbon)
 {

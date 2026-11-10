@@ -77,6 +77,8 @@ typedef struct {
     UINT32 command_count;
     LeewayUICommandExecuteHandler execute;
     LeewayUICommandStateHandler state;
+    ILeewayRibbon *ribbon;              /* optional: a ribbon the app already built; borrowed,
+                                           the frame lays it out but never destroys it */
 
     /* zoom slider */
     const UINT32 *zoom_levels;          /* ascending percents, at most 32 */

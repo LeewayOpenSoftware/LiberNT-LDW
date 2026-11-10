@@ -14,6 +14,7 @@
 #include <shlobj.h>
 #include <shellapi.h>
 #include "vribbon.h"
+#include <leewayui/frame.h>
 
 EXTERN_C PCWSTR GetExtraExtensionsGdipList(VOID);
 EXTERN_C HRESULT LoadImageFromPath(LPCWSTR Path, GpImage** ppImage);
@@ -125,10 +126,7 @@ typedef struct tagPREVIEW_DATA
      * two surfaces over the same command table; m_hwndToolBar is NULL in
      * ribbon chrome, m_pRibbon is NULL in pill chrome. */
     VRB_RIBBON *m_pRibbon;
-    HWND m_hwndStatus;
-    HWND m_hwndSlider;
-    BOOL m_bStatusShown;
-    BOOL m_bSliderSync;
+    LeewayUIFrame *m_pFrame;     /* status bar, zoom slider, layout (ribbon chrome) */
     BOOL m_bFit;                 /* best-fit mode is active */
     /* Enabled state of the toolbar commands, as the toolbar had it. Both
      * surfaces read these; the verb checks and the file check set them. */
@@ -309,31 +307,12 @@ IsCommandEnabled(UINT nCmdId)
     return (nCmdId >= IDC_PREV_PIC && nCmdId <= IDC_HELP_TOC) ? S_OK : E_FAIL;
 }
 
-static UINT
-Preview_ZoomSliderPos(PPREVIEW_DATA pData)
-{
-    return VRB_NearestZoomIndex(pData->m_nZoomPercents);
-}
-
 /* Status bar text and slider follow the zoom; the ribbon re-reads its state. */
 static VOID
 Preview_SyncZoomUi(PPREVIEW_DATA pData)
 {
-    WCHAR szText[32];
-
-    if (pData->m_hwndStatus)
-    {
-        szText[0] = UNICODE_NULL;
-        if (pData->m_nZoomPercents > 0)
-            StringCchPrintfW(szText, _countof(szText), L"%d%%", pData->m_nZoomPercents);
-        SendMessageW(pData->m_hwndStatus, SB_SETTEXTW, 1, (LPARAM)szText);
-    }
-    if (pData->m_hwndSlider)
-    {
-        pData->m_bSliderSync = TRUE;
-        SendMessageW(pData->m_hwndSlider, TBM_SETPOS, TRUE, Preview_ZoomSliderPos(pData));
-        pData->m_bSliderSync = FALSE;
-    }
+    if (pData->m_pFrame && pData->m_nZoomPercents > 0)
+        LeewayFrameSetZoom(pData->m_pFrame, (UINT32)pData->m_nZoomPercents);
     Preview_RibbonInvalidate(pData, IDC_BEST_FIT);
     Preview_RibbonInvalidate(pData, IDC_REAL_SIZE);
     Preview_RibbonInvalidate(pData, IDC_ZOOM_IN);
@@ -348,12 +327,12 @@ Preview_UpdateStatusInfo(PPREVIEW_DATA pData)
     WCHAR szText[64];
     UINT w = 0, h = 0;
 
-    if (!pData->m_hwndStatus)
+    if (!pData->m_pFrame)
         return;
     szText[0] = UNICODE_NULL;
     if (g_pImage && GdipGetImageWidth(g_pImage, &w) == Ok && GdipGetImageHeight(g_pImage, &h) == Ok)
         StringCchPrintfW(szText, _countof(szText), L"%u x %u", w, h);
-    SendMessageW(pData->m_hwndStatus, SB_SETTEXTW, 0, (LPARAM)szText);
+    LeewayFrameSetStatusText(pData->m_pFrame, 0, szText);
 }
 
 static VOID
@@ -1061,8 +1040,6 @@ ImageView_SaveSettings(VOID)
 
 /* ---- ribbon chrome: host side of the command model ---- */
 
-#define STATUS_ZOOM_WIDTH   56
-#define STATUS_SLIDER_WIDTH 150
 
 static BOOL
 Preview_HasEncoders(VOID)
@@ -1103,7 +1080,7 @@ RibbonPredicate(void *ctx, VRB_PRED pred)
         case VRB_P_CAN_DELETE:      return g_szFile[0] && pData->m_bEnDelete;
         case VRB_P_CAN_PRINT:       return g_szFile[0] && pData->m_bEnPrint;
         case VRB_P_CAN_EDIT:        return g_szFile[0] && pData->m_bEnModify;
-        case VRB_P_STATUSBAR_SHOWN: return pData->m_bStatusShown;
+        case VRB_P_STATUSBAR_SHOWN: return LeewayFrameIsStatusBarShown(pData->m_pFrame);
         case VRB_P_RIBBON_MINIMIZED:return FALSE; /* the framework owns it */
         default:                    break;
     }
@@ -1126,36 +1103,20 @@ RibbonZoomPercent(void *ctx)
     return (UINT)((PPREVIEW_DATA)ctx)->m_nZoomPercents;
 }
 
-static VOID
-Preview_CreateStatusBar(PPREVIEW_DATA pData)
+static VOID Preview_SetZoomLevel(PPREVIEW_DATA pData, UINT Percent);
+
+/* The frame reports a slider drag here. */
+static void
+FrameZoom(UINT32 Percent, void *ctx)
 {
-    DWORD vis = pData->m_bStatusShown ? WS_VISIBLE : 0;
-
-    pData->m_hwndStatus = CreateWindowExW(0, STATUSCLASSNAMEW, NULL,
-                                          WS_CHILD | vis | CCS_BOTTOM | SBARS_SIZEGRIP,
-                                          0, 0, 0, 0, pData->m_hwnd,
-                                          (HMENU)IDC_STATUSBAR, g_hInstance, NULL);
-    if (!pData->m_hwndStatus)
-        return;
-
-    /* Zoom slider over the last segment; its positions are the ten zoom
-     * levels of the gallery, so both share one table. */
-    pData->m_hwndSlider = CreateWindowExW(0, TRACKBAR_CLASSW, NULL,
-                                          WS_CHILD | vis | TBS_HORZ | TBS_NOTICKS,
-                                          0, 0, 0, 0, pData->m_hwnd,
-                                          (HMENU)IDC_ZOOMSLIDER, g_hInstance, NULL);
-    if (pData->m_hwndSlider)
-    {
-        SendMessageW(pData->m_hwndSlider, TBM_SETRANGE, TRUE, MAKELONG(0, VRB_ZOOM_LEVELS - 1));
-        SendMessageW(pData->m_hwndSlider, TBM_SETPAGESIZE, 0, 1);
-        SendMessageW(pData->m_hwndSlider, TBM_SETLINESIZE, 0, 1);
-    }
+    Preview_SetZoomLevel((PPREVIEW_DATA)ctx, Percent);
 }
 
 static BOOL
 Preview_CreateRibbonChrome(PPREVIEW_DATA pData)
 {
     VRB_HOST host;
+    LeewayUIFrameDesc desc;
 
     host.ctx = pData;
     host.Predicate = RibbonPredicate;
@@ -1167,23 +1128,52 @@ Preview_CreateRibbonChrome(PPREVIEW_DATA pData)
         pData->m_pRibbon = NULL;
         return FALSE;
     }
-    pData->m_bStatusShown = VRB_ReadStatusBarShown();
-    Preview_CreateStatusBar(pData);
+
+    /* The frame owns the status bar, the zoom slider and the layout; the
+     * ribbon stays with the adapter and is lent to the frame. */
+    ZeroMemory(&desc, sizeof(desc));
+    desc.struct_size = sizeof(desc);
+    desc.owner = pData->m_hwnd;
+    desc.instance = g_hInstance;
+    desc.app_name = L"PhotoViewer";
+    desc.flags = LWUI_FRAME_STATUSBAR | LWUI_FRAME_ZOOM_SLIDER;
+    desc.default_chrome = LWUI_CHROME_RIBBON;
+    desc.ribbon = VRB_RibbonFramework(pData->m_pRibbon);
+    desc.zoom_levels = g_VrbZoomPercents;
+    desc.zoom_level_count = VRB_ZOOM_LEVELS;
+    desc.on_zoom = FrameZoom;
+    desc.app_context = pData;
+    if (FAILED(LeewayFrameCreate(&desc, &pData->m_pFrame)) ||
+        LeewayFrameGetChrome(pData->m_pFrame) != LWUI_CHROME_RIBBON)
+    {
+        LeewayFrameDestroy(pData->m_pFrame);
+        pData->m_pFrame = NULL;
+        VRB_RibbonDestroy(pData->m_pRibbon);
+        pData->m_pRibbon = NULL;
+        return FALSE;
+    }
     return TRUE;
 }
 
 /* Places the ribbon on top, the status bar or the toolbar at the bottom and
  * the image between them. */
+/* Ribbon chrome: the frame lays out ribbon, status bar and slider and says
+ * what is left. Pill chrome: the toolbar sits at the bottom. */
 static VOID
 Preview_LayoutMain(PPREVIEW_DATA pData, INT cx, INT cy)
 {
     RECT rc;
-    INT top = 0, bottom = 0;
+    INT bottom = 0;
 
-    if (pData->m_pRibbon)
+    if (pData->m_pFrame)
     {
-        top = (INT)VRB_RibbonHeight(pData->m_pRibbon);
-        MoveWindow(VRB_RibbonWindow(pData->m_pRibbon), 0, 0, cx, top, TRUE);
+        LeewayUIFrameRects fr;
+
+        SetRect(&rc, 0, 0, cx, cy);
+        LeewayFrameLayout(pData->m_pFrame, &rc, &fr);
+        MoveWindow(pData->m_hwndZoom, fr.work.left, fr.work.top,
+                   fr.work.right - fr.work.left, fr.work.bottom - fr.work.top, TRUE);
+        return;
     }
 
     if (pData->m_hwndToolBar)
@@ -1192,32 +1182,7 @@ Preview_LayoutMain(PPREVIEW_DATA pData, INT cx, INT cy)
         GetWindowRect(pData->m_hwndToolBar, &rc);
         bottom += rc.bottom - rc.top;
     }
-
-    if (pData->m_hwndStatus && pData->m_bStatusShown)
-    {
-        INT parts[3];
-        RECT rcPart;
-        INT sliderLeft = max(cx - STATUS_SLIDER_WIDTH, 0);
-
-        SendMessageW(pData->m_hwndStatus, WM_SIZE, 0, 0);
-        GetWindowRect(pData->m_hwndStatus, &rc);
-        bottom += rc.bottom - rc.top;
-
-        parts[0] = max(sliderLeft - STATUS_ZOOM_WIDTH, 0);
-        parts[1] = sliderLeft;
-        parts[2] = -1;
-        SendMessageW(pData->m_hwndStatus, SB_SETPARTS, 3, (LPARAM)parts);
-
-        if (pData->m_hwndSlider &&
-            SendMessageW(pData->m_hwndStatus, SB_GETRECT, 2, (LPARAM)&rcPart))
-        {
-            MapWindowPoints(pData->m_hwndStatus, pData->m_hwnd, (LPPOINT)&rcPart, 2);
-            MoveWindow(pData->m_hwndSlider, rcPart.left, rcPart.top,
-                       rcPart.right - rcPart.left, rcPart.bottom - rcPart.top, TRUE);
-        }
-    }
-
-    MoveWindow(pData->m_hwndZoom, 0, top, cx, max(cy - top - bottom, 0), TRUE);
+    MoveWindow(pData->m_hwndZoom, 0, 0, cx, max(cy - bottom, 0), TRUE);
 }
 
 static BOOL
@@ -1906,12 +1871,9 @@ Preview_SetWallpaper(PPREVIEW_DATA pData)
 static VOID
 Preview_SetStatusBarShown(PPREVIEW_DATA pData, BOOL bShow)
 {
-    pData->m_bStatusShown = bShow;
-    VRB_WriteStatusBarShown(bShow);
-    if (pData->m_hwndStatus)
-        ShowWindow(pData->m_hwndStatus, bShow ? SW_SHOW : SW_HIDE);
-    if (pData->m_hwndSlider)
-        ShowWindow(pData->m_hwndSlider, bShow ? SW_SHOW : SW_HIDE);
+    if (!pData->m_pFrame)
+        return;
+    LeewayFrameShowStatusBar(pData->m_pFrame, bShow, TRUE);
     Preview_OnSize(pData->m_hwnd);
     Preview_RibbonInvalidate(pData, VRB_LWUI_STATUSBAR_TOGGLE);
 }
@@ -2048,7 +2010,7 @@ Preview_OnCommand(HWND hwnd, WPARAM wParam, LPARAM lParam)
             break;
 
         case VRB_LWUI_STATUSBAR_TOGGLE:
-            Preview_SetStatusBarShown(pData, !pData->m_bStatusShown);
+            Preview_SetStatusBarShown(pData, !LeewayFrameIsStatusBarShown(pData->m_pFrame));
             break;
 
         case VRB_CMD_ZOOM_FIT:
@@ -2105,12 +2067,10 @@ Preview_OnDestroy(HWND hwnd)
     DestroyWindow(pData->m_hwndToolBar);
     pData->m_hwndToolBar = NULL;
 
+    LeewayFrameDestroy(pData->m_pFrame);
+    pData->m_pFrame = NULL;
     VRB_RibbonDestroy(pData->m_pRibbon);
     pData->m_pRibbon = NULL;
-    DestroyWindow(pData->m_hwndSlider);
-    pData->m_hwndSlider = NULL;
-    DestroyWindow(pData->m_hwndStatus);
-    pData->m_hwndStatus = NULL;
 
     SetWindowLongPtrW(pData->m_hwnd, GWLP_USERDATA, 0);
     QuickFree(pData);
@@ -2181,26 +2141,25 @@ PreviewWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             InvalidateRect(pData->m_hwnd, NULL, TRUE);
             InvalidateRect(pData->m_hwndZoom, NULL, TRUE);
             VRB_RibbonOnThemeChanged(pData->m_pRibbon);
+            LeewayFrameHandleMessage(pData->m_pFrame, uMsg, wParam, lParam, NULL);
             break;
         }
         case WM_DPICHANGED:
         {
             PPREVIEW_DATA pData = Preview_GetData(hwnd);
-            VRB_RibbonOnDpiChanged(pData->m_pRibbon, HIWORD(wParam));
+            if (!LeewayFrameHandleMessage(pData->m_pFrame, uMsg, wParam, lParam, NULL))
+                VRB_RibbonOnDpiChanged(pData->m_pRibbon, HIWORD(wParam));
             Preview_OnSize(hwnd);
             return DefWindowProcW(hwnd, uMsg, wParam, lParam);
         }
         case WM_HSCROLL:
         {
-            /* The status bar zoom slider; the zoom window has its own. */
+            /* The status bar zoom slider (the frame reports through FrameZoom);
+             * the zoom window has its own. */
             PPREVIEW_DATA pData = Preview_GetData(hwnd);
-            if (pData && pData->m_hwndSlider && (HWND)lParam == pData->m_hwndSlider &&
-                !pData->m_bSliderSync)
-            {
-                UINT Pos = (UINT)SendMessageW(pData->m_hwndSlider, TBM_GETPOS, 0, 0);
-                if (Pos < VRB_ZOOM_LEVELS)
-                    Preview_SetZoomLevel(pData, g_VrbZoomPercents[Pos]);
-            }
+            LRESULT lr;
+            if (pData && pData->m_pFrame)
+                LeewayFrameHandleMessage(pData->m_pFrame, uMsg, wParam, lParam, &lr);
             break;
         }
         case WM_DESTROY:

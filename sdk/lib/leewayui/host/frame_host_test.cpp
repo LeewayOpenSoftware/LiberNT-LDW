@@ -97,6 +97,13 @@ int main(void)
     LeewayFrameDestroy(f); f = NULL;
     CHECK(g_destroyed == 1);
 
+    /* a ribbon the app built is borrowed: used, never destroyed */
+    d.ribbon = &g_stub; g_destroyed = 0;
+    CHECK(LeewayFrameCreate(&d, &f) == S_OK && LeewayFrameGetChrome(f) == LWUI_CHROME_RIBBON && LeewayFrameGetRibbon(f) == &g_stub);
+    LeewayFrameDestroy(f); f = NULL;
+    CHECK(g_destroyed == 0);
+    d.ribbon = NULL;
+
     /* ribbon creation failure falls back to pill */
     g_ribbon_fail = 1;
     CHECK(LeewayFrameCreate(&d, &f) == S_OK && LeewayFrameGetChrome(f) == LWUI_CHROME_PILL);
