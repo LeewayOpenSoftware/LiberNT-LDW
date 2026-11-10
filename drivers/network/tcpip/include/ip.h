@@ -200,6 +200,8 @@ typedef struct _IP_NTE {
     PVOID TCPContext;
     ULONG DadState;
     ULONG DadProbes;
+    ULONG DadAnnounces;
+    BOOLEAN DadActive;
     ULONGLONG DadNext;
     LARGE_INTEGER Created;
 } IP_NTE, *PIP_NTE;
