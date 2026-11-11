@@ -64,7 +64,8 @@ foreach ($it in $Items) {
     }
     $rel = ('f{0}.bin' -f $n++)
     $file = Join-Path $OutDir ('payload\' + $rel)
-    [IO.File]::WriteAllText($file, [string]$it.Content, $utf8)
+    if ($it.Content -is [byte[]]) { [IO.File]::WriteAllBytes($file, $it.Content) }   # binary payload (lab stubs)
+    else { [IO.File]::WriteAllText($file, [string]$it.Content, $utf8) }
     $sha = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLower()
     $entry = [ordered]@{ path = $rel; target = $it.Target; sha256 = $sha }
     if ($it.ContainsKey('DriverStart')) { $entry.driverStart = [int]$it.DriverStart }
