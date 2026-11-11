@@ -303,6 +303,13 @@ Used Version: 2012-05-03
 License: GPL-3.0-or-later (https://spdx.org/licenses/GPL-3.0-or-later.html)
 URL: http://savannah.gnu.org/projects/freefont/
 
+Title: LZMA SDK (decoder in symz for the compressed symbol store, encoder in the symz host tool, decoder in lxterm)
+Path: sdk/lib/3rdparty/lzma
+Used Version: 25.01
+License: Public domain (lzma-sdk.txt)
+URL: https://www.7-zip.org/sdk.html
+Modifications: none (subset: LzmaDec, LzmaEnc, LzFind and their headers; built single-threaded with Z7_ST)
+
 Title: GNU adns
 Path: sdk/lib/3rdparty/adns
 Used Version: 1.0 REV 5
