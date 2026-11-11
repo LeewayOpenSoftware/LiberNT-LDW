@@ -57,6 +57,7 @@ extern "C" {
 
 /** 1 second period */
 #define ND6_TMR_INTERVAL 1000
+#define ND6_FAST_TMR_INTERVAL 100
 
 /** Router solicitations are sent in 4 second intervals (see RFC 4861, ch. 6.3.7) */
 #ifndef ND6_RTR_SOLICITATION_INTERVAL
@@ -67,6 +68,7 @@ struct pbuf;
 struct netif;
 
 void nd6_tmr(void);
+void nd6_fast_tmr(void);
 void nd6_input(struct pbuf *p, struct netif *inp);
 void nd6_clear_destination_cache(void);
 struct netif *nd6_find_route(const ip6_addr_t *ip6addr);
@@ -80,6 +82,9 @@ void nd6_cleanup_netif(struct netif *netif);
 void nd6_adjust_mld_membership(struct netif *netif, s8_t addr_idx, u8_t new_state);
 #endif /* LWIP_IPV6_MLD */
 void nd6_restart_netif(struct netif *netif);
+err_t nd6_add_neighbor(struct netif *netif, const ip6_addr_t *ip6addr, const u8_t *lladdr, u8_t permanent, u8_t isrouter);
+err_t nd6_remove_neighbor(struct netif *netif, const ip6_addr_t *ip6addr);
+void nd6_flush_neighbors(struct netif *netif, u8_t include_permanent);
 
 #ifdef __cplusplus
 }

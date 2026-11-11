@@ -82,6 +82,8 @@ struct nd6_neighbor_cache_entry {
 #endif /* LWIP_ND6_QUEUEING */
   u8_t state;
   u8_t isrouter;
+  u8_t permanent;
+  u32_t probe_next;
   union {
     u32_t reachable_time; /* in seconds */
     u32_t delay_time;     /* ticks (ND6_TMR_INTERVAL) */
@@ -94,6 +96,7 @@ struct nd6_destination_cache_entry {
   ip6_addr_t destination_addr;
   ip6_addr_t next_hop_addr;
   u16_t pmtu;
+  u32_t pmtu_age;
   u8_t cached_neighbor_idx;
   u32_t age;
 };

@@ -248,6 +248,11 @@ ip6_route(const ip6_addr_t *src, const ip6_addr_t *dest)
 #endif /* !LWIP_SINGLE_NETIF */
 
   /* no matching netif found, use default netif, if up */
+#ifdef LWIP_HOOK_IP6_NO_DEFAULT_NETIF
+  if (!ip6_addr_ismulticast(dest)) {
+    return NULL;
+  }
+#endif
   if ((netif_default == NULL) || !netif_is_up(netif_default) || !netif_is_link_up(netif_default)) {
     return NULL;
   }
@@ -289,6 +294,7 @@ ip6_select_source_address(struct netif *netif, const ip6_addr_t *dest)
   u8_t i, cand_pref, cand_bits;
   u8_t best_pref = 0;
   u8_t best_bits = 0;
+  s8_t cand_rank, best_rank = 0;
 
   /* Start by determining the scope of the given destination address. These
    * tests are hopefully (roughly) in order of likeliness to match. */
@@ -314,6 +320,14 @@ ip6_select_source_address(struct netif *netif, const ip6_addr_t *dest)
     if (!ip6_addr_isvalid(netif_ip6_addr_state(netif, i))) {
       continue;
     }
+#ifdef LWIP_HOOK_IP6_SOURCE_RANK
+    cand_rank = LWIP_HOOK_IP6_SOURCE_RANK(netif, i);
+    if (cand_rank < 0) {
+      continue;
+    }
+#else
+    cand_rank = 0;
+#endif
     /* Determine the scope of this candidate address. Same ordering idea. */
     cand_addr = netif_ip6_addr(netif, i);
     if (ip6_addr_isglobal(cand_addr)) {
@@ -340,12 +354,14 @@ ip6_select_source_address(struct netif *netif, const ip6_addr_t *dest)
         ((cand_scope < best_scope) && (cand_scope >= dest_scope)) ||
         ((cand_scope > best_scope) && (best_scope < dest_scope)) || /* Rule 2 */
         ((cand_scope == best_scope) && ((cand_pref > best_pref) || /* Rule 3 */
-        ((cand_pref == best_pref) && (cand_bits > best_bits))))) { /* Rule 8 */
+        ((cand_pref == best_pref) && ((cand_rank > best_rank) ||
+        ((cand_rank == best_rank) && (cand_bits > best_bits))))))) { /* Rule 8 */
       /* We found a new "winning" candidate. */
       best_addr = netif_ip_addr6(netif, i);
       best_scope = cand_scope;
       best_pref = cand_pref;
       best_bits = cand_bits;
+      best_rank = cand_rank;
     }
   }
 
@@ -367,6 +383,12 @@ ip6_forward(struct pbuf *p, struct ip6_hdr *iphdr, struct netif *inp)
 {
   struct netif *netif;
 
+#ifdef LWIP_HOOK_IP6_FORWARD_ALLOWED
+  if (!LWIP_HOOK_IP6_FORWARD_ALLOWED(inp)) {
+    IP6_STATS_INC(ip6.drop);
+    return;
+  }
+#endif
   /* do not forward link-local or loopback addresses */
   if (ip6_addr_islinklocal(ip6_current_dest_addr()) ||
       ip6_addr_isloopback(ip6_current_dest_addr())) {
@@ -412,6 +434,12 @@ ip6_forward(struct pbuf *p, struct ip6_hdr *iphdr, struct netif *inp)
     return;
   }
 #endif /* LWIP_IPV6_SCOPES */
+#ifdef LWIP_HOOK_IP6_FORWARD_ALLOWED
+  if (!LWIP_HOOK_IP6_FORWARD_ALLOWED(netif)) {
+    IP6_STATS_INC(ip6.drop);
+    return;
+  }
+#endif
   /* Do not forward packets onto the same network interface on which
    * they arrived. */
   if (netif == inp) {
@@ -657,6 +685,11 @@ ip6_input(struct pbuf *p, struct netif *inp)
           /* we checked that before already */
           continue;
         }
+#ifdef LWIP_HOOK_IP6_WEAK_RECEIVE
+        if (!LWIP_HOOK_IP6_WEAK_RECEIVE(inp, netif)) {
+          continue;
+        }
+#endif
         if (ip6_input_accept(netif)) {
           break;
         }
@@ -1196,6 +1229,9 @@ ip6_output_if_src(struct pbuf *p, const ip6_addr_t *src, const ip6_addr_t *dest,
       dest = &dest_addr;
     }
 #endif /* LWIP_IPV6_SCOPES */
+#ifdef LWIP_HOOK_IP6_PATH_OUTPUT
+    LWIP_HOOK_IP6_PATH_OUTPUT(netif, src, dest, nexth, p);
+#endif
 
     /* generate IPv6 header */
     if (pbuf_add_header(p, IP6_HLEN)) {

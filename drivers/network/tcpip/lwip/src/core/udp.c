@@ -63,6 +63,10 @@
 #include "lwip/snmp.h"
 #include "lwip/dhcp.h"
 
+#ifdef LWIP_HOOK_FILENAME
+#include LWIP_HOOK_FILENAME
+#endif
+
 #include <string.h>
 
 #ifndef UDP_LOCAL_PORT_RANGE_START
@@ -658,7 +662,11 @@ udp_sendto_if_chksum(struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *dst_i
       }
     } else {
       /* use UDP PCB local IPv6 address as source address, if still valid. */
-      if (netif_get_ip6_addr_match(netif, ip_2_ip6(&pcb->local_ip)) < 0) {
+      if (netif_get_ip6_addr_match(netif, ip_2_ip6(&pcb->local_ip)) < 0
+#ifdef LWIP_HOOK_IP6_WEAK_SEND
+          && !LWIP_HOOK_IP6_WEAK_SEND(ip_2_ip6(&pcb->local_ip))
+#endif
+         ) {
         /* Address isn't valid anymore. */
         return ERR_RTE;
       }

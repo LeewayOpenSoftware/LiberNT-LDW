@@ -68,6 +68,8 @@ struct mld_group {
   u16_t              timer;
   /** counter of simultaneous uses */
   u8_t               use;
+  u8_t               v2_record;
+  u8_t               v2_pending;
 };
 
 #define MLD6_TMR_INTERVAL              100 /* Milliseconds */

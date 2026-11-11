@@ -960,7 +960,14 @@ ip4_output_if_opt_src(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *d
 #if CHECKSUM_GEN_IP_INLINE
     chk_sum += iphdr->_len;
 #endif /* CHECKSUM_GEN_IP_INLINE */
+#ifdef LWIP_HOOK_IP4_DONT_FRAGMENT
+    IPH_OFFSET_SET(iphdr, LWIP_HOOK_IP4_DONT_FRAGMENT(proto) ? PP_HTONS(IP_DF) : 0);
+#if CHECKSUM_GEN_IP_INLINE
+    chk_sum += iphdr->_offset;
+#endif /* CHECKSUM_GEN_IP_INLINE */
+#else
     IPH_OFFSET_SET(iphdr, 0);
+#endif
     IPH_ID_SET(iphdr, lwip_htons(ip_id));
 #if CHECKSUM_GEN_IP_INLINE
     chk_sum += iphdr->_id;
