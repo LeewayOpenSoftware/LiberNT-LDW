@@ -736,3 +736,8 @@ void free(PVOID Block)
 {
     ExFreePool(Block);
 }
+
+void * malloc(size_t Size)
+{
+    return ExAllocatePool(NonPagedPool, Size);
+}

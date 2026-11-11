@@ -381,7 +381,7 @@ Modifications: Wine's edits (compat.h strcasecmp mapping, mpg123.h _WIN32); __RE
 
 Title: libsamplerate
 Path: sdk/lib/3rdparty/libsamplerate
-Used Version: 0.1.9
+Used Version: 0.2.2
 License: BSD-2-Clause (https://spdx.org/licenses/BSD-2-Clause.html)
 URL: http://www.mega-nerd.com/SRC/download.html
 
