@@ -345,11 +345,12 @@ Used Version: 2.19 (Wine 11.14 bundled version)
 License: MIT (https://spdx.org/licenses/MIT.html)
 URL: https://www.littlecms.com/
 
-Title: libmpg123 (used by l3codeca.acm)
+Title: libmpg123 (used by l3codeca.acm and quartz)
 Path: sdk/lib/3rdparty/libmpg123
-Used Version: 1.26.1
+Used Version: 1.33.7 (Wine libs/mpg123 import, wine-mirror 59e29588b247)
 License: LGPL-2.1 (https://spdx.org/licenses/LGPL-2.1.html)
-URL: http://www.mpg123.de/
+URL: https://www.mpg123.de/, https://gitlab.winehq.org/wine/wine/-/tree/master/libs/mpg123
+Modifications: Wine's edits (compat.h strcasecmp mapping, mpg123.h _WIN32); __REACTOS__ hunks in src/libmpg123/parse.c (getbits.h after winsock2.h) and src/common/abi_align.h (force_align_arg_pointer only on x86); CMakeLists.txt and precomp.h are ours
 
 Title: libsamplerate
 Path: sdk/lib/3rdparty/libsamplerate
