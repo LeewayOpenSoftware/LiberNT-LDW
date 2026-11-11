@@ -278,13 +278,6 @@ struct tcp_pcb {
   u8_t polltmr, pollinterval;
   u8_t last_timer;
   u32_t tmr;
-#ifdef __REACTOS__
-  u8_t quickack;
-  u8_t urg_valid;
-  u8_t urg_in_data;
-  u32_t urg_seq;
-  u32_t urg_offset;
-#endif
 
   /* receiver variables */
   u32_t rcv_nxt;   /* next seqno expected */
@@ -302,9 +295,6 @@ struct tcp_pcb {
   s16_t rtime;
 
   u16_t mss;   /* maximum segment size */
-#if LWIP_TCP_PCB_BASE_MSS
-  u16_t base_mss;
-#endif
 
   /* RTT (round trip time) estimation variables */
   u32_t rttest; /* RTT estimate in 500ms ticks */

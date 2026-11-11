@@ -301,7 +301,7 @@ tcp_seg_add_chksum(u16_t chksum, u16_t len, u16_t *seg_chksum,
 /** Checks if tcp_write is allowed or not (checks state, snd_buf and snd_queuelen).
  *
  * @param pcb the tcp pcb to check for
- * @param len length of data to send (checked agains snd_buf)
+ * @param len length of data to send (checked against snd_buf)
  * @return ERR_OK if tcp_write is allowed to proceed, another err_t otherwise
  */
 static err_t
@@ -794,14 +794,6 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
   if (seg != NULL && seg->tcphdr != NULL && ((apiflags & TCP_WRITE_FLAG_MORE) == 0)) {
     TCPH_SET_FLAG(seg->tcphdr, TCP_PSH);
   }
-
-#ifdef __REACTOS__
-  if ((apiflags & TCP_WRITE_FLAG_URG) && (pcb->unsent != NULL)) {
-    for (seg = pcb->unsent; seg->next != NULL; seg = seg->next);
-    TCPH_SET_FLAG(seg->tcphdr, TCP_URG);
-    seg->tcphdr->urgp = lwip_htons(seg->len);
-  }
-#endif
 
   return ERR_OK;
 memerr:
@@ -1995,6 +1987,9 @@ tcp_rst_common(const struct tcp_pcb *pcb, u32_t seqno, u32_t ackno,
 
   LWIP_ASSERT("tcp_rst: invalid local_ip", local_ip != NULL);
   LWIP_ASSERT("tcp_rst: invalid remote_ip", remote_ip != NULL);
+  /* these two are passed only for checks, disable warnings without asserts */
+  LWIP_UNUSED_ARG(local_ip);
+  LWIP_UNUSED_ARG(remote_ip);
 
   optlen = LWIP_TCP_OPT_LENGTH_SEGMENT(0, pcb);
 

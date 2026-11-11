@@ -125,9 +125,6 @@ tcp_input(struct pbuf *p, struct netif *inp)
 #endif /* SO_REUSE */
   u8_t hdrlen_bytes;
   err_t err;
-#ifdef __REACTOS__
-  u32_t urg_base = 0;
-#endif
 
   LWIP_UNUSED_ARG(inp);
   LWIP_ASSERT_CORE_LOCKED();
@@ -438,17 +435,6 @@ tcp_input(struct pbuf *p, struct netif *inp)
       }
     }
     tcp_input_pcb = pcb;
-#ifdef __REACTOS__
-    urg_base = pcb->rcv_nxt;
-    if ((flags & TCP_URG) && (tcphdr->urgp != 0)) {
-      u32_t urg_seq = seqno + lwip_ntohs(tcphdr->urgp) - 1;
-      if (TCP_SEQ_GEQ(urg_seq, pcb->rcv_nxt) &&
-          (!pcb->urg_valid || TCP_SEQ_GT(urg_seq, pcb->urg_seq))) {
-        pcb->urg_seq = urg_seq;
-        pcb->urg_valid = 1;
-      }
-    }
-#endif
     err = tcp_process(pcb);
     /* A return value of ERR_ABRT means that tcp_abort() was called
        and that the pcb has been freed. If so, we don't do anything. */
@@ -511,15 +497,6 @@ tcp_input(struct pbuf *p, struct netif *inp)
             goto aborted;
           }
 
-#ifdef __REACTOS__
-          if (pcb->urg_valid && TCP_SEQ_GEQ(pcb->urg_seq, urg_base) &&
-              TCP_SEQ_LT(pcb->urg_seq, urg_base + recv_data->tot_len)) {
-            pcb->urg_offset = pcb->urg_seq - urg_base;
-            pcb->urg_in_data = 1;
-            pcb->urg_valid = 0;
-          }
-          urg_base += recv_data->tot_len;
-#endif
           /* Notify application that data has been received. */
           TCP_EVENT_RECV(pcb, recv_data, ERR_OK, err);
           if (err == ERR_ABRT) {
@@ -530,9 +507,6 @@ tcp_input(struct pbuf *p, struct netif *inp)
 #endif /* TCP_QUEUE_OOSEQ && LWIP_WND_SCALE */
             goto aborted;
           }
-#ifdef __REACTOS__
-          pcb->urg_in_data = 0;
-#endif
 
           /* If the upper layer can't receive this data, store it */
           if (err != ERR_OK) {
@@ -731,9 +705,6 @@ tcp_listen_input(struct tcp_pcb_listen *pcb)
     npcb->snd_wnd = tcphdr->wnd;
     npcb->snd_wnd_max = npcb->snd_wnd;
 
-#if LWIP_TCP_PCB_BASE_MSS
-    npcb->base_mss = npcb->mss;
-#endif
 #if TCP_CALCULATE_EFF_SEND_MSS
     npcb->mss = tcp_eff_send_mss(npcb->mss, &npcb->local_ip, &npcb->remote_ip);
 #endif /* TCP_CALCULATE_EFF_SEND_MSS */
@@ -873,10 +844,6 @@ tcp_process(struct tcp_pcb *pcb)
   }
 
   if ((pcb->flags & TF_RXCLOSED) == 0) {
-#ifdef __REACTOS__
-    if ((u32_t)(tcp_ticks - pcb->tmr) > TCP_QUICKACK_IDLE_TICKS)
-      pcb->quickack = TCP_QUICKACK_SEGMENTS;
-#endif
     /* Update the PCB (in)activity timer unless rx is closed (see tcp_shutdown) */
     pcb->tmr = tcp_ticks;
   }
@@ -909,9 +876,6 @@ tcp_process(struct tcp_pcb *pcb)
         pcb->snd_wl1 = seqno - 1; /* initialise to seqno - 1 to force window update */
         pcb->state = ESTABLISHED;
 
-#if LWIP_TCP_PCB_BASE_MSS
-        pcb->base_mss = pcb->mss;
-#endif
 #if TCP_CALCULATE_EFF_SEND_MSS
         pcb->mss = tcp_eff_send_mss(pcb->mss, &pcb->local_ip, &pcb->remote_ip);
 #endif /* TCP_CALCULATE_EFF_SEND_MSS */
@@ -1600,7 +1564,7 @@ tcp_receive(struct tcp_pcb *pcb)
           recv_data = inseg.p;
           /* Since this pbuf now is the responsibility of the
              application, we delete our reference to it so that we won't
-             (mistakingly) deallocate it. */
+             (mistakenly) deallocate it. */
           inseg.p = NULL;
         }
         if (TCPH_FLAGS(inseg.tcphdr) & TCP_FIN) {
@@ -1664,12 +1628,6 @@ tcp_receive(struct tcp_pcb *pcb)
 
 
         /* Acknowledge the segment(s). */
-#ifdef __REACTOS__
-        if (pcb->quickack) {
-          pcb->quickack--;
-          tcp_ack_now(pcb);
-        } else
-#endif
         tcp_ack(pcb);
 
 #if LWIP_TCP_SACK_OUT
@@ -1729,10 +1687,20 @@ tcp_receive(struct tcp_pcb *pcb)
                  ->ooseq. We check the lengths to see which one to
                  discard. */
               if (inseg.len > next->len) {
+                struct tcp_seg* cseg;
+
+                /* If next segment is the last segment in ooseq
+                   and smaller than inseg, that means it has been
+                   trimmed before to fit our window, so we just
+                   break here. */
+                if (next->next == NULL) {
+                  break;
+                }
+
                 /* The incoming segment is larger than the old
                    segment. We replace some segments with the new
                    one. */
-                struct tcp_seg *cseg = tcp_seg_copy(&inseg);
+                cseg = tcp_seg_copy(&inseg);
                 if (cseg != NULL) {
                   if (prev != NULL) {
                     prev->next = cseg;

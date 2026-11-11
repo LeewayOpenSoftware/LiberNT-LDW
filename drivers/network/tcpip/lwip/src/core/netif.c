@@ -93,10 +93,6 @@
 #include "lwip/nd6.h"
 #endif
 
-#ifdef LWIP_HOOK_FILENAME
-#include LWIP_HOOK_FILENAME
-#endif
-
 #if LWIP_NETIF_STATUS_CALLBACK
 #define NETIF_STATUS_CALLBACK(n) do{ if (n->status_callback) { (n->status_callback)(n); }}while(0)
 #else
@@ -1413,7 +1409,7 @@ netif_ip6_addr_set_parts(struct netif *netif, s8_t addr_idx, u32_t i0, u32_t i1,
     if (ip6_addr_isvalid(netif_ip6_addr_state(netif, addr_idx))) {
       netif_do_ip_addr_changed(netif_ip_addr6(netif, addr_idx), &new_ipaddr);
     }
-    /* @todo: remove/readd mib2 ip6 entries? */
+    /* @todo: remove/re-add mib2 ip6 entries? */
 
     ip_addr_copy(netif->ip6_addr[addr_idx], new_ipaddr);
 
@@ -1456,20 +1452,10 @@ netif_ip6_addr_set_state(struct netif *netif, s8_t addr_idx, u8_t state)
   LWIP_ASSERT("invalid index", addr_idx < LWIP_IPV6_NUM_ADDRESSES);
 
   old_state = netif_ip6_addr_state(netif, addr_idx);
-  if (ip6_addr_istentative(state) && !ip6_addr_istentative(old_state)) {
-    netif->ip6_dad_sent[addr_idx] = 0;
-    netif->ip6_dad_next[addr_idx] = sys_now();
-  }
-  if (ip6_addr_isinvalid(old_state) && !ip6_addr_isinvalid(state)) {
-    netif->ip6_addr_created[addr_idx] = sys_now();
-  }
   /* state is actually being changed? */
   if (old_state != state) {
     u8_t old_valid = old_state & IP6_ADDR_VALID;
     u8_t new_valid = state & IP6_ADDR_VALID;
-#ifdef LWIP_HOOK_IP6_ADDR_STATE_CHANGED
-    LWIP_HOOK_IP6_ADDR_STATE_CHANGED(netif, addr_idx);
-#endif
     LWIP_DEBUGF(NETIF_DEBUG | LWIP_DBG_STATE, ("netif_ip6_addr_set_state: netif address state being changed\n"));
 
 #if LWIP_IPV6_MLD

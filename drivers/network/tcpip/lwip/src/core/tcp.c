@@ -938,7 +938,7 @@ tcp_update_rcv_ann_wnd(struct tcp_pcb *pcb)
   LWIP_ASSERT("tcp_update_rcv_ann_wnd: invalid pcb", pcb != NULL);
   new_right_edge = pcb->rcv_nxt + pcb->rcv_wnd;
 
-  if (TCP_SEQ_GEQ(new_right_edge, pcb->rcv_ann_right_edge + LWIP_MIN((tcpwnd_size_t)(TCP_WND / 2), (tcpwnd_size_t)pcb->mss))) {
+  if (TCP_SEQ_GEQ(new_right_edge, pcb->rcv_ann_right_edge + LWIP_MIN((TCP_WND / 2), pcb->mss))) {
     /* we can advertise more window */
     pcb->rcv_ann_wnd = pcb->rcv_wnd;
     return new_right_edge - pcb->rcv_ann_right_edge;
@@ -1908,9 +1908,6 @@ tcp_alloc(u8_t prio)
     pcb->rtime = -1;
     pcb->cwnd = 1;
     pcb->tmr = tcp_ticks;
-#ifdef __REACTOS__
-    pcb->quickack = TCP_QUICKACK_SEGMENTS;
-#endif
     pcb->last_timer = tcp_timer_ctr;
 
     /* RFC 5681 recommends setting ssthresh arbitrarily high and gives an example
@@ -2274,11 +2271,7 @@ tcp_eff_send_mss_netif(u16_t sendmss, struct netif *outif, const ip_addr_t *dest
     if (outif == NULL) {
       return sendmss;
     }
-#ifdef LWIP_HOOK_IP4_PATH_MTU
-    mtu = LWIP_HOOK_IP4_PATH_MTU(ip_2_ip4(dest), outif);
-#else
     mtu = outif->mtu;
-#endif
   }
 #endif /* LWIP_IPV4 */
 
