@@ -455,7 +455,13 @@
     /* in debug mode, we use a global object that survives this routine */
 
     AF_GlyphHints  hints = af_debug_hints_rec_;
+#ifdef __REACTOS__
+    AF_LoaderRec  *loader = malloc(sizeof(*loader));
+    if (!loader)
+      return FT_Err_Out_Of_Memory;
+#else
     AF_LoaderRec   loader[1];
+#endif
 
     FT_UNUSED( size );
 
@@ -482,12 +488,25 @@
 
     af_loader_done( loader );
 
+#ifdef __REACTOS__
+    free(loader);
+#endif
     return error;
 
 #else /* !FT_DEBUG_AUTOFIT */
 
+#ifdef __REACTOS__
+    AF_GlyphHintsRec *hints = malloc(sizeof(*hints));
+    AF_LoaderRec *loader = malloc(sizeof(*loader));
+    if (!hints || !loader)
+    {
+        error = FT_Err_Out_Of_Memory;
+        goto Exit;
+    }
+#else
     AF_GlyphHintsRec  hints[1];
     AF_LoaderRec      loader[1];
+#endif
 
     FT_UNUSED( size );
 
@@ -501,6 +520,11 @@
     af_loader_done( loader );
     af_glyph_hints_done( hints );
 
+#ifdef __REACTOS__
+Exit:
+    free(hints);
+    free(loader);
+#endif
     return error;
 
 #endif /* !FT_DEBUG_AUTOFIT */

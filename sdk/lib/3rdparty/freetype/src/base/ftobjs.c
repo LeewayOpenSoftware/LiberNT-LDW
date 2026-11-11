@@ -5349,6 +5349,11 @@
     FT_Bool  missing_func;
 
 
+#if defined( FT_DEBUG_LEVEL_ERROR ) && !defined( FT_DEBUG_LEVEL_TRACE )
+    FT_UNUSED( func_name );  /* only FT_TRACE uses it; we build with -Werror */
+#endif
+
+
     if ( !library )
       return FT_THROW( Invalid_Library_Handle );
 

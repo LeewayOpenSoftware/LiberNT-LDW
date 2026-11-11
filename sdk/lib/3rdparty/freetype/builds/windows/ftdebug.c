@@ -93,8 +93,10 @@
 
 #ifdef FT_DEBUG_LEVEL_ERROR
 
+#ifndef __REACTOS__ /* no user-mode headers in win32k; rosglue.c supplies FT_Message/FT_Panic */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 
 #ifdef _WIN32_WCE
@@ -125,6 +127,7 @@
 #endif /* _WIN32_WCE */
 
 
+#ifndef __REACTOS__ /* win32ss/drivers/font/ftfd/rosglue.c defines this */
   /* documentation is in ftdebug.h */
 
   FT_BASE_DEF( void )
@@ -149,10 +152,11 @@
 #endif
     va_end( ap );
   }
-
+#endif
 
   /* documentation is in ftdebug.h */
 
+#ifndef __REACTOS__ /* win32ss/drivers/font/ftfd/rosglue.c defines this */
   FT_BASE_DEF( void )
   FT_Panic( const char*  fmt,
             ... )
@@ -177,7 +181,7 @@
 
     exit( EXIT_FAILURE );
   }
-
+#endif
 
   /* documentation is in ftdebug.h */
 

@@ -405,7 +405,16 @@
                                 FT_Int*   max_advance )
   {
     FT_Error       error;
+#ifdef __REACTOS__
+    T1_DecoderRec *decoder_allocated = malloc(sizeof(*decoder_allocated));
+    if (!decoder_allocated)
+      return FT_THROW( Out_Of_Memory );
+/* Ugly but it allows us to reduce the diff */
+#define decoder (*decoder_allocated)
+    {
+#else
     T1_DecoderRec  decoder;
+#endif
     FT_Int         glyph_index;
 
     PSAux_Service  psaux = (PSAux_Service)face->psaux;
@@ -423,7 +432,14 @@
                                            0, /* hinting == 0 */
                                            cid_load_glyph );
     if ( error )
+#ifdef __REACTOS__
+    {
+        free(decoder_allocated);
+        return error;
+    }
+#else
       return error;
+#endif
 
     /* TODO: initialize decoder.len_buildchar and decoder.buildchar */
     /*       if we ever support CID-keyed multiple master fonts     */
@@ -445,6 +461,11 @@
 
     psaux->t1_decoder_funcs->done( &decoder );
 
+#ifdef __REACTOS__
+    free(decoder_allocated);
+#undef decoder
+    }
+#endif
     return FT_Err_Ok;
   }
 
@@ -460,7 +481,15 @@
   {
     CID_GlyphSlot  glyph = (CID_GlyphSlot)cidglyph;
     FT_Error       error;
+#ifdef __REACTOS__
+    T1_DecoderRec *decoder_allocated = malloc(sizeof(*decoder_allocated));
+    if (!decoder_allocated) return FT_Err_Out_Of_Memory;
+/* Ugly but it allows us to reduce the diff */
+#define decoder (*decoder_allocated)
+    {
+#else
     T1_DecoderRec  decoder;
+#endif
     CID_Face       face = (CID_Face)cidglyph->face;
     FT_Bool        hinting;
     FT_Bool        scaled;
@@ -636,6 +665,11 @@
     if ( must_finish_decoder )
       psaux->t1_decoder_funcs->done( &decoder );
 
+#ifdef __REACTOS__
+    free(decoder_allocated);
+#undef decoder
+    }
+#endif
     return error;
   }
 

@@ -64,8 +64,12 @@
                               FT_Face        face )
   {
     /* scan the array of segments in each direction */
+#ifdef __REACTOS__
+    AF_GlyphHintsRec *hints = malloc(sizeof(*hints));
+    if (!hints) return;
+#else
     AF_GlyphHintsRec  hints[1];
-
+#endif
 
     FT_TRACE5(( "\n" ));
     FT_TRACE5(( "cjk standard widths computation (style `%s')\n",
@@ -82,7 +86,14 @@
       FT_Error          error;
       FT_ULong          glyph_index;
       int               dim;
+#ifdef __REACTOS__
+      AF_CJKMetricsRec *dummy = malloc(sizeof(*dummy));
+      if (!dummy)
+        goto Exit;
+      {
+#else
       AF_CJKMetricsRec  dummy[1];
+#endif
       AF_Scaler         scaler = &dummy->root.scaler;
 
       AF_StyleClass   style_class  = metrics->root.style_class;
@@ -258,11 +269,18 @@
         }
 #endif
       }
+#ifdef __REACTOS__
+      free(dummy);
+      }
+#endif
     }
 
     FT_TRACE5(( "\n" ));
 
     af_glyph_hints_done( hints );
+#ifdef __REACTOS__
+    free(hints);
+#endif
   }
 
 

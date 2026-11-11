@@ -1642,8 +1642,16 @@
     case TT_SBIT_TABLE_TYPE_EBLC:
     case TT_SBIT_TABLE_TYPE_CBLC:
       {
+#ifdef __REACTOS__
+        TT_SBitDecoderRec *decoder = malloc(sizeof(*decoder));
+        if (!decoder)
+        {
+            error = FT_THROW( Out_Of_Memory );
+            break;
+        }
+#else
         TT_SBitDecoderRec  decoder[1];
-
+#endif
 
         error = tt_sbit_decoder_init( decoder, face, strike_index, metrics );
         if ( !error )
@@ -1657,6 +1665,9 @@
                     ( load_flags & FT_LOAD_BITMAP_METRICS_ONLY ) != 0 );
           tt_sbit_decoder_done( decoder );
         }
+#ifdef __REACTOS__
+        free(decoder);
+#endif
       }
       break;
 

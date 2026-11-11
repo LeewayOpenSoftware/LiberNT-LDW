@@ -1956,9 +1956,43 @@ typedef ptrdiff_t  FT_PtrDist;
   }
 
 
+#if !defined( FT_STATIC_RASTER ) && defined( __REACTOS__ )
+
+  static int
+  gray_raster_render_( FT_Raster                raster,
+                       const FT_Raster_Params*  params,
+                       gray_TWorker*            worker );
+
+  /* the worker does not fit on the kernel stack */
   static int
   gray_raster_render( FT_Raster                raster,
                       const FT_Raster_Params*  params )
+  {
+    gray_TWorker*  worker = malloc( sizeof ( *worker ) );
+    int            ret;
+
+
+    if ( !worker )
+      return FT_THROW( Out_Of_Memory );
+
+    ret = gray_raster_render_( raster, params, worker );
+    free( worker );
+
+    return ret;
+  }
+
+#endif /* !FT_STATIC_RASTER && __REACTOS__ */
+
+
+  static int
+#if !defined( FT_STATIC_RASTER ) && defined( __REACTOS__ )
+  gray_raster_render_( FT_Raster                raster,
+                       const FT_Raster_Params*  params,
+                       gray_TWorker*            worker )
+#else
+  gray_raster_render( FT_Raster                raster,
+                      const FT_Raster_Params*  params )
+#endif
   {
     FT_ULong  estimate;
     int       ret;
@@ -1966,7 +2000,7 @@ typedef ptrdiff_t  FT_PtrDist;
     const FT_Outline*  outline    = (const FT_Outline*)params->source;
     const FT_Bitmap*   target_map = params->target;
 
-#ifndef FT_STATIC_RASTER
+#if !defined( FT_STATIC_RASTER ) && !defined( __REACTOS__ )
     gray_TWorker  worker[1];
 #endif
 
@@ -2043,7 +2077,14 @@ typedef ptrdiff_t  FT_PtrDist;
 
     /* allocate memory based on empirical estimate from CJK fonts */
     estimate = ( ras.max_ex - ras.min_ex + ras.max_ey - ras.min_ey ) * 10UL;
+#ifdef __REACTOS__
+    /* the cell pool does not fit on the kernel stack either */
+    if ( estimate < FT_MAX_GRAY_POOL )
+      estimate = FT_MAX_GRAY_POOL;
+    if ( 1 )
+#else
     if ( estimate > FT_MAX_GRAY_POOL )
+#endif
     {
       FT_Error   error;
       FT_Memory  memory = (FT_Memory)((gray_PRaster)raster)->memory;
@@ -2058,6 +2099,7 @@ typedef ptrdiff_t  FT_PtrDist;
         FT_FREE( ras.buffer );
       }
     }
+#ifndef __REACTOS__
     else
     {
       TCell  buffer[FT_MAX_GRAY_POOL];  /* stack allocation */
@@ -2068,6 +2110,7 @@ typedef ptrdiff_t  FT_PtrDist;
 
       ret = gray_convert_glyph( RAS_VAR );
     }
+#endif
 
     return ret;
   }

@@ -1508,7 +1508,14 @@
                             glyph_data.pointer,
                             glyph_data.length );
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdangling-pointer"
+#endif
       loader->stream = &inc_stream;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     }
     else
 

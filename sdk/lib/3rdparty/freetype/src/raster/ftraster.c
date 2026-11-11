@@ -2669,9 +2669,43 @@
   }
 
 
+#if !defined( FT_STATIC_RASTER ) && defined( __REACTOS__ )
+
+  static int
+  ft_black_render_( FT_Raster                raster,
+                    const FT_Raster_Params*  params,
+                    black_TWorker*           worker );
+
+  /* the worker does not fit on the kernel stack */
   static int
   ft_black_render( FT_Raster                raster,
                    const FT_Raster_Params*  params )
+  {
+    black_TWorker*  worker = malloc( sizeof ( *worker ) );
+    int             ret;
+
+
+    if ( !worker )
+      return FT_THROW( Out_Of_Memory );
+
+    ret = ft_black_render_( raster, params, worker );
+    free( worker );
+
+    return ret;
+  }
+
+#endif /* !FT_STATIC_RASTER && __REACTOS__ */
+
+
+  static int
+#if !defined( FT_STATIC_RASTER ) && defined( __REACTOS__ )
+  ft_black_render_( FT_Raster                raster,
+                    const FT_Raster_Params*  params,
+                    black_TWorker*           worker )
+#else
+  ft_black_render( FT_Raster                raster,
+                   const FT_Raster_Params*  params )
+#endif
   {
     const FT_Outline*  outline    = (const FT_Outline*)params->source;
     const FT_Bitmap*   target_map = params->target;
@@ -2679,7 +2713,7 @@
     FT_ULong  estimate;
     int       ret;
 
-#ifndef FT_STATIC_RASTER
+#if !defined( FT_STATIC_RASTER ) && !defined( __REACTOS__ )
     black_TWorker  worker[1];
 #endif
 
@@ -2729,7 +2763,14 @@
     /* allocate memory based on empirical estimate from CJK fonts */
     estimate = ( ras.bTop + ras.bRight ) * 8UL +
                80UL * sizeof ( TProfile ) / sizeof ( Long );
+#ifdef __REACTOS__
+    /* the profile pool does not fit on the kernel stack either */
+    if ( estimate < FT_MAX_BLACK_POOL )
+      estimate = FT_MAX_BLACK_POOL;
+    if ( 1 )
+#else
     if ( estimate > FT_MAX_BLACK_POOL )
+#endif
     {
       FT_Error   error;
       FT_Memory  memory = (FT_Memory)((black_PRaster)raster)->memory;
@@ -2744,6 +2785,7 @@
         FT_FREE( ras.buff );
       }
     }
+#ifndef __REACTOS__
     else
     {
       Long  buffer[FT_MAX_BLACK_POOL];  /* stack allocation */
@@ -2754,6 +2796,7 @@
 
       ret = Render_Glyph( RAS_VAR );
     }
+#endif
 
     return ret;
   }

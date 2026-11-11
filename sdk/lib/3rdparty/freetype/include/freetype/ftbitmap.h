@@ -206,6 +206,14 @@ FT_BEGIN_HEADER
                      FT_Bitmap        *target,
                      FT_Int            alignment );
 
+#ifdef __REACTOS__
+  FT_EXPORT( FT_Error )
+  FT_Bitmap_Convert_ReactOS_Hack( FT_Library        library,
+                                  const FT_Bitmap  *source,
+                                  FT_Bitmap        *target,
+                                  FT_Int            alignment,
+                                  FT_Bool           hack );
+#endif
 
   /**************************************************************************
    *

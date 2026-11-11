@@ -304,7 +304,7 @@ FT_BEGIN_HEADER
    */
   FT_EXPORT( FT_Error )
   FT_Library_SetLcdGeometry( FT_Library  library,
-                             FT_Vector   sub[3] );
+                             FT_Vector*  sub );
 
   /* */
 

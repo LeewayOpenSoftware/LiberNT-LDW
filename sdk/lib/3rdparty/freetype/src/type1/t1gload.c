@@ -221,7 +221,16 @@
                           FT_Pos*  max_advance )
   {
     FT_Error       error;
+#ifdef __REACTOS__
+    T1_DecoderRec *decoder_allocated = malloc(sizeof(*decoder_allocated));
+    if (!decoder_allocated)
+      return FT_THROW( Out_Of_Memory );
+    {
+/* Ugly but it allows us to reduce the diff */
+#define decoder (*decoder_allocated)
+#else
     T1_DecoderRec  decoder;
+#endif
     FT_Int         glyph_index;
     T1_Font        type1 = &face->type1;
     PSAux_Service  psaux = (PSAux_Service)face->psaux;
@@ -242,7 +251,14 @@
                                            FT_RENDER_MODE_NORMAL,
                                            T1_Parse_Glyph );
     if ( error )
+#ifdef __REACTOS__
+    {
+        free(decoder_allocated);
+        return error;
+    }
+#else
       return error;
+#endif
 
     decoder.builder.metrics_only = 1;
     decoder.builder.load_points  = 0;
@@ -276,6 +292,11 @@
 
     psaux->t1_decoder_funcs->done( &decoder );
 
+#ifdef __REACTOS__
+    free(decoder_allocated);
+#undef decoder
+    }
+#endif
     return FT_Err_Ok;
   }
 
@@ -288,7 +309,16 @@
                    FT_Fixed*  advances )
   {
     T1_Face        face  = (T1_Face)t1face;
+#ifdef __REACTOS__
+    T1_DecoderRec *decoder_allocated = malloc(sizeof(*decoder_allocated));
+    if (!decoder_allocated)
+      return FT_THROW( Out_Of_Memory );
+/* Ugly but it allows us to reduce the diff */
+#define decoder (*decoder_allocated)
+    {
+#else
     T1_DecoderRec  decoder;
+#endif
     T1_Font        type1 = &face->type1;
     PSAux_Service  psaux = (PSAux_Service)face->psaux;
     FT_UInt        nn;
@@ -307,6 +337,9 @@
                     first + nn ));
       }
 
+#ifdef __REACTOS__
+      free(decoder_allocated);
+#endif
       return FT_Err_Ok;
     }
 
@@ -320,7 +353,14 @@
                                            FT_RENDER_MODE_NORMAL,
                                            T1_Parse_Glyph );
     if ( error )
+#ifdef __REACTOS__
+    {
+        free(decoder_allocated);
+        return error;
+    }
+#else
       return error;
+#endif
 
     decoder.builder.metrics_only = 1;
     decoder.builder.load_points  = 0;
@@ -347,6 +387,11 @@
                   advances[nn] == 1 ? "" : "s" ));
     }
 
+#ifdef __REACTOS__
+    free(decoder_allocated);
+#undef decoder
+    }
+#endif
     return FT_Err_Ok;
   }
 
@@ -359,7 +404,16 @@
   {
     T1_GlyphSlot            glyph = (T1_GlyphSlot)t1glyph;
     FT_Error                error;
+#ifdef __REACTOS__
+    T1_DecoderRec *decoder_allocated = malloc(sizeof(*decoder_allocated));
+    if (!decoder_allocated)
+      return FT_THROW( Out_Of_Memory );
+/* Ugly but it allows us to reduce the diff */
+#define decoder (*decoder_allocated)
+    {
+#else
     T1_DecoderRec           decoder;
+#endif
     T1_Face                 face = (T1_Face)t1glyph->face;
     FT_Bool                 hinting;
     FT_Bool                 scaled;
@@ -601,6 +655,11 @@
     if ( must_finish_decoder )
       decoder_funcs->done( &decoder );
 
+#ifdef __REACTOS__
+    free(decoder_allocated);
+#undef decoder
+    }
+#endif
     return error;
   }
 
