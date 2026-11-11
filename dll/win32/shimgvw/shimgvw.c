@@ -2121,7 +2121,24 @@ PreviewWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         case WM_NOTIFY:
         {
+            /* The ribbon's height change goes to the frame first. */
+            PPREVIEW_DATA pData = Preview_GetData(hwnd);
+            LRESULT lr = 0;
+            if (pData && pData->m_pFrame &&
+                LeewayFrameHandleMessage(pData->m_pFrame, uMsg, wParam, lParam, &lr))
+                return lr;
             return Preview_OnNotify(hwnd, (LPNMHDR)lParam);
+        }
+        case WM_DRAWITEM:
+        case WM_CTLCOLORSTATIC:
+        {
+            /* Status bar parts and the zoom slider are drawn in the theme's colours. */
+            PPREVIEW_DATA pData = Preview_GetData(hwnd);
+            LRESULT lr = 0;
+            if (pData && pData->m_pFrame &&
+                LeewayFrameHandleMessage(pData->m_pFrame, uMsg, wParam, lParam, &lr))
+                return lr;
+            return DefWindowProcW(hwnd, uMsg, wParam, lParam);
         }
         case WM_GETMINMAXINFO:
         {
