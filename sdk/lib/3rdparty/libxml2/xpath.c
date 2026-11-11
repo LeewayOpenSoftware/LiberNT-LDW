@@ -281,6 +281,7 @@ xmlXPathIsInf(double val) {
 
 static const xmlNs xmlXPathXMLNamespaceStruct = {
     NULL,
+    NULL,
     XML_NAMESPACE_DECL,
     XML_XML_NAMESPACE,
     BAD_CAST "xml",
@@ -2333,7 +2334,9 @@ xmlXPathFormatNumber(double number, char buffer[], int buffersize)
 	    /* Finally copy result back to caller */
 	    size = strlen(work) + 1;
 	    if (size > buffersize) {
+#if 0  /* avoid compiler warning */
 		work[buffersize - 1] = 0;
+#endif
 		size = buffersize;
 	    }
 	    memmove(buffer, work, size);

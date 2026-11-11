@@ -1810,8 +1810,8 @@ xmlSchemaValidateDates (xmlSchemaValType type,
 
     start = cur;
 
-    if ((*cur != '-') && (*cur < '0') && (*cur > '9'))
-	return 1;
+    if ((*cur != '-') && ((*cur < '0') || (*cur > '9')))
+        return 1;
 
     dt = xmlSchemaNewValue(XML_SCHEMAS_UNKNOWN);
     if (dt == NULL)

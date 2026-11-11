@@ -357,6 +357,7 @@ typedef xmlAttribute *xmlAttributePtr;
 struct _xmlAttribute {
     /** application data */
     void           *_private;
+    void           *_private2;
     /** XML_ATTRIBUTE_DECL */
     xmlElementType          type;
     /** attribute name */
@@ -460,6 +461,7 @@ typedef xmlElement *xmlElementPtr;
 struct _xmlElement {
     /** application data */
     void           *_private;
+    void           *_private2;
     /** XML_ELEMENT_DECL */
     xmlElementType          type;
     /** element name */
@@ -519,6 +521,7 @@ typedef xmlNs *xmlNsPtr;
 struct _xmlNs {
     /** next namespace */
     struct _xmlNs  *next;
+    void *_pad;
     /** XML_NAMESPACE_DECL */
     xmlNsType      type;
     /** namespace URI */
@@ -544,6 +547,7 @@ typedef xmlDtd *xmlDtdPtr;
 struct _xmlDtd {
     /** application data */
     void           *_private;
+    void           *_private2;
     /** XML_DTD_NODE */
     xmlElementType  type;
     /** name of the DTD */
@@ -588,6 +592,7 @@ typedef xmlAttr *xmlAttrPtr;
 struct _xmlAttr {
     /** application data */
     void           *_private;
+    void           *_private2;
     /** XML_ATTRIBUTE_NODE */
     xmlElementType   type;
     /** local name */
@@ -695,6 +700,7 @@ typedef xmlNode *xmlNodePtr;
 struct _xmlNode {
     /** Application data. Often used by language bindings. */
     void           *_private;
+    void           *_private2;	/* application data, slot 2 (Wine/msxml3) */
     /** Type enum, an xmlElementType value */
     xmlElementType   type;
     /**
@@ -787,6 +793,7 @@ typedef xmlDoc *xmlDocPtr;
 struct _xmlDoc {
     /** application data */
     void           *_private;
+    void           *_private2;
     /** XML_DOCUMENT_NODE or XML_HTML_DOCUMENT_NODE */
     xmlElementType  type;
     /** NULL */

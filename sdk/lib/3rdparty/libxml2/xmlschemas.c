@@ -2651,7 +2651,7 @@ xmlSchemaComplexTypeErr(xmlSchemaAbstractCtxtPtr actxt,
     xmlFree(msg);
 }
 
-static void LIBXML_ATTR_FORMAT(8,0)
+static void
 xmlSchemaFacetErr(xmlSchemaAbstractCtxtPtr actxt,
 		  xmlParserErrors error,
 		  xmlNodePtr node,
@@ -3116,7 +3116,7 @@ xmlSchemaPMutualExclAttrErr(xmlSchemaParserCtxtPtr ctxt,
  * @param str1  extra data
  * @param str2  extra data
  */
-static void LIBXML_ATTR_FORMAT(8,0)
+static void
 xmlSchemaPSimpleTypeErr(xmlSchemaParserCtxtPtr ctxt,
 			xmlParserErrors error,
 			xmlSchemaBasicItemPtr ownerItem ATTRIBUTE_UNUSED,
@@ -12878,12 +12878,14 @@ xmlSchemaBuildContentModel(xmlSchemaTypePtr type,
 	    XML_SCHEMAP_INTERNAL,
 	    WXS_BASIC_CAST type, type->node,
 	    "Failed to compile the content model", NULL);
+#if 0  /* disabled in Wine */
     } else if (xmlRegexpIsDeterminist(type->contModel) != 1) {
         xmlSchemaPCustomErr(ctxt,
 	    XML_SCHEMAP_NOT_DETERMINISTIC,
 	    /* XML_SCHEMAS_ERR_NOTDETERMINIST, */
 	    WXS_BASIC_CAST type, type->node,
 	    "The content model is not determinist", NULL);
+#endif
     } else {
     }
     ctxt->state = NULL;
@@ -19765,7 +19767,7 @@ xmlSchemaResolveAttrUseReferences(xmlSchemaAttributeUsePtr ause,
 		WXS_BASIC_CAST ause, ause->node,
 		"ref", ref->name, ref->targetNamespace,
 		XML_SCHEMA_TYPE_ATTRIBUTE, NULL);
-            return(ctxt->err);;
+            return(ctxt->err);
         }
     }
     return(0);
@@ -28419,7 +28421,7 @@ xmlSchemaValidateStream(xmlSchemaValidCtxt *ctxt,
         xmlCtxtUseOptions(pctxt, options);
 #endif
 
-    inputStream = xmlNewIOInputStream(pctxt, input, enc);;
+    inputStream = xmlNewIOInputStream(pctxt, input, enc);
     if (inputStream == NULL) {
         ret = -1;
 	goto done;
