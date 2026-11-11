@@ -37,6 +37,7 @@ extern "C" {
 #define LWG_IDM_STATS      0x7E04
 #define LWG_IDM_HINT       0x7E05
 #define LWG_IDM_EXIT       0x7E06
+#define LWG_IDM_AUTO       0x7E07   /* autocomplete */
 
 /* ================================ statistics ================================ */
 

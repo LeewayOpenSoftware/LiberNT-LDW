@@ -3,6 +3,8 @@ list(APPEND SOURCE
     solcreate.cpp
     solgame.cpp
     solundo.cpp
+    solmodel.cpp
+    solglue.cpp
     solitaire.cpp
     solitaire.h)
 
