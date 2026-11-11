@@ -6,6 +6,7 @@ extern void func_CaptionGlyphs(void);
 extern void func_CloseThemeData(void);
 extern void func_ColorPreference(void);
 extern void func_DrawThemeParentBackground(void);
+extern void func_DwmCaptionButton(void);
 extern void func_GetThemeParseErrorInfo(void);
 extern void func_CustomCaptionInset(void);
 extern void func_NonClientActivate(void);
@@ -25,6 +26,7 @@ const struct test winetest_testlist[] =
     { "CloseThemeData", func_CloseThemeData },
     { "ColorPreference", func_ColorPreference },
     { "DrawThemeParentBackground", func_DrawThemeParentBackground },
+    { "DwmCaptionButton", func_DwmCaptionButton },
     { "GetThemeParseErrorInfo", func_GetThemeParseErrorInfo },
     { "CustomCaptionInset", func_CustomCaptionInset },
     { "NonClientActivate", func_NonClientActivate },

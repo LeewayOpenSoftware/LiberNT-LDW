@@ -1873,7 +1873,8 @@ WinPosFixupZOrder(WINDOWPOS *WinPos, PWND Wnd)
       }
       else if (WinPos->hwndInsertAfter == HWND_BOTTOM)
       {
-         if (!(Wnd->ExStyle & WS_EX_TOPMOST) && IntGetWindow(WinPos->hwnd, GW_HWNDLAST) == WinPos->hwnd)
+         if (!(Wnd->ExStyle & WS_EX_TOPMOST) &&
+             (!Wnd->spwndNext || (Wnd->spwndNext->state2 & WNDS2_BOTTOMMOST)))
             WinPos->flags |= SWP_NOZORDER;
       }
       else if (WinPos->hwndInsertAfter == HWND_TOPMOST)
@@ -1914,7 +1915,9 @@ WinPosFixupZOrder(WINDOWPOS *WinPos, PWND Wnd)
              * itself.
              */
             if ((WinPos->hwnd == WinPos->hwndInsertAfter) ||
-                ((InsAfterWnd->spwndNext) && (WinPos->hwnd == UserHMGetHandle(InsAfterWnd->spwndNext))))
+                ((InsAfterWnd->spwndNext) && (WinPos->hwnd == UserHMGetHandle(InsAfterWnd->spwndNext))) ||
+                ((InsAfterWnd->state2 & WNDS2_BOTTOMMOST) && !(Wnd->ExStyle & WS_EX_TOPMOST) &&
+                 Wnd->spwndNext == InsAfterWnd))
             {
                WinPos->flags |= SWP_NOZORDER;
             }

@@ -105,6 +105,9 @@ DEFINE_MEDIATYPE_GUID(MFVideoFormat_IMC1, MAKEFOURCC('I','M','C','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_IMC2, MAKEFOURCC('I','M','C','2'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_IMC3, MAKEFOURCC('I','M','C','3'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_IMC4, MAKEFOURCC('I','M','C','4'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_I422, MAKEFOURCC('I','4','2','2'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_I444, MAKEFOURCC('I','4','4','4'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_P208, MAKEFOURCC('P','2','0','8'));
 
 DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_AVC1,MAKEFOURCC('A','V','C','1'));
 DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_MP42,MAKEFOURCC('M','P','4','2'));
@@ -5869,6 +5872,38 @@ image_size_tests[] =
     { &MFVideoFormat_P010, 3, 2, 24, 18, 192, 18, 64 },
     { &MFVideoFormat_P010, 4, 2, 24, 0, 192, 24, 64 },
     { &MFVideoFormat_P010, 320, 240, 230400, 0, 230400, 230400, 640 },
+
+    { &MFVideoFormat_P016, 1, 2, 12, 6, 192, 6, 64 },
+    { &MFVideoFormat_P016, 16, 16, 768, 0, 1536, 768, 64 },
+
+    { &MFVideoFormat_420O, 3, 5, 30, 22, 320, 15, 64 },
+    { &MFVideoFormat_420O, 17, 3, 81, 76, 192, 51, 64 },
+
+    { &MFVideoFormat_I422, 3, 5, 40, 30, 320, 15, 64 },
+    { &MFVideoFormat_I422, 17, 3, 108, 102, 192, 51, 64 },
+
+    { &MFVideoFormat_I444, 3, 5, 45, 0, 320, 15, 64 },
+    { &MFVideoFormat_I444, 17, 3, 153, 0, 192, 51, 64 },
+
+    { &MFVideoFormat_P210, 3, 5, 80, 60, 320, 30, 64 },
+    { &MFVideoFormat_P210, 17, 3, 216, 204, 192, 102, 64 },
+    { &MFVideoFormat_P216, 3, 5, 80, 60, 320, 30, 64 },
+    { &MFVideoFormat_P216, 17, 3, 216, 204, 192, 102, 64 },
+
+    { &MFVideoFormat_Y41P, 3, 5, 30, 22, 320, 20, 64 },
+    { &MFVideoFormat_Y41P, 17, 3, 81, 76, 192, 75, 64 },
+
+    { &MFVideoFormat_Y210, 3, 5, 80, 60, 320, 60, 64 },
+    { &MFVideoFormat_Y210, 17, 3, 216, 204, 384, 204, 128 },
+    { &MFVideoFormat_Y216, 3, 5, 80, 60, 320, 60, 64 },
+    { &MFVideoFormat_Y216, 17, 3, 216, 204, 384, 204, 128 },
+
+    { &MFVideoFormat_Y410, 3, 5, 60, 0, 320, 60, 64 },
+    { &MFVideoFormat_Y410, 17, 3, 204, 0, 384, 204, 128 },
+    { &MFVideoFormat_v410, 3, 5, 60, 0, 320, 60, 64 },
+    { &MFVideoFormat_v410, 17, 3, 204, 0, 384, 204, 128 },
+    { &MFVideoFormat_Y416, 3, 5, 120, 0, 320, 120, 64 },
+    { &MFVideoFormat_Y416, 17, 3, 408, 0, 576, 408, 192 },
 };
 
 static void test_MFCalculateImageSize(void)
@@ -5881,6 +5916,15 @@ static void test_MFCalculateImageSize(void)
     hr = MFCalculateImageSize(&IID_IUnknown, 1, 1, &size);
     ok(hr == E_INVALIDARG || broken(hr == S_OK) /* Vista */, "Unexpected hr %#lx.\n", hr);
     ok(size == 0, "Unexpected size %u.\n", size);
+
+    size = 1;
+    hr = MFCalculateImageSize(&MFVideoFormat_NV21, 3, 5, &size);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(size == 0, "Unexpected size %u.\n", size);
+
+    hr = MFCalculateImageSize(&MFVideoFormat_P208, 3, 5, &size);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(size == 40, "Unexpected size %u.\n", size);
 
     for (i = 0; i < ARRAY_SIZE(image_size_tests); ++i)
     {
@@ -5915,6 +5959,15 @@ static void test_MFGetPlaneSize(void)
 
     size = 1;
     hr = pMFGetPlaneSize(0xdeadbeef, 64, 64, &size);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(size == 0, "Unexpected size %lu.\n", size);
+
+    hr = pMFGetPlaneSize(MFVideoFormat_NV21.Data1, 3, 5, &size);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(size == 22, "Unexpected size %lu.\n", size);
+
+    size = 1;
+    hr = pMFGetPlaneSize(MFVideoFormat_P208.Data1, 3, 5, &size);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(size == 0, "Unexpected size %lu.\n", size);
 
@@ -6206,6 +6259,89 @@ static void test_MFCreateWaveFormatExFromMFMediaType(void)
     }
 
     IMFMediaType_Release(mediatype);
+
+#ifdef __REACTOS__
+    {
+        static const struct
+        {
+            const GUID *subtype;
+            UINT32 channels, bits;
+            WORD format_tag;
+            DWORD mask;
+        }
+        sample_tests[] =
+        {
+            { &MFAudioFormat_PCM, 2, 16, WAVE_FORMAT_PCM },
+            { &MFAudioFormat_PCM, 1, 8, WAVE_FORMAT_PCM },
+            { &MFAudioFormat_PCM, 2, 24, WAVE_FORMAT_EXTENSIBLE, SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT },
+            { &MFAudioFormat_Float, 2, 32, WAVE_FORMAT_EXTENSIBLE, SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT },
+            { &MFAudioFormat_Float, 1, 32, WAVE_FORMAT_EXTENSIBLE, SPEAKER_FRONT_CENTER },
+        };
+        IMFMediaType *back;
+        AM_MEDIA_TYPE am;
+        UINT32 count;
+
+        for (i = 0; i < ARRAY_SIZE(sample_tests); ++i)
+        {
+            UINT32 align = sample_tests[i].channels * sample_tests[i].bits / 8;
+            BOOL ext = sample_tests[i].format_tag == WAVE_FORMAT_EXTENSIBLE;
+
+            winetest_push_context("sample test %u", i);
+            hr = MFCreateMediaType(&mediatype);
+            ok(hr == S_OK, "Failed to create media type, hr %#lx.\n", hr);
+            IMFMediaType_SetGUID(mediatype, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+            IMFMediaType_SetGUID(mediatype, &MF_MT_SUBTYPE, sample_tests[i].subtype);
+            IMFMediaType_SetUINT32(mediatype, &MF_MT_AUDIO_NUM_CHANNELS, sample_tests[i].channels);
+            IMFMediaType_SetUINT32(mediatype, &MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100);
+            IMFMediaType_SetUINT32(mediatype, &MF_MT_AUDIO_BITS_PER_SAMPLE, sample_tests[i].bits);
+            IMFMediaType_SetUINT32(mediatype, &MF_MT_AUDIO_BLOCK_ALIGNMENT, align);
+            IMFMediaType_SetUINT32(mediatype, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, align * 44100);
+
+            hr = MFCreateWaveFormatExFromMFMediaType(mediatype, (WAVEFORMATEX **)&format_ext, &size,
+                    MFWaveFormatExConvertFlag_Normal);
+            ok(hr == S_OK, "Failed to create format, hr %#lx.\n", hr);
+            ok(size == (ext ? sizeof(*format_ext) : sizeof(WAVEFORMATEX)), "Unexpected size %u.\n", size);
+            ok(format_ext->Format.wFormatTag == sample_tests[i].format_tag, "Unexpected tag %#x.\n",
+                    format_ext->Format.wFormatTag);
+            if (ext)
+            {
+                ok(format_ext->Samples.wValidBitsPerSample == sample_tests[i].bits, "Unexpected valid bits %u.\n",
+                        format_ext->Samples.wValidBitsPerSample);
+                ok(format_ext->dwChannelMask == sample_tests[i].mask, "Unexpected mask %#lx.\n", format_ext->dwChannelMask);
+                ok(IsEqualGUID(&format_ext->SubFormat, sample_tests[i].subtype), "Unexpected subformat %s.\n",
+                        wine_dbgstr_guid(&format_ext->SubFormat));
+            }
+
+            hr = MFCreateMediaType(&back);
+            ok(hr == S_OK, "Failed to create media type, hr %#lx.\n", hr);
+            hr = MFInitMediaTypeFromWaveFormatEx(back, &format_ext->Format, size);
+            ok(hr == S_OK, "Failed to initialize media type, hr %#lx.\n", hr);
+            hr = IMFMediaType_GetCount(back, &count);
+            ok(hr == S_OK, "Failed to get count, hr %#lx.\n", hr);
+            ok(count == 9, "Unexpected count %u.\n", count);
+            hr = IMFMediaType_GetItem(back, &MF_MT_AUDIO_VALID_BITS_PER_SAMPLE, NULL);
+            ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
+            hr = IMFMediaType_GetUINT32(back, &MF_MT_AUDIO_CHANNEL_MASK, &count);
+            ok(hr == (ext ? S_OK : MF_E_ATTRIBUTENOTFOUND), "Unexpected hr %#lx.\n", hr);
+            if (ext)
+                ok(count == sample_tests[i].mask, "Unexpected mask %#x.\n", count);
+            hr = IMFMediaType_GetItem(back, &MF_MT_AUDIO_PREFER_WAVEFORMATEX, NULL);
+            ok(hr == (ext ? MF_E_ATTRIBUTENOTFOUND : S_OK), "Unexpected hr %#lx.\n", hr);
+            IMFMediaType_Release(back);
+            CoTaskMemFree(format_ext);
+
+            hr = MFInitAMMediaTypeFromMFMediaType(mediatype, GUID_NULL, &am);
+            ok(hr == S_OK, "Failed to create AM type, hr %#lx.\n", hr);
+            ok(am.cbFormat == size, "Unexpected format size %lu.\n", am.cbFormat);
+            ok(((WAVEFORMATEX *)am.pbFormat)->wFormatTag == sample_tests[i].format_tag, "Unexpected tag %#x.\n",
+                    ((WAVEFORMATEX *)am.pbFormat)->wFormatTag);
+            CoTaskMemFree(am.pbFormat);
+
+            IMFMediaType_Release(mediatype);
+            winetest_pop_context();
+        }
+    }
+#endif
 }
 
 static HRESULT WINAPI test_create_file_callback_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
@@ -7504,6 +7640,27 @@ static void test_MFCreate2DMediaBuffer(void)
 
     hr = pMFCreate2DMediaBuffer(2, 3, MAKEFOURCC('H','2','6','4'), FALSE, &buffer);
     ok(hr == MF_E_INVALIDMEDIATYPE, "Unexpected hr %#lx.\n", hr);
+
+    hr = pMFCreate2DMediaBuffer(3, 5, MFVideoFormat_P208.Data1, FALSE, &buffer);
+    ok(hr == MF_E_INVALIDMEDIATYPE, "Unexpected hr %#lx.\n", hr);
+    hr = MFGetStrideForBitmapInfoHeader(MFVideoFormat_P208.Data1, 3, &stride);
+    ok(hr == MF_E_INVALIDMEDIATYPE, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFGetStrideForBitmapInfoHeader(MFVideoFormat_NV21.Data1, 3, &stride);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(stride == 3, "Unexpected stride %ld.\n", stride);
+    hr = pMFCreate2DMediaBuffer(3, 5, MFVideoFormat_NV21.Data1, FALSE, &buffer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaBuffer_GetMaxLength(buffer, &max_length);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(max_length == 320, "Unexpected length %lu.\n", max_length);
+    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&_2dbuffer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMF2DBuffer_GetContiguousLength(_2dbuffer, &length);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(length == 15, "Unexpected length %lu.\n", length);
+    IMF2DBuffer_Release(_2dbuffer);
+    IMFMediaBuffer_Release(buffer);
 
     hr = pMFCreate2DMediaBuffer(2, 3, MAKEFOURCC('N','V','1','2'), FALSE, NULL);
     ok(FAILED(hr), "Unexpected hr %#lx.\n", hr);
@@ -12329,6 +12486,58 @@ static void test_sample_allocator_sysmem(void)
     IMFAttributes_Release(attributes);
 }
 
+static void test_sample_allocator_release(void)
+{
+    IMFVideoSampleAllocatorCallback *allocator_cb;
+    IMFVideoSampleAllocator *allocator;
+    IMFSample *sample, *sample2;
+    IMFMediaType *video_type;
+    LONG count;
+    HRESULT hr;
+
+    if (!pMFCreateVideoSampleAllocatorEx)
+        return;
+
+    hr = pMFCreateVideoSampleAllocatorEx(&IID_IMFVideoSampleAllocator, (void **)&allocator);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFVideoSampleAllocator_QueryInterface(allocator, &IID_IMFVideoSampleAllocatorCallback, (void **)&allocator_cb);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFCreateMediaType(&video_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_SetGUID(video_type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_SetGUID(video_type, &MF_MT_SUBTYPE, &MFVideoFormat_RGB32);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_SetUINT64(video_type, &MF_MT_FRAME_SIZE, (UINT64)64 << 32 | 64);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFVideoSampleAllocator_InitializeSampleAllocator(allocator, 1, video_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample2);
+    ok(hr == MF_E_SAMPLEALLOCATOR_EMPTY, "Unexpected hr %#lx.\n", hr);
+
+    /* A released sample can be allocated again at once, before the tracking callback returns it. */
+    IMFSample_Release(sample);
+    hr = IMFVideoSampleAllocatorCallback_GetFreeSampleCount(allocator_cb, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!count, "Unexpected count %ld.\n", count);
+    hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample2);
+    ok(hr == MF_E_SAMPLEALLOCATOR_EMPTY, "Unexpected hr %#lx.\n", hr);
+    IMFSample_Release(sample);
+
+    hr = IMFVideoSampleAllocator_UninitializeSampleAllocator(allocator);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_Release(video_type);
+    IMFVideoSampleAllocatorCallback_Release(allocator_cb);
+    IMFVideoSampleAllocator_Release(allocator);
+}
+
 static void test_sample_allocator_d3d9(void)
 {
     IDirect3DDeviceManager9 *d3d9_manager;
@@ -14704,6 +14913,7 @@ START_TEST(mfplat)
     test_d3d12_surface_buffer();
     test_d3d12_sync_object();
     test_sample_allocator_sysmem();
+    test_sample_allocator_release();
     test_sample_allocator_d3d9();
     test_sample_allocator_d3d11();
     test_sample_allocator_d3d12();

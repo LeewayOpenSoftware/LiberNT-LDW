@@ -14,12 +14,12 @@
 @ stdcall CryptCATAdminReleaseContext(long long)
 @ stdcall CryptCATAdminRemoveCatalog(ptr wstr long)
 @ stdcall CryptCATAdminResolveCatalogPath(ptr wstr ptr long)
-#@ stub CryptCATAllocSortedMemberInfo
+@ stdcall CryptCATAllocSortedMemberInfo(ptr wstr)
 @ stdcall CryptCATCDFClose(ptr)
-@ stub CryptCATCDFEnumAttributes
+@ stdcall CryptCATCDFEnumAttributes(ptr ptr ptr ptr)
 @ stub CryptCATCDFEnumAttributesWithCDFTag
 @ stdcall CryptCATCDFEnumCatAttributes(ptr ptr ptr)
-@ stub CryptCATCDFEnumMembers
+@ stdcall CryptCATCDFEnumMembers(ptr ptr ptr)
 @ stub CryptCATCDFEnumMembersByCDFTag
 @ stdcall CryptCATCDFEnumMembersByCDFTagEx(ptr wstr ptr ptr long ptr)
 @ stdcall CryptCATCDFOpen(wstr ptr)
@@ -28,17 +28,17 @@
 @ stdcall CryptCATEnumerateAttr(ptr ptr ptr)
 @ stdcall CryptCATEnumerateCatAttr(ptr ptr)
 @ stdcall CryptCATEnumerateMember(long ptr)
-#@ stub CryptCATFreeSortedMemberInfo
+@ stdcall CryptCATFreeSortedMemberInfo(ptr ptr)
 @ stdcall CryptCATGetAttrInfo(ptr ptr wstr)
 @ stdcall CryptCATGetCatAttrInfo(ptr wstr )
 @ stdcall CryptCATGetMemberInfo(ptr wstr)
-@ stub CryptCATHandleFromStore
+@ stdcall CryptCATHandleFromStore(ptr)
 @ stdcall CryptCATOpen(wstr long long long long)
 @ stdcall CryptCATPersistStore(ptr)
 @ stdcall CryptCATPutAttrInfo(ptr ptr wstr long long ptr)
 @ stdcall CryptCATPutCatAttrInfo(ptr wstr long long ptr)
 @ stdcall CryptCATPutMemberInfo(ptr wstr wstr ptr long long ptr)
-@ stub CryptCATStoreFromHandle
+@ stdcall CryptCATStoreFromHandle(ptr)
 @ stub CryptCATVerifyMember
 @ stdcall CryptSIPCreateIndirectData(ptr ptr ptr)
 #@ stub CryptSIPGetCaps
@@ -109,8 +109,8 @@
 #@ stub WTLogConfigCiScriptEvent
 #@ stub WTLogConfigCiSignerEvent
 #@ stub WTValidateBioSignaturePolicy
-#@ stub WVTAsn1CatMemberInfo2Decode
-#@ stub WVTAsn1CatMemberInfo2Encode
+@ stdcall WVTAsn1CatMemberInfo2Decode(long str ptr long long ptr ptr)
+@ stdcall WVTAsn1CatMemberInfo2Encode(long str ptr ptr ptr)
 @ stdcall WVTAsn1CatMemberInfoDecode(long str ptr long long ptr ptr)
 @ stdcall WVTAsn1CatMemberInfoEncode(long str ptr ptr ptr)
 @ stdcall WVTAsn1CatNameValueDecode(long str ptr long long ptr ptr)
@@ -127,18 +127,18 @@
 @ stdcall WVTAsn1SpcIndirectDataContentEncode(long str ptr ptr ptr)
 @ stdcall WVTAsn1SpcLinkDecode(long str ptr long long ptr ptr)
 @ stdcall WVTAsn1SpcLinkEncode(long str ptr ptr ptr)
-@ stub WVTAsn1SpcMinimalCriteriaInfoDecode
-@ stub WVTAsn1SpcMinimalCriteriaInfoEncode
+@ stdcall WVTAsn1SpcMinimalCriteriaInfoDecode(long str ptr long long ptr ptr)
+@ stdcall WVTAsn1SpcMinimalCriteriaInfoEncode(long str ptr ptr ptr)
 @ stdcall WVTAsn1SpcPeImageDataDecode(long str ptr long long ptr ptr)
 @ stdcall WVTAsn1SpcPeImageDataEncode(long str ptr ptr ptr)
-@ stub WVTAsn1SpcSigInfoDecode
-@ stub WVTAsn1SpcSigInfoEncode
-@ stub WVTAsn1SpcSpAgencyInfoDecode
-@ stub WVTAsn1SpcSpAgencyInfoEncode
+@ stdcall WVTAsn1SpcSigInfoDecode(long str ptr long long ptr ptr)
+@ stdcall WVTAsn1SpcSigInfoEncode(long str ptr ptr ptr)
+@ stdcall WVTAsn1SpcSpAgencyInfoDecode(long str ptr long long ptr ptr)
+@ stdcall WVTAsn1SpcSpAgencyInfoEncode(long str ptr ptr ptr)
 @ stdcall WVTAsn1SpcSpOpusInfoDecode(long str ptr long long ptr ptr)
 @ stdcall WVTAsn1SpcSpOpusInfoEncode(long str ptr ptr ptr)
-@ stub WVTAsn1SpcStatementTypeDecode
-@ stub WVTAsn1SpcStatementTypeEncode
+@ stdcall WVTAsn1SpcStatementTypeDecode(long str ptr long long ptr ptr)
+@ stdcall WVTAsn1SpcStatementTypeEncode(long str ptr ptr ptr)
 @ stdcall WinVerifyTrust(long ptr ptr)
 @ stdcall WinVerifyTrustEx(long ptr ptr)
 @ stdcall WintrustAddActionID(ptr long ptr)
