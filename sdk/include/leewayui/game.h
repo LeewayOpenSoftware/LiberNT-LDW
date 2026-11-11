@@ -150,7 +150,11 @@ BOOL WINAPI LwgShellIsGameRunning(const LwgShell *sh);
 UINT32 WINAPI LwgShellElapsedSeconds(const LwgShell *sh);
 void WINAPI LwgShellSetElapsedSeconds(LwgShell *sh, UINT32 seconds);   /* after a resume */
 
-/* Shows the statistics of the current variant; offers to reset them. */
+/* Modal statistics window: `text` (CR LF separated lines) in a read-only box, a Reset and a Close
+ * button. Returns TRUE when the player pressed Reset (and confirmed); the caller clears the stats. */
+BOOL WINAPI LwgStatsDialog(HWND owner, const WCHAR *title, const WCHAR *text);
+
+/* Shows the statistics of the current variant in LwgStatsDialog and resets them on request. */
 void WINAPI LwgShellShowStats(LwgShell *sh);
 
 /* Save/resume of the current game, slot "Game". */

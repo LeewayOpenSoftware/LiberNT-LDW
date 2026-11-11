@@ -103,6 +103,26 @@ static void TestBall(void)
     }
 }
 
+static DWORD WINAPI CloseDlg(LPVOID)
+{
+    HWND d = NULL; int i;
+    for (i = 0; i < 100 && !d; i++) { Sleep(50); d = FindWindowW(NULL, L"DlgTest"); }
+    if (d) {
+        CHECK(GetDlgItem(d, 100) && GetDlgItem(d, 101) && GetDlgItem(d, IDOK));
+        WCHAR buf[64]; GetDlgItemTextW(d, 100, buf, 64);
+        CHECK(!wcsncmp(buf, L"Games played", 12));
+        SendMessageW(d, WM_COMMAND, IDOK, 0);
+    }
+    return d ? 0 : 1;
+}
+
+static void TestDialog(void)
+{
+    HANDLE th = CreateThread(NULL, 0, CloseDlg, NULL, 0, NULL); DWORD ec = 9;
+    CHECK(!LwgStatsDialog(NULL, L"DlgTest", L"Games played: 1 (host)"));
+    WaitForSingleObject(th, 5000); GetExitCodeThread(th, &ec); CHECK(ec == 0); CloseHandle(th);
+}
+
 static int g_draws, g_ticks;
 static void Draw(HDC, int, int, UINT32, void *) { g_draws++; }
 static void Tick(UINT32, void *) { g_ticks++; }
@@ -162,7 +182,7 @@ static void TestShell(void)
 int main(void)
 {
     Cleanup();
-    TestStats(); TestSave(); TestBall(); TestShell();
+    TestStats(); TestSave(); TestBall(); TestDialog(); TestShell();
     Cleanup();
     if (g_fail) { printf("game_host_test: %d FAILED\n", g_fail); return 1; }
     printf("game_host_test: ok\n");

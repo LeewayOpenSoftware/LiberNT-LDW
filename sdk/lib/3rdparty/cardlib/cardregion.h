@@ -106,6 +106,7 @@ private:
 	int	 GetOverlapRatio(int x, int y, int width, int height);
 
 	void MoveDragCardTo(HDC hdc, int x, int y);
+	bool MoveDragCardToBuffered(HDC hdc, int x, int y);
 	void ZoomCard(HDC hdc, int xpos, int ypos, CardRegion *dest);
 
 	void RenderBottomMost(HDC hdc, int minustopmost = 0);

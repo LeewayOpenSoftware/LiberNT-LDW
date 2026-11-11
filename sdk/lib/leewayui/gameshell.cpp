@@ -181,18 +181,123 @@ void WINAPI LwgShellSetElapsedSeconds(LwgShell *sh, UINT32 seconds)
         sh->seconds = seconds;
 }
 
+#define IDC_STATS_TEXT  100
+#define IDC_STATS_RESET 101
+
+/* in-memory dialog template builder (DLGTEMPLATE + DLGITEMTEMPLATEs, all WORD aligned) */
+struct TplBuf {
+    WORD w[512];
+    UINT n;
+};
+
+static void PutW(TplBuf *t, WORD v)
+{
+    if (t->n < 512)
+        t->w[t->n++] = v;
+}
+
+static void PutD(TplBuf *t, DWORD v)
+{
+    PutW(t, LOWORD(v));
+    PutW(t, HIWORD(v));
+}
+
+static void PutS(TplBuf *t, const WCHAR *s)
+{
+    do
+        PutW(t, (WORD)*s);
+    while (*s++);
+}
+
+static void Align(TplBuf *t)
+{
+    if (t->n & 1)
+        PutW(t, 0);
+}
+
+static void PutItem(TplBuf *t, DWORD style, short x, short y, short cx, short cy, WORD id, WORD cls, const WCHAR *text)
+{
+    Align(t);
+    PutD(t, style | WS_CHILD | WS_VISIBLE);
+    PutD(t, 0);
+    PutW(t, (WORD)x); PutW(t, (WORD)y); PutW(t, (WORD)cx); PutW(t, (WORD)cy);
+    PutW(t, id);
+    PutW(t, 0xFFFF); PutW(t, cls);              /* 0x0080 button, 0x0081 edit, 0x0082 static */
+    PutS(t, text);
+    PutW(t, 0);                                 /* no creation data */
+}
+
+struct StatsDlgData {
+    const WCHAR *title;
+    const WCHAR *text;
+};
+
+static INT_PTR CALLBACK StatsDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+    {
+        const StatsDlgData *d = (const StatsDlgData *)lp;
+        SetWindowTextW(dlg, d->title);
+        SetDlgItemTextW(dlg, IDC_STATS_TEXT, d->text);
+        return TRUE;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDC_STATS_RESET)
+        {
+            if (MessageBoxW(dlg, L"Reset these statistics? This cannot be undone.", L"Statistics",
+                            MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) == IDYES)
+                EndDialog(dlg, 1);
+            return TRUE;
+        }
+        if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL)
+        {
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+BOOL WINAPI LwgStatsDialog(HWND owner, const WCHAR *title, const WCHAR *text)
+{
+    TplBuf t;
+    StatsDlgData d;
+    INT_PTR r;
+
+    ZeroMemory(&t, sizeof(t));
+    d.title = title ? title : L"Statistics";
+    d.text = text ? text : L"";
+    PutD(&t, DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU);
+    PutD(&t, 0);
+    PutW(&t, 3);                                /* item count */
+    PutW(&t, 0); PutW(&t, 0); PutW(&t, 190); PutW(&t, 150);
+    PutW(&t, 0); PutW(&t, 0);                   /* no menu, default class */
+    PutS(&t, L"");                              /* title set in WM_INITDIALOG */
+    PutW(&t, 8);
+    PutS(&t, L"MS Shell Dlg");
+    PutItem(&t, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_BORDER | WS_VSCROLL | WS_TABSTOP, 7, 7, 176, 112,
+            IDC_STATS_TEXT, 0x0081, L"");
+    PutItem(&t, BS_PUSHBUTTON | WS_TABSTOP, 7, 128, 60, 14, IDC_STATS_RESET, 0x0080, L"&Reset...");
+    PutItem(&t, BS_DEFPUSHBUTTON | WS_TABSTOP, 123, 128, 60, 14, IDOK, 0x0080, L"&Close");
+    r = DialogBoxIndirectParamW(GetModuleHandleW(NULL), (const DLGTEMPLATE *)t.w, owner, StatsDlgProc, (LPARAM)&d);
+    return r == 1;
+}
+
 void WINAPI LwgShellShowStats(LwgShell *sh)
 {
     LwgStats st;
-    WCHAR text[640], msg[760];
+    WCHAR text[640], cap[128];
 
     if (!sh)
         return;
     LwgStatsLoad(sh->game, sh->variant, &st);
     LwgStatsFormat(&st, text, 640);
-    _snwprintf(msg, 760, L"%ls (%ls)\r\n\r\n%ls\r\nReset these statistics?", sh->title, sh->variant, text);
-    msg[759] = 0;
-    if (MessageBoxW(sh->desc.owner, msg, sh->title, MB_YESNO | MB_DEFBUTTON2 | MB_ICONINFORMATION) == IDYES)
+    _snwprintf(cap, 128, L"%ls statistics (%ls)", sh->title, sh->variant);
+    cap[127] = 0;
+    if (LwgStatsDialog(sh->desc.owner, cap, text))
         LwgStatsReset(sh->game, sh->variant);
 }
 

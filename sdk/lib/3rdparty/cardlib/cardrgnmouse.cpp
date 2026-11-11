@@ -421,9 +421,63 @@ BOOL ClippedBitBlt(HDC hdcDest, int x, int y, int width, int height, HDC hdcSrc,
     return BitBlt(hdcDest, x, y, width, height, hdcSrc, srcx, srcy, dwROP);
 }
 
+//
+//    Flicker-free drag step: the old and new card positions are composed in a
+//    memory bitmap and put on the screen with one BitBlt, so the restored
+//    background and the card are never visible one after the other. Only used
+//    while both positions are fully inside the client area; the original
+//    restore-then-draw path below handles the rest.
+//
+bool CardRegion::MoveDragCardToBuffered(HDC hdc, int x, int y)
+{
+    RECT client, uni, rcOld, rcNew;
+    HDC hdcMem;
+    HBITMAP hbm, hbmOld;
+    int w, h;
+
+    GetClientRect((HWND)parentWnd, &client);
+    SetRect(&rcOld, oldx, oldy, oldx + nDragCardWidth, oldy + nDragCardHeight);
+    SetRect(&rcNew, x, y, x + nDragCardWidth, y + nDragCardHeight);
+    UnionRect(&uni, &rcOld, &rcNew);
+    if (uni.left < client.left || uni.top < client.top || uni.right > client.right || uni.bottom > client.bottom)
+        return false;
+
+    w = uni.right - uni.left;
+    h = uni.bottom - uni.top;
+    hdcMem = CreateCompatibleDC(hdc);
+    if (!hdcMem)
+        return false;
+    hbm = CreateCompatibleBitmap(hdc, w, h);
+    if (!hbm)
+    {
+        DeleteDC(hdcMem);
+        return false;
+    }
+    hbmOld = (HBITMAP)SelectObject(hdcMem, hbm);
+
+    //what is on screen now (the card at its old position over the table)
+    BitBlt(hdcMem, 0, 0, w, h, hdc, uni.left, uni.top, SRCCOPY);
+    //put the saved background back under the old position
+    BitBlt(hdcMem, oldx - uni.left, oldy - uni.top, nDragCardWidth, nDragCardHeight, hdcBackGnd, 0, 0, SRCCOPY);
+    //the table as it is under the new position becomes the saved background
+    BitBlt(hdcBackGnd, 0, 0, nDragCardWidth, nDragCardHeight, hdcMem, x - uni.left, y - uni.top, SRCCOPY);
+    //the card at its new position
+    DrawCard(hdcMem, x - uni.left, y - uni.top, hdcDragCard, nDragCardWidth, nDragCardHeight);
+    //one blit to the screen
+    BitBlt(hdc, uni.left, uni.top, w, h, hdcMem, 0, 0, SRCCOPY);
+
+    SelectObject(hdcMem, hbmOld);
+    DeleteObject(hbm);
+    DeleteDC(hdcMem);
+    return true;
+}
+
 void CardRegion::MoveDragCardTo(HDC hdc, int x, int y)
 {
     RECT inter, rect1, rect2;
+
+    if (MoveDragCardToBuffered(hdc, x, y))
+        return;
 
     //mask off the new position of the drag-card, so
     //that it will not be painted over
