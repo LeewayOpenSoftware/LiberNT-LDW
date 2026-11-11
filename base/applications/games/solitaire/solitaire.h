@@ -8,7 +8,16 @@ extern CardWindow SolWnd;
 extern TCHAR szAppName[];
 extern bool fGameStarted;
 extern LwgShell *g_shell;
-void GameStarted(void);   /* first move of a game: sets fGameStarted, starts the shell clock */
+void GameStarted(void);
+#define SOL_NUM_TABLES 5
+extern HMENU hGameMenu;
+extern DWORD dwTable;
+void SolSaveGame(void);
+bool SolResumeGame(void);
+void SolShowHint(void);
+void SolAutocomplete(void);
+void SolSetTable(DWORD index);
+   /* first move of a game: sets fGameStarted, starts the shell clock */
 
 #define OPTION_SHOW_STATUS       4
 #define OPTION_THREE_CARDS       8

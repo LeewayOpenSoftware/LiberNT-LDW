@@ -12,6 +12,9 @@
 #define IDM_GAME_DECK     1003
 #define IDM_GAME_OPTIONS  1004
 #define IDM_GAME_EXIT     1005
+#define IDM_GAME_HINT     0x7E05   /* = LWG_IDM_HINT */
+#define IDM_GAME_AUTO     0x7E07   /* = LWG_IDM_AUTO */
+#define IDM_TABLE_FIRST   1010     /* five table colours, 1010..1014 */
 #define IDM_GAME_STATS    0x7E04   /* = LWG_IDM_STATS (leewayui/game.h), handled by the shell */
 #define IDM_HELP_CONTENTS 1006
 #define IDM_HELP_ABOUT    1007

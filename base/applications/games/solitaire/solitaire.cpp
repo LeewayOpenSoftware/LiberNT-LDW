@@ -89,6 +89,11 @@ VOID LoadSettings(VOID)
                     &dwSize);
     SolWnd.SetBackCardIdx(dwBack);
 
+    dwSize = sizeof(DWORD);
+    if (RegQueryValueEx(hKey, _T("Table"), NULL, NULL, (LPBYTE)&dwTable, &dwSize) != ERROR_SUCCESS ||
+        dwTable >= SOL_NUM_TABLES)
+        dwTable = 0;
+
     RegCloseKey(hKey);
 }
 
@@ -122,6 +127,13 @@ VOID SaveSettings(VOID)
                   0,
                   REG_DWORD,
                   (CONST BYTE *)&dwBack,
+                  sizeof(DWORD));
+
+    RegSetValueEx(hKey,
+                  _T("Table"),
+                  0,
+                  REG_DWORD,
+                  (CONST BYTE *)&dwTable,
                   sizeof(DWORD));
 
     RegCloseKey(hKey);
@@ -264,6 +276,7 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPTSTR szCmdLine, int iCm
     hwndMain = hwnd;
 
     hGameMenu = GetSubMenu(GetMenu(hwndMain), 0);
+    SolSetTable(dwTable);    // tick the table colour in the menu
 
     UpdateStatusBar();
 
@@ -653,7 +666,11 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 
             SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER);
 
-            NewGame();
+            SolSetTable(dwTable);
+
+            // resume the game that was open when the window was last closed
+            if (!SolResumeGame())
+                NewGame();
 
             dwAppStartTime = GetTickCount();
 
@@ -739,6 +756,22 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
                 ShowGameOptionsDlg(hwnd);
                 return 0;
 
+            case IDM_GAME_HINT:
+                SolShowHint();
+                return 0;
+
+            case IDM_GAME_AUTO:
+                SolAutocomplete();
+                return 0;
+
+            case IDM_TABLE_FIRST:
+            case IDM_TABLE_FIRST + 1:
+            case IDM_TABLE_FIRST + 2:
+            case IDM_TABLE_FIRST + 3:
+            case IDM_TABLE_FIRST + 4:
+                SolSetTable(LOWORD(wParam) - IDM_TABLE_FIRST);
+                return 0;
+
             case IDM_HELP_CONTENTS:
                 WinHelp(hwnd, szHelpPath, HELP_CONTENTS, 0);//HELP_KEY, (DWORD)"How to play");
                 return 0;
@@ -756,23 +789,10 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
             return 0;
 
         case WM_CLOSE:
-            if (fGameStarted == false)
-            {
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            else
-            {
-                int ret;
-
-                ret = MessageBox(hwnd, MsgQuit, szAppName, MB_YESNO|MB_ICONQUESTION);
-                if (ret == IDYES)
-                {
-                    LwgShellGameAbandon(g_shell);   // a game closed half way counts as lost
-                    WinHelp(hwnd, szHelpPath, HELP_QUIT, 0);
-                    DestroyWindow(hwnd);
-                }
-            }
+            // an open game is saved and resumed at the next start (no loss is recorded)
+            SolSaveGame();
+            WinHelp(hwnd, szHelpPath, HELP_QUIT, 0);
+            DestroyWindow(hwnd);
             return 0;
     }
 
