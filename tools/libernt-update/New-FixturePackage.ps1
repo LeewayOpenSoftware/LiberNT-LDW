@@ -32,6 +32,9 @@ param(
     [Parameter(Mandatory)][hashtable[]]$Items,
     [string]$Type = 'system-component',
     [hashtable]$Applicability,
+    [string]$Kb,
+    [string]$Title,
+    [string]$Description,
     [string]$KeyDir = (Join-Path $env:USERPROFILE '.leeway-dev-signing'),
     [string]$SigningPfx,
     [string]$SigningPasswordFile,
@@ -63,10 +66,11 @@ foreach ($it in $Items) {
     }
     $rel = ('f{0}.bin' -f $n++)
     $file = Join-Path $OutDir ('payload\' + $rel)
-    [IO.File]::WriteAllText($file, [string]$it.Content, $utf8)
+    if ($it.ContainsKey('Source')) { Copy-Item -LiteralPath $it.Source -Destination $file } else { [IO.File]::WriteAllText($file, [string]$it.Content, $utf8) }
     $sha = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLower()
     $entry = [ordered]@{ path = $rel; target = $it.Target; sha256 = $sha }
     if ($it.ContainsKey('DriverStart')) { $entry.driverStart = [int]$it.DriverStart }
+    if ($it.ContainsKey('Class')) { $entry.class = [string]$it.Class }
     $payloads += $entry
 }
 
@@ -81,6 +85,10 @@ $manifest = [ordered]@{
     payloads          = $payloads
 }
 if ($Applicability) { $manifest.applicability = $Applicability }
+# optional, display only (wusa): the KB number, a title and a description; covered by the manifest signature
+if ($Kb) { $manifest.kb = $Kb }
+if ($Title) { $manifest.title = $Title }
+if ($Description) { $manifest.description = $Description }
 $manifestPath = Join-Path $OutDir 'manifest.json'
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6), $utf8)
 

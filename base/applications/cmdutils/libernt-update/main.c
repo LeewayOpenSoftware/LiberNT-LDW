@@ -191,6 +191,25 @@ int wmain(int argc, WCHAR **argv)
     const WCHAR *image = NULL;
     const WCHAR *cmd;
     DWORD err;
+#ifdef LN_TESTING
+    {
+        /* host tests only (the CLI is compiled with -DLN_TESTING by Build-And-Test.ps1): accept the account
+         * running the test next to SYSTEM/Administrators, as libservicing-tests does, so an Image target can
+         * be driven unelevated */
+        HANDLE tok;
+        DWORD need = 0;
+        TOKEN_USER *tu;
+
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok))
+        {
+            GetTokenInformation(tok, TokenUser, NULL, 0, &need);
+            tu = malloc(need);
+            if (tu && GetTokenInformation(tok, TokenUser, tu, need, &need))
+                LnTestExtraSid = tu->User.Sid;
+            CloseHandle(tok);
+        }
+    }
+#endif
     int a = 1;
     char *id = NULL, *ver = NULL;
     int rc = 0;

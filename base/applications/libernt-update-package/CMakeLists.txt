@@ -5,5 +5,5 @@
 
 add_executable(libernt-update-package main.c)
 set_module_type(libernt-update-package win32gui UNICODE)
-add_importlibs(libernt-update-package shell32 user32 advapi32 msvcrt kernel32)
+add_importlibs(libernt-update-package shell32 user32 msvcrt kernel32)
 # no add_cd_file(): the stub ships inside packages, not on the ISO
