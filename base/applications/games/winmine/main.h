@@ -26,6 +26,8 @@
 #include <winuser.h>
 
 #include "resource.h"
+#include "mbcore.h"
+#include <leewayui/game.h>
 
 #define BEGINNER_MINES        10
 #define BEGINNER_COLS         9
@@ -39,8 +41,8 @@
 #define EXPERT_COLS           30
 #define EXPERT_ROWS           16
 
-#define MAX_COLS        30
-#define MAX_ROWS        24
+#define MAX_COLS        MB_MAX_COLS
+#define MAX_ROWS        MB_MAX_ROWS
 
 #define BOTTOM_MARGIN 20
 #define BOARD_WMARGIN 5
@@ -80,6 +82,11 @@ typedef struct tagBOARD
     HBITMAP hMinesBMP;
     HBITMAP hFacesBMP;
     HBITMAP hLedsBMP;
+    HBITMAP hMinesNative;   /* native strip for the tile size, or NULL: the 16 px strip is stretched */
+    unsigned tile;          /* tile edge in pixels: 16, 24, 32 or 48 */
+    unsigned src_tile;      /* edge of the tiles in the strip in use */
+    unsigned tile_opt;      /* 0 auto by DPI, 1 small (16), 2 medium (24), 3 large (32) */
+    LwgShell *shell;
     RECT mines_rect;
     RECT face_rect;
     RECT timer_rect;

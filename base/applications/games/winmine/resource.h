@@ -32,6 +32,11 @@
 #define IDM_EXPERT     1007
 #define IDM_CUSTOM     1008
 #define IDM_MARKQ      1009
+#define IDM_SIZE_AUTO   1050   /* tile size: auto by DPI, small 16, medium 24, large 32 */
+#define IDM_SIZE_SMALL  1051
+#define IDM_SIZE_MEDIUM 1052
+#define IDM_SIZE_LARGE  1053
+#define IDM_STATS      0x7E04  /* = LWG_IDM_STATS (leewayui/game.h), handled by the shell */
 #ifdef __REACTOS__
 #define IDM_SOUND      1041
 #endif
@@ -61,6 +66,11 @@
 #define IDI_FACES      2
 #define IDI_LEDS       3
 #define IDI_MINES      4
+/* optional native tile strips (16 tiles of NxN, same order as IDI_MINES); the code falls back to
+ * stretching the 16 px strip when a resource is not linked in */
+#define IDI_MINES_24   14
+#define IDI_MINES_32   15
+#define IDI_MINES_48   16
 
 #define DLG_TIMES      1
 #define DLG_CONGRATS   2

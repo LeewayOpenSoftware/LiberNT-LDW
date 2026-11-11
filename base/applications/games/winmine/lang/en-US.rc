@@ -15,6 +15,13 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Mark Question", IDM_MARKQ
         MENUITEM "&Sound", IDM_SOUND
+        POPUP "S&ize"
+        BEGIN
+            MENUITEM "&Auto", IDM_SIZE_AUTO
+            MENUITEM "&Small", IDM_SIZE_SMALL
+            MENUITEM "&Medium", IDM_SIZE_MEDIUM
+            MENUITEM "&Large", IDM_SIZE_LARGE
+        END
         MENUITEM SEPARATOR
         MENUITEM "&Beginner", IDM_BEGINNER
         MENUITEM "&Advanced", IDM_ADVANCED
@@ -26,6 +33,7 @@ BEGIN
     POPUP "&Info"
     BEGIN
         MENUITEM "&Fastest Times...", IDM_TIMES
+        MENUITEM "&Statistics...", IDM_STATS
         MENUITEM "&About", IDM_ABOUT
     END
 END

@@ -19,6 +19,7 @@
  */
 
 #include "main.h"
+#include <leewayui/dpi.h>
 
 #include <winbase.h>
 #include <winreg.h>
@@ -46,28 +47,13 @@ static const WCHAR widthW[] = {'W','i','d','t','h',0};
 static const WCHAR minesW[] = {'M','i','n','e','s',0};
 static const WCHAR difficultyW[] = {'D','i','f','f','i','c','u','l','t','y',0};
 static const WCHAR markW[] = {'M','a','r','k',0};
+static const WCHAR tileW[] = {'T','i','l','e','S','i','z','e',0};
 static const WCHAR nameW[] = {'N','a','m','e','%','u',0};
 static const WCHAR timeW[] = {'T','i','m','e','%','u',0};
 
 void CheckLevel( BOARD *p_board )
 {
-    if( p_board->rows < BEGINNER_ROWS )
-        p_board->rows = BEGINNER_ROWS;
-
-    if( p_board->rows > MAX_ROWS )
-        p_board->rows = MAX_ROWS;
-
-    if( p_board->cols < BEGINNER_COLS )
-        p_board->cols = BEGINNER_COLS;
-
-    if( p_board->cols > MAX_COLS )
-        p_board->cols = MAX_COLS;
-
-    if( p_board->mines < BEGINNER_MINES )
-        p_board->mines = BEGINNER_MINES;
-
-    if( p_board->mines > ( p_board->cols - 1 ) * ( p_board->rows - 1 ) )
-        p_board->mines = ( p_board->cols - 1 ) * ( p_board->rows - 1 );
+    MbClampLevel( &p_board->rows, &p_board->cols, &p_board->mines );
 }
 
 static void LoadBoard( BOARD *p_board )
@@ -105,6 +91,10 @@ static void LoadBoard( BOARD *p_board )
     if( RegQueryValueExW( hkey, difficultyW, NULL, &type, (BYTE*) &p_board->difficulty, &size ) )
         p_board->difficulty = BEGINNER;
 
+    size = sizeof( p_board->tile_opt );
+    if( RegQueryValueExW( hkey, tileW, NULL, &type, (BYTE*) &p_board->tile_opt, &size ) || p_board->tile_opt > 3 )
+        p_board->tile_opt = 0;
+
     size = sizeof( p_board->IsMarkQ );
     if( RegQueryValueExW( hkey, markW, NULL, &type, (BYTE*) &p_board->IsMarkQ, &size ) )
         p_board->IsMarkQ = TRUE;
@@ -137,6 +127,76 @@ static void LoadBoard( BOARD *p_board )
     RegCloseKey( hkey );
 }
 
+#define SC(p, n) MulDiv( (n), (int)(p)->tile, 16 )
+#define MINES_STRIP(p) ((p)->hMinesNative ? (p)->hMinesNative : (p)->hMinesBMP)
+
+/* tile edge: the menu choice, or by DPI (96: 16, 144: 24, 192: 32, 288 and up: 48) */
+static void ChooseTile( BOARD *p_board )
+{
+    UINT dpi;
+    unsigned tile;
+    WORD native = 0;
+
+    switch( p_board->tile_opt ) {
+    case 1: tile = 16; break;
+    case 2: tile = 24; break;
+    case 3: tile = 32; break;
+    default:
+        dpi = LeewayDpiGetForWindow( p_board->hWnd );
+        tile = dpi < 120 ? 16 : dpi < 168 ? 24 : dpi < 240 ? 32 : 48;
+        break;
+    }
+    p_board->tile = tile;
+    p_board->src_tile = 16;
+    if( p_board->hMinesNative ) {
+        DeleteObject( p_board->hMinesNative );
+        p_board->hMinesNative = NULL;
+    }
+    if( tile == 24 ) native = IDI_MINES_24;
+    else if( tile == 32 ) native = IDI_MINES_32;
+    else if( tile == 48 ) native = IDI_MINES_48;
+    if( native ) {
+        p_board->hMinesNative = LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(native) );
+        if( p_board->hMinesNative )
+            p_board->src_tile = tile;
+    }
+}
+
+static HMENU FindSubMenu( HMENU menu, UINT first_id )
+{
+    int i, count = GetMenuItemCount( menu );
+
+    for( i = 0; i < count; i++ ) {
+        HMENU sub = GetSubMenu( menu, i );
+        if( sub ) {
+            HMENU found;
+            if( GetMenuItemID( sub, 0 ) == first_id )
+                return sub;
+            found = FindSubMenu( sub, first_id );
+            if( found )
+                return found;
+        }
+    }
+    return NULL;
+}
+
+static void CheckSizeMenu( BOARD *p_board )
+{
+    HMENU sub = FindSubMenu( GetMenu( p_board->hWnd ), IDM_SIZE_AUTO );
+
+    if( sub )
+        CheckMenuRadioItem( sub, IDM_SIZE_AUTO, IDM_SIZE_LARGE, IDM_SIZE_AUTO + p_board->tile_opt, MF_BYCOMMAND );
+}
+
+/* statistics variant = the level */
+static void SetStatsVariant( BOARD *p_board )
+{
+    static const WCHAR *names[] = { L"Beginner", L"Advanced", L"Expert", L"Custom" };
+
+    if( p_board->shell && (unsigned) p_board->difficulty < 4 )
+        LwgShellSetVariant( p_board->shell, names[p_board->difficulty] );
+}
+
 static void InitBoard( BOARD *p_board )
 {
     HMENU hMenu;
@@ -146,6 +206,9 @@ static void InitBoard( BOARD *p_board )
     p_board->hLedsBMP = LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_LEDS));
 
     LoadBoard( p_board );
+    ChooseTile( p_board );
+    SetStatsVariant( p_board );
+    CheckSizeMenu( p_board );
 
     hMenu = GetMenu( p_board->hWnd );
     CheckMenuItem( hMenu, IDM_BEGINNER + (unsigned) p_board->difficulty,
@@ -180,6 +243,7 @@ static void SaveBoard( BOARD *p_board )
     RegSetValueExW( hkey, widthW, 0, REG_DWORD, (LPBYTE) &p_board->cols, sizeof(p_board->cols) );
     RegSetValueExW( hkey, minesW, 0, REG_DWORD, (LPBYTE) &p_board->mines, sizeof(p_board->mines) );
     RegSetValueExW( hkey, markW, 0, REG_DWORD, (LPBYTE) &p_board->IsMarkQ, sizeof(p_board->IsMarkQ) );
+    RegSetValueExW( hkey, tileW, 0, REG_DWORD, (LPBYTE) &p_board->tile_opt, sizeof(p_board->tile_opt) );
 #ifdef __REACTOS__
     /* WinXP SP3: Set to 3 when enabled, set to 0 when disabled */
     p_board->IsSoundEnabled = (p_board->IsSoundEnabled ? 3 : 0);
@@ -204,6 +268,8 @@ static void DestroyBoard( BOARD *p_board )
     DeleteObject( p_board->hFacesBMP );
     DeleteObject( p_board->hLedsBMP );
     DeleteObject( p_board->hMinesBMP );
+    if( p_board->hMinesNative )
+        DeleteObject( p_board->hMinesNative );
 }
 
 static void SetDifficulty( BOARD *p_board, DIFFICULTY difficulty )
@@ -243,6 +309,7 @@ static void SetDifficulty( BOARD *p_board, DIFFICULTY difficulty )
     case CUSTOM:
         break;
     }
+    SetStatsVariant( p_board );
 }
 
 static void ShiftBetween(LONG* x, LONG* y, LONG a, LONG b)
@@ -273,12 +340,14 @@ static void MoveOnScreen(RECT* rect)
     ShiftBetween(&rect->top, &rect->bottom, mi.rcWork.top, mi.rcWork.bottom);
 }
 
+static void LayoutBoard( BOARD *p_board );
+
 static void CreateBoard( BOARD *p_board )
 {
-    int left, top, bottom, right;
     unsigned col, row;
-    RECT wnd_rect;
 
+    /* a game that was started and is dealt over counts as lost in the statistics */
+    LwgShellGameAbandon( p_board->shell );
     p_board->mb = MB_NONE;
     p_board->boxes_left = p_board->cols * p_board->rows - p_board->mines;
     p_board->num_flags = 0;
@@ -295,42 +364,51 @@ static void CreateBoard( BOARD *p_board )
         p_board->box[col][row].NumMines = 0;
       }
 
-    p_board->width = p_board->cols * MINE_WIDTH + BOARD_WMARGIN * 2;
-
-    p_board->height = p_board->rows * MINE_HEIGHT + LED_HEIGHT
-        + BOARD_HMARGIN * 3;
-
-    /* setting the mines rectangle boundary */
-    left = BOARD_WMARGIN;
-    top = BOARD_HMARGIN * 2 + LED_HEIGHT;
-    right = left + p_board->cols * MINE_WIDTH;
-    bottom = top + p_board->rows * MINE_HEIGHT;
-    SetRect( &p_board->mines_rect, left, top, right, bottom );
-
-    /* setting the face rectangle boundary */
-    left = p_board->width / 2 - FACE_WIDTH / 2;
-    top = BOARD_HMARGIN;
-    right = left + FACE_WIDTH;
-    bottom = top + FACE_HEIGHT;
-    SetRect( &p_board->face_rect, left, top, right, bottom );
-
-    /* setting the timer rectangle boundary */
-    left = BOARD_WMARGIN;
-    top = BOARD_HMARGIN;
-    right = left + LED_WIDTH * 3;
-    bottom = top + LED_HEIGHT;
-    SetRect( &p_board->timer_rect, left, top, right, bottom );
-
-    /* setting the counter rectangle boundary */
-    left =  p_board->width - BOARD_WMARGIN - LED_WIDTH * 3;
-    top = BOARD_HMARGIN;
-    right = p_board->width - BOARD_WMARGIN;
-    bottom = top + LED_HEIGHT;
-    SetRect( &p_board->counter_rect, left, top, right, bottom );
-
     p_board->status = WAITING;
     p_board->face_bmp = SMILE_BMP;
     p_board->time = 0;
+
+    LayoutBoard( p_board );
+}
+
+/* window and rectangles for the current board size and tile size (does not touch the game) */
+static void LayoutBoard( BOARD *p_board )
+{
+    int left, top, bottom, right;
+    RECT wnd_rect;
+
+    p_board->width = p_board->cols * p_board->tile + SC( p_board, BOARD_WMARGIN * 2 );
+
+    p_board->height = p_board->rows * p_board->tile + SC( p_board, LED_HEIGHT )
+        + SC( p_board, BOARD_HMARGIN * 3 );
+
+    /* setting the mines rectangle boundary */
+    left = SC( p_board, BOARD_WMARGIN );
+    top = SC( p_board, BOARD_HMARGIN * 2 + LED_HEIGHT );
+    right = left + p_board->cols * p_board->tile;
+    bottom = top + p_board->rows * p_board->tile;
+    SetRect( &p_board->mines_rect, left, top, right, bottom );
+
+    /* setting the face rectangle boundary */
+    left = p_board->width / 2 - SC( p_board, FACE_WIDTH ) / 2;
+    top = SC( p_board, BOARD_HMARGIN );
+    right = left + SC( p_board, FACE_WIDTH );
+    bottom = top + SC( p_board, FACE_HEIGHT );
+    SetRect( &p_board->face_rect, left, top, right, bottom );
+
+    /* setting the timer rectangle boundary */
+    left = SC( p_board, BOARD_WMARGIN );
+    top = SC( p_board, BOARD_HMARGIN );
+    right = left + SC( p_board, LED_WIDTH ) * 3;
+    bottom = top + SC( p_board, LED_HEIGHT );
+    SetRect( &p_board->timer_rect, left, top, right, bottom );
+
+    /* setting the counter rectangle boundary */
+    left =  p_board->width - SC( p_board, BOARD_WMARGIN ) - SC( p_board, LED_WIDTH ) * 3;
+    top = SC( p_board, BOARD_HMARGIN );
+    right = p_board->width - SC( p_board, BOARD_WMARGIN );
+    bottom = top + SC( p_board, LED_HEIGHT );
+    SetRect( &p_board->counter_rect, left, top, right, bottom );
 
     SetRect(&wnd_rect, p_board->pos.x, p_board->pos.y, p_board->pos.x + p_board->width,
             p_board->pos.y + p_board->height);
@@ -347,46 +425,25 @@ static void CreateBoard( BOARD *p_board )
 }
 
 
-/* Randomly places mines everywhere except the selected box. */
+/* Places the mines (mbcore: the clicked box and its neighbours stay free) and labels every box. */
 static void PlaceMines ( BOARD *p_board, int selected_col, int selected_row )
 {
-    int i, j;
+    static unsigned seed;
+    unsigned char grid[(MAX_COLS + 2) * (MAX_ROWS + 2)];
+    int stride = p_board->rows + 2;
     unsigned col, row;
 
-    srand( (unsigned) time( NULL ) );
+    seed ^= GetTickCount() * 2654435761u + 1;
+    MbPlaceMines( grid, stride, p_board->cols, p_board->rows, p_board->mines, selected_col, selected_row, &seed );
 
-    /* Temporarily place a mine at the selected box until all the other
-     * mines are placed, this avoids checking in the mine creation loop. */
-    p_board->box[selected_col][selected_row].IsMine = TRUE;
-
-    /* create mines */
-    i = 0;
-    while( (unsigned) i < p_board->mines ) {
-        col = rand() % p_board->cols + 1;
-        row = rand() % p_board->rows + 1;
-
-        if( !p_board->box[col][row].IsMine ) {
-            i++;
-            p_board->box[col][row].IsMine = TRUE;
-        }
-    }
-
-    /* Remove temporarily placed mine for selected box */
-    p_board->box[selected_col][selected_row].IsMine = FALSE;
-
-    /*
-     * Now we label the remaining boxes with the
-     * number of mines surrounding them.
-     */
     for( col = 1; col < p_board->cols + 1; col++ )
-    for( row = 1; row < p_board->rows + 1; row++ ) {
-        for( i = -1; i <= 1; i++ )
-        for( j = -1; j <= 1; j++ ) {
-            if( p_board->box[col + i][row + j].IsMine ) {
-                p_board->box[col][row].NumMines++ ;
-            }
-        }
-    }
+    for( row = 1; row < p_board->rows + 1; row++ )
+        p_board->box[col][row].IsMine = grid[col * stride + row] & MB_CELL_MINE;
+
+    /* Now we label the boxes with the number of mines surrounding them. */
+    for( col = 1; col < p_board->cols + 1; col++ )
+    for( row = 1; row < p_board->rows + 1; row++ )
+        p_board->box[col][row].NumMines = MbCountAround( grid, stride, col, row );
 }
 
 static void DrawMine( HDC hdc, HDC hMemDC, BOARD *p_board, unsigned col, unsigned row, BOOL IsPressed )
@@ -459,18 +516,19 @@ static void DrawMine( HDC hdc, HDC hMemDC, BOARD *p_board, unsigned col, unsigne
         && !p_board->box[col][row].IsMine )
           offset = (MINEBMP_OFFSET) p_board->box[col][row].NumMines;
 
-    BitBlt( hdc,
-            (col - 1) * MINE_WIDTH + p_board->mines_rect.left,
-            (row - 1) * MINE_HEIGHT + p_board->mines_rect.top,
-            MINE_WIDTH, MINE_HEIGHT,
-            hMemDC, 0, offset * MINE_HEIGHT, SRCCOPY );
+    SetStretchBltMode( hdc, COLORONCOLOR );
+    StretchBlt( hdc,
+            (col - 1) * p_board->tile + p_board->mines_rect.left,
+            (row - 1) * p_board->tile + p_board->mines_rect.top,
+            p_board->tile, p_board->tile,
+            hMemDC, 0, offset * p_board->src_tile, p_board->src_tile, p_board->src_tile, SRCCOPY );
 }
 
 static void DrawMines ( HDC hdc, HDC hMemDC, BOARD *p_board )
 {
     HGDIOBJ hOldObj;
     unsigned col, row;
-    hOldObj = SelectObject (hMemDC, p_board->hMinesBMP);
+    hOldObj = SelectObject (hMemDC, MINES_STRIP(p_board));
 
     for( row = 1; row <= p_board->rows; row++ ) {
       for( col = 1; col <= p_board->cols; col++ ) {
@@ -508,14 +566,16 @@ static void DrawLeds( HDC hdc, HDC hMemDC, BOARD *p_board, int number, int x, in
     hOldObj = SelectObject (hMemDC, p_board->hLedsBMP);
 
     for( i = 0; i < 3; i++ ) {
-        BitBlt( hdc,
-            i * LED_WIDTH + x,
+        StretchBlt( hdc,
+            i * SC( p_board, LED_WIDTH ) + x,
             y,
-            LED_WIDTH,
-            LED_HEIGHT,
+            SC( p_board, LED_WIDTH ),
+            SC( p_board, LED_HEIGHT ),
             hMemDC,
             0,
             led[i] * LED_HEIGHT,
+            LED_WIDTH,
+            LED_HEIGHT,
             SRCCOPY);
     }
 
@@ -529,12 +589,12 @@ static void DrawFace( HDC hdc, HDC hMemDC, BOARD *p_board )
 
     hOldObj = SelectObject (hMemDC, p_board->hFacesBMP);
 
-    BitBlt( hdc,
+    StretchBlt( hdc,
         p_board->face_rect.left,
         p_board->face_rect.top,
-        FACE_WIDTH,
-        FACE_HEIGHT,
-        hMemDC, 0, p_board->face_bmp * FACE_HEIGHT, SRCCOPY);
+        SC( p_board, FACE_WIDTH ),
+        SC( p_board, FACE_HEIGHT ),
+        hMemDC, 0, p_board->face_bmp * FACE_HEIGHT, FACE_WIDTH, FACE_HEIGHT, SRCCOPY);
 
     SelectObject( hMemDC, hOldObj );
 }
@@ -543,6 +603,8 @@ static void DrawFace( HDC hdc, HDC hMemDC, BOARD *p_board )
 static void DrawBoard( HDC hdc, HDC hMemDC, PAINTSTRUCT *ps, BOARD *p_board )
 {
     RECT tmp_rect;
+
+    SetStretchBltMode( hdc, COLORONCOLOR );     /* crisp pixels when the tiles are scaled */
 
     if( IntersectRect( &tmp_rect, &ps->rcPaint, &p_board->counter_rect ) )
         DrawLeds( hdc, hMemDC, p_board, p_board->mines - p_board->num_flags,
@@ -610,7 +672,7 @@ static void UnpressBox( BOARD *p_board, unsigned col, unsigned row )
 
     hdc = GetDC( p_board->hWnd );
     hMemDC = CreateCompatibleDC( hdc );
-    hOldObj = SelectObject( hMemDC, p_board->hMinesBMP );
+    hOldObj = SelectObject( hMemDC, MINES_STRIP(p_board) );
 
     DrawMine( hdc, hMemDC, p_board, col, row, FALSE );
 
@@ -639,7 +701,7 @@ static void PressBox( BOARD *p_board, unsigned col, unsigned row )
 
     hdc = GetDC( p_board->hWnd );
     hMemDC = CreateCompatibleDC( hdc );
-    hOldObj = SelectObject (hMemDC, p_board->hMinesBMP);
+    hOldObj = SelectObject (hMemDC, MINES_STRIP(p_board));
 
     DrawMine( hdc, hMemDC, p_board, col, row, TRUE );
 
@@ -751,8 +813,8 @@ static void TestMines( BOARD *p_board, POINT pt, int msg )
     BOOL draw = TRUE;
     int col, row;
 
-    col = (pt.x - p_board->mines_rect.left) / MINE_WIDTH + 1;
-    row = (pt.y - p_board->mines_rect.top ) / MINE_HEIGHT + 1;
+    col = (pt.x - p_board->mines_rect.left) / p_board->tile + 1;
+    row = (pt.y - p_board->mines_rect.top ) / p_board->tile + 1;
 
     switch ( msg ) {
     case WM_LBUTTONDOWN:
@@ -777,6 +839,7 @@ static void TestMines( BOARD *p_board, POINT pt, int msg )
         {
             p_board->status = PLAYING;
             PlaceMines( p_board, col, row );
+            LwgShellGameStart( p_board->shell );
         }
 #ifdef __REACTOS__
         CompleteBox( p_board, col, row, TRUE );
@@ -859,12 +922,21 @@ static void TestBoard( HWND hWnd, BOARD *p_board, int x, int y, int msg )
         p_board->press.y = 0;
     }
 
+    if( p_board->status == GAMEOVER && LwgShellIsGameRunning( p_board->shell ) ) {
+        LwgShellSetElapsedSeconds( p_board->shell, p_board->time );
+        LwgShellGameEnd( p_board->shell, FALSE, FALSE, 0 );
+    }
+
     if( p_board->boxes_left == 0 ) {
 #ifdef __REACTOS__
         if (p_board->status != WON)
             PlaySoundEffect(p_board, IDW_WIN);
 #endif
         p_board->status = WON;
+        if( LwgShellIsGameRunning( p_board->shell ) ) {
+            LwgShellSetElapsedSeconds( p_board->shell, p_board->time );
+            LwgShellGameEnd( p_board->shell, TRUE, FALSE, 0 );
+        }
 
         if (p_board->num_flags < p_board->mines) {
             for( row = 1; row <= p_board->rows; row++ ) {
@@ -894,19 +966,136 @@ static void TestBoard( HWND hWnd, BOARD *p_board, int x, int y, int msg )
 }
 
 
+/* ---- save/resume (the open game is saved when the window closes) ---- */
+
+static void SaveGame( BOARD *p_board )
+{
+    static MbSave save;
+    unsigned char packed[MB_PACK_MAX];
+    unsigned col, row, stride = p_board->rows + 2, n;
+
+    if( p_board->status != PLAYING || !p_board->shell )
+        return;
+    memset( &save, 0, sizeof(save) );
+    save.cols = p_board->cols;
+    save.rows = p_board->rows;
+    save.mines = p_board->mines;
+    save.difficulty = p_board->difficulty;
+    save.time = p_board->time > 999 ? 999 : p_board->time;
+    for( col = 1; col <= p_board->cols; col++ )
+        for( row = 1; row <= p_board->rows; row++ )
+            save.cell[col * stride + row] = (unsigned char)
+                ( ( p_board->box[col][row].IsMine ? MB_CELL_MINE : 0 ) |
+                  ( p_board->box[col][row].FlagType << MB_CELL_FLAG_SHIFT ) );
+    n = MbPack( &save, packed, sizeof(packed) );
+    if( n )
+        LwgShellSave( p_board->shell, packed, n );
+}
+
+static BOOL ResumeGame( BOARD *p_board )
+{
+    static MbSave save;
+    void *data = NULL;
+    UINT32 size = 0;
+    unsigned col, row, stride, revealed = 0, flags = 0;
+    unsigned char grid[(MAX_COLS + 2) * (MAX_ROWS + 2)];
+    HMENU hMenu;
+
+    if( !p_board->shell || LwgShellResume( p_board->shell, &data, &size ) != LWG_SAVE_OK ) {
+        LwgFree( data );
+        return FALSE;
+    }
+    if( !MbUnpack( (const unsigned char *) data, size, &save ) ) {
+        LwgFree( data );
+        LwgShellDiscardSave( p_board->shell );
+        return FALSE;
+    }
+    LwgFree( data );
+
+    hMenu = GetMenu( p_board->hWnd );
+    CheckMenuItem( hMenu, IDM_BEGINNER + p_board->difficulty, MF_UNCHECKED );
+    p_board->cols = save.cols;
+    p_board->rows = save.rows;
+    p_board->mines = save.mines;
+    p_board->difficulty = (DIFFICULTY) save.difficulty;
+    CheckMenuItem( hMenu, IDM_BEGINNER + p_board->difficulty, MF_CHECKED );
+    SetStatsVariant( p_board );
+    CreateBoard( p_board );
+
+    stride = save.rows + 2;
+    for( col = 0; col <= save.cols + 1; col++ )
+        for( row = 0; row <= save.rows + 1; row++ )
+            grid[col * stride + row] = 0;
+    for( col = 1; col <= save.cols; col++ )
+        for( row = 1; row <= save.rows; row++ )
+            grid[col * stride + row] = save.cell[col * stride + row] & MB_CELL_MINE;
+    for( col = 1; col <= save.cols; col++ )
+        for( row = 1; row <= save.rows; row++ ) {
+            unsigned char v = save.cell[col * stride + row];
+            unsigned type = ( v & MB_CELL_FLAG_MASK ) >> MB_CELL_FLAG_SHIFT;
+
+            p_board->box[col][row].IsMine = v & MB_CELL_MINE;
+            p_board->box[col][row].FlagType = type;
+            p_board->box[col][row].NumMines = MbCountAround( grid, stride, col, row );
+            if( type == COMPLETE )
+                revealed++;
+            else if( type == FLAG )
+                flags++;
+        }
+    p_board->num_flags = flags;
+    p_board->boxes_left = save.cols * save.rows - save.mines - revealed;
+    p_board->time = save.time;
+    p_board->status = PLAYING;
+    LwgShellGameStart( p_board->shell );
+    LwgShellSetElapsedSeconds( p_board->shell, save.time );
+    RedrawWindow( p_board->hWnd, NULL, 0, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE );
+    return TRUE;
+}
+
 static LRESULT WINAPI MainProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     HDC hdc;
     PAINTSTRUCT ps;
     HMENU hMenu;
     static BOARD board;
+    LRESULT shell_result;
+
+    /* timer, statistics command, DPI and theme changes go through the shell first */
+    if( board.shell && LwgShellHandleMessage( board.shell, msg, wParam, lParam, &shell_result ) )
+        return shell_result;
 
     switch( msg ) {
     case WM_CREATE:
+    {
+        LwgShellDesc sd;
+
         board.hInst = ((LPCREATESTRUCTW) lParam)->hInstance;
         board.hWnd = hWnd;
+        ZeroMemory( &sd, sizeof(sd) );
+        sd.struct_size = sizeof(sd);
+        sd.owner = hWnd;
+        sd.instance = board.hInst;
+        sd.game_id = L"Minesweeper";
+        sd.title = L"Minesweeper";
+        sd.save_tag = LWG_TAG('M', 'I', 'N', '1');
+        sd.save_version = 1;
+        if( SUCCEEDED( LwgShellCreate( &sd, &board.shell ) ) )
+            LeewayFrameShowStatusBar( LwgShellGetFrame( board.shell ), FALSE, FALSE );   /* the board has its own LEDs */
         InitBoard( &board );
-        CreateBoard( &board );
+        if( !ResumeGame( &board ) )
+            CreateBoard( &board );
+        return 0;
+    }
+
+    case WM_CLOSE:
+        SaveGame( &board );     /* an open game is resumed at the next start; no loss is recorded */
+        break;
+
+    case WM_DPICHANGED:
+        if( board.tile_opt == 0 ) {
+            ChooseTile( &board );
+            LayoutBoard( &board );
+        }
         return 0;
 
     case WM_PAINT:
@@ -934,6 +1123,8 @@ static LRESULT WINAPI MainProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_DESTROY:
         SaveBoard( &board );
         DestroyBoard( &board );
+        LwgShellDestroy( board.shell );
+        board.shell = NULL;
         PostQuitMessage( 0 );
         return 0;
 
@@ -1028,6 +1219,16 @@ static LRESULT WINAPI MainProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             CheckMenuItem(hMenu, IDM_SOUND, board.IsSoundEnabled ? MF_CHECKED : MF_UNCHECKED);
             return 0;
 #endif
+
+        case IDM_SIZE_AUTO:
+        case IDM_SIZE_SMALL:
+        case IDM_SIZE_MEDIUM:
+        case IDM_SIZE_LARGE:
+            board.tile_opt = LOWORD(wParam) - IDM_SIZE_AUTO;
+            ChooseTile( &board );
+            CheckSizeMenu( &board );
+            LayoutBoard( &board );
+            return 0;
 
         case IDM_BEGINNER:
             SetDifficulty( &board, BEGINNER );
