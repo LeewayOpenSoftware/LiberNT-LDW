@@ -10,7 +10,7 @@
 #include "wdmaud.h"
 
 #include <samplerate.h>
-#include <float_cast.h>
+#include <math.h>
 
 #define NDEBUG
 #include <debug.h>
