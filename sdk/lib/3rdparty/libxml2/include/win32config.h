@@ -4,6 +4,7 @@
 #define HAVE_SYS_STAT_H
 #define HAVE_STAT
 #define HAVE_FCNTL_H
+#define XML_SYSCONFDIR "/etc" /* default catalog directory, libxml2 2.15 */
 
 #include <io.h>
 #include <direct.h>
@@ -22,4 +23,3 @@
 #endif
 
 #endif /* __LIBXML_WIN32_CONFIG__ */
-
