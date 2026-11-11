@@ -76,6 +76,7 @@ list(APPEND KMTEST_DRV_SOURCE
     directx/DxgkHotPlugWork.c
     directx/DxgkChildDescriptor.c
     directx/DxgkPostDisplayHandoff.c
+    directx/DxgkPresentUserSource.c
     directx/DxgkGpuVaAddress.c
     directx/DxgkGpuVaPageTable.c
     directx/DxgkGpuVaPte.c
@@ -208,6 +209,7 @@ list(APPEND KMTEST_DRV_SOURCE
     ntos_ke/KeApc.c
     ntos_ke/KeApcInject.c
     ntos_ke/KeApcScheduling.c
+    ntos_ke/KeApcDpcTransitions.c
     ntos_ke/KeDeferredReady.c
     ntos_ke/KeBugCheckCbKM.c
     ntos_ke/KeDevQueue.c
@@ -355,7 +357,7 @@ if(REACTOS_USE_WDDM AND (REACTOS_WDDM_TARGET_LEVEL GREATER_EQUAL 2000))
 endif()
 
 if(ARCH STREQUAL "amd64")
-    list(APPEND KMTEST_DRV_SOURCE ntos_ke/amd64/KeSwitchHandoff.c)
+    list(APPEND KMTEST_DRV_SOURCE ntos_ke/amd64/KeSwitchHandoff.c ntos_ke/amd64/KeTrapFilterX87.c)
 endif()
 
 if(ARCH STREQUAL "i386" OR ARCH STREQUAL "amd64")

@@ -42,6 +42,8 @@ typedef struct
 
 }IKsFilterImpl;
 
+C_ASSERT(FIELD_OFFSET(IKsFilterImpl, Filter) == sizeof(KSBASIC_HEADER));
+
 const GUID IID_IKsControl = {0x28F54685L, 0x06FD, 0x11D2, {0xB2, 0x7A, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96}};
 const GUID IID_IKsFilter  = {0x3ef6ee44L, 0x0D41, 0x11d2, {0xbe, 0xDA, 0x00, 0xc0, 0x4f, 0x8e, 0xF4, 0x57}};
 const GUID KSPROPSETID_Topology                = {0x720D4AC0L, 0x7533, 0x11D0, {0xA5, 0xD6, 0x28, 0xDB, 0x04, 0xC1, 0x00, 0x00}};
@@ -67,12 +69,9 @@ DEFINE_KSPROPERTY_TABLE(IKsFilterPinSet) {
     DEFINE_KSPROPERTY_ITEM_PIN_INTERFACES(FilterPinPropertyHandler),
     DEFINE_KSPROPERTY_ITEM_PIN_MEDIUMS(FilterPinPropertyHandler),
     DEFINE_KSPROPERTY_ITEM_PIN_COMMUNICATION(FilterPinPropertyHandler),
-    DEFINE_KSPROPERTY_ITEM_PIN_GLOBALCINSTANCES(FilterPinPropertyHandler),
     DEFINE_KSPROPERTY_ITEM_PIN_NECESSARYINSTANCES(FilterPinPropertyHandler),
     DEFINE_KSPROPERTY_ITEM_PIN_CATEGORY(FilterPinPropertyHandler),
-    DEFINE_KSPROPERTY_ITEM_PIN_NAME(FilterPinPropertyHandler),
-    DEFINE_KSPROPERTY_ITEM_PIN_CONSTRAINEDDATARANGES(FilterPinPropertyHandler),
-    DEFINE_KSPROPERTY_ITEM_PIN_PROPOSEDATAFORMAT(FilterPinPropertyHandler)
+    DEFINE_KSPROPERTY_ITEM_PIN_NAME(FilterPinPropertyHandler)
 };
 DEFINE_KSPROPERTY_GENEREAL_COMPONENTID(IKsFilterGeneralSet, FilterGeneralComponentIdHandler);
 
@@ -746,7 +745,9 @@ IKsFilter_DispatchClose(
         CompleteRequest(Irp, IO_NO_INCREMENT);
 
         /* remove our instance from the filter factory */
+        KsAcquireDevice(This->Header.KsDevice);
         IKsFilter_RemoveFilterFromFilterFactory(This, This->Factory);
+        KsReleaseDevice(This->Header.KsDevice);
 
         KsFreeObjectBag((KSOBJECT_BAG)This->Filter.Bag);
         This->Filter.Bag = NULL;
@@ -1427,7 +1428,7 @@ IKsFilter_AddPin(
         if (!NextPin)
             break;
 
-        NextPin = CurPin;
+        CurPin = NextPin;
 
     }while(NextPin != NULL);
 

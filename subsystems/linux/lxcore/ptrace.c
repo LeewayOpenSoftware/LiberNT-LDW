@@ -128,7 +128,7 @@ LxPtraceNotifyTracer(
         RtlZeroMemory(&Info, sizeof(Info));
         Info.Code = Code;
         Info.Child.Pid = (LONG)LxGlobalToNr(Tracer, Tid);
-        Info.Child.Uid = Process->Uid[0];
+        Info.Child.Uid = LxProcessCred(Process)->Uid[0];
         Info.Child.Status = Status;
         LxSignalSend(Tracer, NULL, LX_SIGCHLD, &Info);
     }
@@ -183,7 +183,7 @@ LxPtraceStopCommon(
         Ptrace->Siginfo.Signo = Report & 0x7F;
         Ptrace->Siginfo.Code = Report;
         Ptrace->Siginfo.Child.Pid = (LONG)LxTidNr(Thread->Process, Thread);
-        Ptrace->Siginfo.Child.Uid = Thread->Process->Uid[0];
+        Ptrace->Siginfo.Child.Uid = LxProcessCred(Thread->Process)->Uid[0];
     }
     KeClearEvent(&Ptrace->Resume);
     Ptrace->Stopped = TRUE;
@@ -421,7 +421,7 @@ LxPtraceSignal(
         if (Tracer != NULL)
         {
             Info->Child.Pid = (LONG)LxPidNr(Thread->Process, Tracer);
-            Info->Child.Uid = Tracer->Uid[0];
+            Info->Child.Uid = LxProcessCred(Tracer)->Uid[0];
             LxProcessDereference(Tracer);
         }
     }
@@ -478,6 +478,7 @@ LxPtraceGroupStop(
 
     if ((Thread->Ptrace == NULL) || !LxPtraceTracedOptions(Thread, &Options, &Seized))
         return FALSE;
+    InterlockedAnd(&Thread->PtraceWork, ~LX_PTW_TRAP);
     if (!Seized)
     {
         LxPtraceStopCommon(Thread, TrapFrame, ExceptionFrame, Signal, LX_CLD_STOPPED, NULL, FALSE, NULL);
@@ -578,7 +579,7 @@ LxPtraceExec(
         RtlZeroMemory(&Info, sizeof(Info));
         Info.Code = LX_SI_USER;
         Info.Child.Pid = (LONG)LxPidNr(Thread->Process, Thread->Process);
-        Info.Child.Uid = Thread->Process->Uid[0];
+        Info.Child.Uid = LxProcessCred(Thread->Process)->Uid[0];
         LxSignalSend(Thread->Process, Thread, LX_SIGTRAP, &Info);
     }
 }
@@ -835,7 +836,7 @@ LxPtraceWaitFind(
     if (Found != NULL)
     {
         *Tid = LxGlobalToNr(Tracer, Found->Tid);
-        *Uid = Found->Process->Uid[0];
+        *Uid = LxProcessCred(Found->Process)->Uid[0];
     }
     ExReleaseFastMutex(&LxPtraceLock);
     if ((Found != NULL) && Found->Exited && Consume && !(Options & LX_WNOWAIT))
@@ -1065,7 +1066,7 @@ LxPtraceAttach(
         Error = -LX_EPERM;
     else
         Ptrace = LxPtraceLinkLocked(Call->Process, Thread, Seize, Seize ? (ULONG)Flags : 0);
-    Stopped = (Target->JobctlFlags & LX_JOBCTL_STOPPED) != 0;
+    Stopped = ((Target->JobctlFlags & LX_JOBCTL_STOPPED) != 0) || Thread->Stopped;
     if ((Ptrace != NULL) && Stopped)
         InterlockedOr(&Thread->PtraceWork, LX_PTW_TRAP);
     Tid = Thread->Tid;
@@ -1076,7 +1077,14 @@ LxPtraceAttach(
     if (Ptrace == NULL)
         return -LX_ENOMEM;
     if (!Seize)
-        LxSignalSend(Target, NULL, LX_SIGSTOP, NULL);
+    {
+        LX_SIGINFO Info;
+
+        RtlZeroMemory(&Info, sizeof(Info));
+        Info.Signo = LX_SIGSTOP;
+        Info.Code = LX_SI_KERNEL;
+        LxSignalSend(Target, Thread, LX_SIGSTOP, &Info);
+    }
     if (Stopped)
         LxSignalWakeThread(Target, Tid);
     return 0;

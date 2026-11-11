@@ -1042,17 +1042,18 @@ LxAccessCheck(
     _In_ ULONG Mode,
     _In_ ULONG Flags)
 {
-    ULONG Fsuid = Process->Fsuid, Fsgid = Process->Fsgid;
-    ULONG64 Effective = Process->CapEffective;
+    PLX_CRED Cred = LxProcessCred(Process);
+    ULONG Fsuid = Cred->Fsuid, Fsgid = Cred->Fsgid;
+    ULONG64 Effective = Cred->CapEffective;
 
     if (Mode == 0)
         return 0;
     if (!(Flags & LX_AT_EACCESS))
     {
-        Fsuid = Process->Uid[0];
-        Fsgid = Process->Gid[0];
-        if (!(Process->SecureBits & LX_SECBIT_NO_SETUID_FIXUP))
-            Effective = (Process->Uid[0] == LxCredMakeId(Process, FALSE, 0)) ? Process->CapPermitted : 0;
+        Fsuid = Cred->Uid[0];
+        Fsgid = Cred->Gid[0];
+        if (!(Cred->SecureBits & LX_SECBIT_NO_SETUID_FIXUP))
+            Effective = (Cred->Uid[0] == LxCredMakeId(Process, FALSE, 0)) ? Cred->CapPermitted : 0;
     }
     return LxPermissionAs(Process, Fsuid, Fsgid, Effective, Stat->Mode, Stat->Uid, Stat->Gid, Mode);
 }
@@ -1543,6 +1544,9 @@ LxSetAttributesFile(
         LxNodeFree(&Node);
         return Error;
     }
+    if (LxFileIsPipe(File) && (File->Mount == NULL))
+        return LxPipeSetAttributes(Process, File, Mode, Uid, Gid);
+    /* TODO: fchown and fchmod of a FIFO do not reach the node it was opened from */
     if (((File->Handle == NULL) && (LxTmpfsFileInode(File) == NULL) && (LxFileGetTty(File) == NULL)) || File->NtPipe)
         return 0;
     Error = LxVfsSetAttributes(Process, NULL, File, Mode, Uid, Gid);
@@ -1966,17 +1970,173 @@ LX_SYSCALL(LxSysUmask)
     return Previous;
 }
 
+typedef struct _LX_FLOCK_HOLDER
+{
+    LIST_ENTRY Link;
+    PLX_INSTANCE Instance;
+    ULONG64 Dev;
+    ULONG64 Ino;
+    PLX_FILE File;
+    BOOLEAN Exclusive;
+} LX_FLOCK_HOLDER, *PLX_FLOCK_HOLDER;
+
+typedef struct _LX_FLOCK_REQUEST
+{
+    PLX_FLOCK_HOLDER Holder;
+    BOOLEAN Acquired;
+} LX_FLOCK_REQUEST, *PLX_FLOCK_REQUEST;
+
+static LIST_ENTRY LxFlockHolders;
+static FAST_MUTEX LxFlockLock;
+static LX_POLL_HEAD LxFlockWaiters;
+
+VOID
+LxFlockInitialize(VOID)
+{
+    InitializeListHead(&LxFlockHolders);
+    ExInitializeFastMutex(&LxFlockLock);
+    LxPollHeadInit(&LxFlockWaiters);
+}
+
+static
+PLX_FLOCK_HOLDER
+LxFlockFindLocked(
+    _In_ PLX_FILE File)
+{
+    PLIST_ENTRY Entry;
+
+    for (Entry = LxFlockHolders.Flink; Entry != &LxFlockHolders; Entry = Entry->Flink)
+    {
+        PLX_FLOCK_HOLDER Holder = CONTAINING_RECORD(Entry, LX_FLOCK_HOLDER, Link);
+
+        if (Holder->File == File)
+            return Holder;
+    }
+    return NULL;
+}
+
+static
+BOOLEAN
+LxFlockTryAcquire(
+    _In_ PVOID Context)
+{
+    PLX_FLOCK_REQUEST Request = Context;
+    PLX_FLOCK_HOLDER Want = Request->Holder;
+    PLIST_ENTRY Entry;
+    BOOLEAN Conflict = FALSE;
+
+    ExAcquireFastMutex(&LxFlockLock);
+    for (Entry = LxFlockHolders.Flink; !Conflict && (Entry != &LxFlockHolders); Entry = Entry->Flink)
+    {
+        PLX_FLOCK_HOLDER Holder = CONTAINING_RECORD(Entry, LX_FLOCK_HOLDER, Link);
+
+        Conflict = (Holder->File != Want->File) && (Holder->Instance == Want->Instance) && (Holder->Dev == Want->Dev) &&
+                   (Holder->Ino == Want->Ino) && (Holder->Exclusive || Want->Exclusive);
+    }
+    if (!Conflict)
+    {
+        InsertTailList(&LxFlockHolders, &Want->Link);
+        Want->File->Flocked = TRUE;
+    }
+    ExReleaseFastMutex(&LxFlockLock);
+    Request->Acquired = !Conflict;
+    return !Conflict;
+}
+
+static
+VOID
+LxFlockRemove(
+    _In_ PLX_FILE File)
+{
+    PLX_FLOCK_HOLDER Holder;
+
+    ExAcquireFastMutex(&LxFlockLock);
+    Holder = LxFlockFindLocked(File);
+    if (Holder != NULL)
+        RemoveEntryList(&Holder->Link);
+    ExReleaseFastMutex(&LxFlockLock);
+    if (Holder == NULL)
+        return;
+    LxFree(Holder);
+    LxPollWake(&LxFlockWaiters, LX_POLLIN);
+}
+
+VOID
+LxFlockRelease(
+    _In_ PLX_FILE File)
+{
+    if (File->Flocked)
+        LxFlockRemove(File);
+}
+
+static
+LONG64
+LxFlockLockFile(
+    _In_ PLX_PROCESS Process,
+    _In_ PLX_FILE File,
+    _In_ BOOLEAN Exclusive,
+    _In_ BOOLEAN NonBlocking)
+{
+    LX_FLOCK_REQUEST Request;
+    PLX_FLOCK_HOLDER Existing;
+    LX_STAT Stat;
+    LONG64 Result;
+
+    Result = LxFileStat(File, &Stat);
+    if (Result != 0)
+        return Result;
+    ExAcquireFastMutex(&LxFlockLock);
+    Existing = LxFlockFindLocked(File);
+    Result = ((Existing != NULL) && (Existing->Exclusive == Exclusive)) ? 1 : 0;
+    ExReleaseFastMutex(&LxFlockLock);
+    if (Result != 0)
+        return 0;
+    if (Existing != NULL)
+        LxFlockRemove(File);
+
+    Request.Holder = LxAlloc(sizeof(*Request.Holder));
+    Request.Acquired = FALSE;
+    if (Request.Holder == NULL)
+        return -LX_ENOMEM;
+    Request.Holder->Instance = Process->Instance;
+    Request.Holder->Dev = Stat.Dev;
+    Request.Holder->Ino = Stat.Ino;
+    Request.Holder->File = File;
+    Request.Holder->Exclusive = Exclusive;
+    if (NonBlocking)
+    {
+        Result = LxFlockTryAcquire(&Request) ? 0 : -LX_EAGAIN;
+    }
+    else
+    {
+        do
+        {
+            Result = LxWaitHead(&LxFlockWaiters, LxFlockTryAcquire, &Request, NULL);
+        } while ((Result == 0) && !Request.Acquired);
+    }
+    if (!Request.Acquired)
+        LxFree(Request.Holder);
+    return Result;
+}
+
 LX_SYSCALL(LxSysFlock)
 {
     PLX_FILE File = LxCallFile(Call, 0);
     ULONG Operation = (ULONG)Call->Args[1] & ~LX_LOCK_NB;
+    LONG64 Result = 0;
 
     if (File == NULL)
         return -LX_EBADF;
-    LxFileDereference(File);
     if ((Operation != LX_LOCK_SH) && (Operation != LX_LOCK_EX) && (Operation != LX_LOCK_UN))
-        return -LX_EINVAL;
-    return 0;
+        Result = -LX_EINVAL;
+    else if (File->Flags & LX_O_PATH)
+        Result = -LX_EBADF;
+    else if (Operation == LX_LOCK_UN)
+        LxFlockRemove(File);
+    else
+        Result = LxFlockLockFile(Call->Process, File, Operation == LX_LOCK_EX, (Call->Args[1] & LX_LOCK_NB) != 0);
+    LxFileDereference(File);
+    return Result;
 }
 
 static
@@ -2276,6 +2436,8 @@ LX_SYSCALL(LxSysMount)
     LONG64 Result;
     LONG Error;
 
+    if ((Flags & LX_MS_MGC_MSK) == LX_MS_MGC_VAL)
+        Flags &= ~LX_MS_MGC_MSK;
     Error = LxMountLookup(Process, LX_AT_FDCWD, Call->Args[1], LX_LOOKUP_FOLLOW, &Target);
     if (Error != 0)
         return Error;
@@ -2381,9 +2543,7 @@ LX_SYSCALL(LxSysUmount2)
 
 #define LX_XATTR_CREATE     0x1
 #define LX_XATTR_REPLACE    0x2
-#define LX_XATTR_NAME_MAX   255
 #define LX_XATTR_SIZE_MAX   65536
-#define LX_XATTR_BLOB_MAX   65535
 
 typedef struct _LX_XATTR_TARGET
 {
@@ -2532,13 +2692,14 @@ LxXattrInGroup(
     _In_ PLX_PROCESS Process,
     _In_ ULONG Gid)
 {
+    PLX_CRED Cred = LxProcessCred(Process);
     ULONG Index;
 
-    if (Process->Gid[1] == Gid)
+    if (Cred->Gid[1] == Gid)
         return TRUE;
-    for (Index = 0; Index < Process->GroupCount; Index++)
+    for (Index = 0; Index < Cred->GroupCount; Index++)
     {
-        if (Process->Groups[Index] == Gid)
+        if (Cred->Groups[Index] == Gid)
             return TRUE;
     }
     return FALSE;
@@ -2552,10 +2713,13 @@ LxXattrPermission(
     _In_ PLX_XATTR_TARGET Target,
     _In_ BOOLEAN Write)
 {
+    PLX_CRED Cred = LxProcessCred(Process);
     BOOLEAN Admin = LxCapable(Process, LX_CAP_SYS_ADMIN);
     ULONG Type = Target->Type & LX_S_IFMT;
     ULONG Bits;
 
+    if (strcmp(Name, LX_XATTR_NAME_CAPS) == 0)
+        return (Write && !LxCapableWrtIds(Process, Target->Uid, Target->Gid, LX_CAP_SETFCAP)) ? -LX_EPERM : 0;
     if (strncmp(Name, "security.", 9) == 0)
         return (Write && !Admin) ? -LX_EPERM : 0;
     if (strncmp(Name, "trusted.", 8) == 0)
@@ -2567,7 +2731,7 @@ LxXattrPermission(
         return Write ? -LX_EPERM : -LX_ENODATA;
     if (Target->Mode == MAXULONG)
         return 0;
-    if ((Type == LX_S_IFDIR) && (Target->Mode & LX_S_ISVTX) && Write && (Process->Fsuid != Target->Uid) &&
+    if ((Type == LX_S_IFDIR) && (Target->Mode & LX_S_ISVTX) && Write && (Cred->Fsuid != Target->Uid) &&
         !LxCapableWrtIds(Process, Target->Uid, Target->Gid, LX_CAP_FOWNER))
     {
         return -LX_EPERM;
@@ -2577,13 +2741,87 @@ LxXattrPermission(
     {
         return 0;
     }
-    if (Process->Fsuid == Target->Uid)
+    if (Cred->Fsuid == Target->Uid)
         Bits = Target->Mode >> 6;
     else if (LxXattrInGroup(Process, Target->Gid))
         Bits = Target->Mode >> 3;
     else
         Bits = Target->Mode;
     return (Bits & (Write ? 2 : 4)) ? 0 : -LX_EACCES;
+}
+
+static
+BOOLEAN
+LxXattrCapsHeader(
+    _In_reads_bytes_(Length) PUCHAR Value,
+    _In_ ULONG Length)
+{
+    ULONG Magic;
+
+    if ((Length != LX_XATTR_CAPS_SZ_2) && (Length != LX_XATTR_CAPS_SZ_3))
+        return FALSE;
+    RtlCopyMemory(&Magic, Value, sizeof(Magic));
+    Magic &= ~LX_VFS_CAP_FLAGS_EFFECTIVE;
+    return (Length == LX_XATTR_CAPS_SZ_2) ? (Magic == LX_VFS_CAP_REVISION_2) : (Magic == LX_VFS_CAP_REVISION_3);
+}
+
+static
+LONG
+LxXattrCapsView(
+    _In_ PLX_PROCESS Process,
+    _In_reads_bytes_(Length) PUCHAR Value,
+    _In_ ULONG Length,
+    _Out_writes_bytes_to_(LX_XATTR_CAPS_SZ_3, *Converted) PUCHAR Out,
+    _Out_ PULONG Converted)
+{
+    ULONG Words[LX_XATTR_CAPS_SZ_3 / sizeof(ULONG)] = { 0 };
+    ULONG Root, Mapped, Effective;
+
+    *Converted = 0;
+    if (!LxXattrCapsHeader(Value, Length))
+        return -LX_EINVAL;
+    RtlCopyMemory(Words, Value, Length);
+    Root = (Length == LX_XATTR_CAPS_SZ_3) ? Words[5] : 0;
+    Effective = Words[0] & LX_VFS_CAP_FLAGS_EFFECTIVE;
+    Mapped = LxIdFromKernel(LxCredUserNs(Process), FALSE, Root);
+    if ((Mapped != MAXULONG) && (Mapped != 0))
+    {
+        Words[0] = LX_VFS_CAP_REVISION_3 | Effective;
+        Words[5] = Mapped;
+        *Converted = LX_XATTR_CAPS_SZ_3;
+    }
+    else
+    {
+        if (!LxCredRootOwnsNs(Process, Root))
+            return -LX_EOVERFLOW;
+        Words[0] = LX_VFS_CAP_REVISION_2 | Effective;
+        *Converted = LX_XATTR_CAPS_SZ_2;
+    }
+    RtlCopyMemory(Out, Words, *Converted);
+    return 0;
+}
+
+static
+LONG
+LxXattrCapsStore(
+    _In_ PLX_PROCESS Process,
+    _Inout_updates_bytes_(LX_XATTR_CAPS_SZ_3) PUCHAR Value,
+    _Inout_ PULONG Length)
+{
+    ULONG Words[LX_XATTR_CAPS_SZ_3 / sizeof(ULONG)] = { 0 };
+    ULONG Root;
+
+    if ((*Length == LX_XATTR_CAPS_SZ_2) && LxCapable(Process, LX_CAP_SETFCAP))
+        return 0;
+    RtlCopyMemory(Words, Value, *Length);
+    Root = LxCredMakeId(Process, FALSE, (*Length == LX_XATTR_CAPS_SZ_3) ? Words[5] : 0);
+    if (Root == MAXULONG)
+        return -LX_EINVAL;
+    Words[0] = LX_VFS_CAP_REVISION_3 | (Words[0] & LX_VFS_CAP_FLAGS_EFFECTIVE);
+    Words[5] = Root;
+    RtlCopyMemory(Value, Words, LX_XATTR_CAPS_SZ_3);
+    *Length = LX_XATTR_CAPS_SZ_3;
+    return 0;
 }
 
 static
@@ -2638,6 +2876,61 @@ LxXattrFind(
     *RecordLength = 0;
     *ValueLength = 0;
     return NULL;
+}
+
+LONG
+LxFileReadXattr(
+    _In_ PLX_FILE File,
+    _In_ PCSTR Name,
+    _Out_writes_bytes_to_(Capacity, *Length) PUCHAR Buffer,
+    _In_ ULONG Capacity,
+    _Out_ PULONG Length)
+{
+    PLX_TMPFS_INODE Inode = LxTmpfsFileInode(File);
+    PUCHAR Blob = LxAllocPaged(LX_XATTR_BLOB_MAX), Record;
+    ULONG BlobLength = 0, RecordLength;
+    USHORT ValueLength;
+    HANDLE Handle = NULL;
+    BOOLEAN Close = FALSE;
+    LONG Error;
+
+    *Length = 0;
+    if (Blob == NULL)
+        return -LX_ENOMEM;
+    if (Inode != NULL)
+    {
+        Error = LxTmpfsXattrRead(Inode, Blob, LX_XATTR_BLOB_MAX, &BlobLength);
+    }
+    else
+    {
+        Error = LxXattrOpenFile(File, FALSE, &Handle, &Close);
+        if (Error == 0)
+        {
+            Error = LxXattrRead(Handle, Blob, LX_XATTR_BLOB_MAX, &BlobLength);
+            if (Close && (Handle != NULL))
+                ZwClose(Handle);
+        }
+    }
+    if (Error != 0)
+    {
+        LxFreePaged(Blob);
+        return Error;
+    }
+    Record = LxXattrFind(Blob, BlobLength, Name, &RecordLength, &ValueLength);
+    if (Record == NULL)
+    {
+        LxFreePaged(Blob);
+        return -LX_ENODATA;
+    }
+    if (ValueLength > Capacity)
+    {
+        LxFreePaged(Blob);
+        return -LX_ERANGE;
+    }
+    RtlCopyMemory(Buffer, Record + RecordLength - ValueLength, ValueLength);
+    *Length = ValueLength;
+    LxFreePaged(Blob);
+    return 0;
 }
 
 LONG
@@ -2698,19 +2991,31 @@ LxXattrGetCommon(
         Result = LxXattrTargetRead(Target, Blob, LX_XATTR_BLOB_MAX, &Length);
     if (Result == 0)
     {
+        UCHAR Caps[LX_XATTR_CAPS_SZ_3];
+        PUCHAR Data = NULL;
+        ULONG DataLength = 0;
+
         Record = LxXattrFind(Blob, Length, Name, &RecordLength, &ValueLength);
         if (Record == NULL)
+        {
             Result = -LX_ENODATA;
-        else if (Size == 0)
-            Result = ValueLength;
-        else if (Size < ValueLength)
-            Result = -LX_ERANGE;
+        }
+        else if (strcmp(Name, LX_XATTR_NAME_CAPS) == 0)
+        {
+            Result = LxXattrCapsView(Call->Process, Record + 4 + strlen(Name), ValueLength, Caps, &DataLength);
+            Data = Caps;
+        }
         else
         {
-            Result = LxCopyToUser(Value, Record + 4 + strlen(Name), ValueLength);
-            if (Result == 0)
-                Result = ValueLength;
+            Data = Record + 4 + strlen(Name);
+            DataLength = ValueLength;
         }
+        if ((Result == 0) && (Size != 0) && (Size < DataLength))
+            Result = -LX_ERANGE;
+        else if ((Result == 0) && (Size != 0))
+            Result = LxCopyToUser(Value, Data, DataLength);
+        if (Result == 0)
+            Result = DataLength;
     }
     LxFree(Name);
     LxFree(Blob);
@@ -2729,7 +3034,9 @@ LxXattrSetCommon(
     _In_ BOOLEAN Remove)
 {
     PUCHAR Blob = LxAlloc(2 * LX_XATTR_BLOB_MAX + LX_XATTR_SIZE_MAX), Record, Updated;
-    ULONG Length, RecordLength, NameLength, NewLength;
+    ULONG Length, RecordLength, NameLength, NewLength, CapsLength = 0;
+    UCHAR Caps[LX_XATTR_CAPS_SZ_3];
+    BOOLEAN IsCaps = FALSE;
     USHORT ValueLength;
     PSTR Name = NULL;
     LONG64 Result;
@@ -2742,8 +3049,21 @@ LxXattrSetCommon(
         Result = -LX_EINVAL;
     if ((Result == 0) && !Remove && (Size > LX_XATTR_SIZE_MAX))
         Result = -LX_E2BIG;
+    if ((Result == 0) && !Remove && (Size != 0) && (strcmp(Name, LX_XATTR_NAME_CAPS) == 0))
+    {
+        IsCaps = TRUE;
+        CapsLength = (ULONG)min(Size, sizeof(Caps));
+        Result = LxCopyFromUser(Caps, Value, CapsLength);
+        if ((Result == 0) && ((Size > sizeof(Caps)) || !LxXattrCapsHeader(Caps, CapsLength)))
+            Result = -LX_EINVAL;
+    }
     if (Result == 0)
         Result = LxXattrPermission(Call->Process, Name, Target, TRUE);
+    if ((Result == 0) && IsCaps)
+    {
+        Result = LxXattrCapsStore(Call->Process, Caps, &CapsLength);
+        Size = CapsLength;
+    }
     if (Result == 0)
         Result = LxXattrTargetRead(Target, Blob, LX_XATTR_BLOB_MAX, &Length);
     if (Result != 0)
@@ -2786,7 +3106,10 @@ LxXattrSetCommon(
         }
         RtlCopyMemory(Updated + NewLength, Lengths, 4);
         RtlCopyMemory(Updated + NewLength + 4, Name, NameLength);
-        Result = LxCopyFromUser(Updated + NewLength + 4 + NameLength, Value, (SIZE_T)Size);
+        if (IsCaps)
+            RtlCopyMemory(Updated + NewLength + 4 + NameLength, Caps, CapsLength);
+        else
+            Result = LxCopyFromUser(Updated + NewLength + 4 + NameLength, Value, (SIZE_T)Size);
         if (Result != 0)
             goto Exit;
         NewLength += 4 + NameLength + (ULONG)Size;
@@ -3569,7 +3892,7 @@ LX_SYSCALL(LxSysFsopen)
         return Result;
     if ((strcmp(Name, "tmpfs") != 0) && (strcmp(Name, "ramfs") != 0) && (strcmp(Name, "proc") != 0) &&
         (strcmp(Name, "sysfs") != 0) && (strcmp(Name, "cgroup2") != 0) && (strcmp(Name, "devpts") != 0) &&
-        (strcmp(Name, "mqueue") != 0) && (strcmp(Name, "devtmpfs") != 0))
+        (strcmp(Name, "mqueue") != 0) && (strcmp(Name, "devtmpfs") != 0) && (strcmp(Name, "squashfs") != 0))
     {
         LxFree(Name);
         return -LX_ENODEV;

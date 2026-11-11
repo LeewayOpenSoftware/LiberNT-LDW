@@ -439,6 +439,7 @@ LxFileDereference(
 
     LxEpollFileReleased(File);
     LxFileAsyncRelease(File);
+    LxFlockRelease(File);
     if (File->Written)
         LxInotifyFileEvent(File, LX_IN_CLOSE_WRITE);
     if (File->Ops->Release != NULL)
@@ -1886,9 +1887,21 @@ LxDeviceOpenFile(
             File->Path = LxStrDup(Path);
         return File;
     }
+    else if (Major == LX_LOOP_MAJOR)
+    {
+        return LxLoopOpen(Process, Minor, Flags, Path);
+    }
+    else if ((Major == 10) && (Minor == LX_LOOP_CONTROL_MINOR))
+    {
+        return LxLoopControlOpen(Process, Flags, Path);
+    }
     else if ((Major == LX_WIN_DEVICE_MAJOR) && (Minor == LX_WIN_DEVICE_MINOR))
     {
         return LxWinOpen(Process, Flags, Path);
+    }
+    else if (Major == LX_DRM_MAJOR)
+    {
+        return LxDrmOpen(Process, Minor, Flags, Path);
     }
     else if (Major == LX_USB_DEVICE_MAJOR)
     {
@@ -1896,11 +1909,15 @@ LxDeviceOpenFile(
     }
     else if ((Major == 5) && (Minor == 0))
     {
-        Tty = Process->Tty;
+        Tty = LxProcessGetTty(Process);
     }
     else if (((Major == 5) && (Minor == 1)) || ((Major == 4) && (Minor <= 1)))
     {
-        Tty = Process->Instance->Console ? Process->Instance->Console : Process->Tty;
+        Tty = Process->Instance->Console;
+        if (Tty != NULL)
+            LxTtyReference(Tty);
+        else
+            Tty = LxProcessGetTty(Process);
     }
     else
     {
@@ -1912,6 +1929,7 @@ LxDeviceOpenFile(
         if (Tty == NULL)
             return NULL;
         File = LxTtyOpen(Tty, Flags);
+        LxTtyDereference(Tty);
         if (File != NULL)
         {
             File->Path = LxStrDup(Path);

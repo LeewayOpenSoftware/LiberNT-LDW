@@ -3,6 +3,7 @@
 #include <apitest.h>
 
 extern void func_ActCtxWithXmlNamespaces(void);
+extern void func_ActCtxDependencyVersions(void);
 extern void func_ApiSetCoreSynch(void);
 extern void func_BaseSetLastNTError(void);
 extern void func_BaseThreadInitThunk(void);
@@ -79,6 +80,7 @@ extern void func_LoadLibraryExW(void);
 extern void func_LockFileEx(void);
 extern void func_QuantumRoundRobin(void);
 extern void func_RegisterWaitPeriodic(void);
+extern void func_RemoteThreadInit(void);
 extern void func_SandboxLaunch(void);
 extern void func_SystemImageCatalog(void);
 extern void func_SystemTimeChangeTimers(void);
@@ -138,6 +140,7 @@ const struct test winetest_testlist[] =
 {
     { "SetFileAllocationInfo", func_SetFileAllocationInfo },
     { "ActCtxWithXmlNamespaces",     func_ActCtxWithXmlNamespaces },
+    { "ActCtxDependencyVersions",    func_ActCtxDependencyVersions },
     { "ApiSetCoreSynch",             func_ApiSetCoreSynch },
     { "BaseSetLastNTError",          func_BaseSetLastNTError },
     { "BaseThreadInitThunk",         func_BaseThreadInitThunk },
@@ -215,6 +218,7 @@ const struct test winetest_testlist[] =
     { "TebSegmentAfterWait",           func_TebSegmentAfterWait },
     { "QuantumRoundRobin",           func_QuantumRoundRobin },
     { "RegisterWaitPeriodic",        func_RegisterWaitPeriodic },
+    { "RemoteThreadInit",            func_RemoteThreadInit },
     { "SandboxLaunch",               func_SandboxLaunch },
     { "SharedMemorySecurity",        func_SharedMemorySecurity },
     { "SharedMemoryTransfer",        func_SharedMemoryTransfer },

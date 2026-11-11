@@ -34,6 +34,10 @@
 
 #define WM_LX_MESSAGE   (WM_APP + 1)
 #define WM_LX_GONE      (WM_APP + 2)
+#define WM_LX_RENDERER  (WM_APP + 3)
+
+#define LX_RENDERER_RESTARTS        5
+#define LX_RENDERER_RESTART_WINDOW  60000
 
 #define LX_HOST_CLASS   L"LiberNT.LinuxWindow"
 #define LX_HOST_MESSAGE L"LiberNT.LinuxWindowHost"
@@ -66,6 +70,9 @@ typedef struct _LX_HOST_WINDOW
     BOOL Tracking;
     BOOL Applying;
     BOOL Shown;
+    BOOL Fullscreen;
+    LONG SavedStyle;
+    WINDOWPLACEMENT SavedPlacement;
     HICON BigIcon;
     HICON SmallIcon;
     CHAR AppId[LX_APP_ID_MAX];
@@ -172,11 +179,47 @@ LxSendConfigure(
     Message.Header.Window = Window->Id;
     Message.Width = (ULONG)Client.right;
     Message.Height = (ULONG)Client.bottom;
-    if (Placement.showCmd == SW_SHOWMAXIMIZED)
+    if (Window->Fullscreen)
+        Message.States |= LX_WIN_CONFIGURE_FULLSCREEN;
+    if ((Window->Fullscreen ? Window->SavedPlacement.showCmd : Placement.showCmd) == SW_SHOWMAXIMIZED)
         Message.States |= LX_WIN_CONFIGURE_MAXIMIZED;
     if (GetForegroundWindow() == Window->Hwnd)
         Message.States |= LX_WIN_CONFIGURE_ACTIVATED;
     LxSend(&Message, sizeof(Message));
+}
+
+static
+VOID
+LxSetFullscreen(
+    _Inout_ PLX_HOST_WINDOW Window,
+    _In_ BOOL Fullscreen)
+{
+    MONITORINFO Monitor;
+
+    if (Window->Fullscreen == Fullscreen)
+        return;
+    if (Fullscreen)
+    {
+        Monitor.cbSize = sizeof(Monitor);
+        Window->SavedPlacement.length = sizeof(Window->SavedPlacement);
+        if (!GetWindowPlacement(Window->Hwnd, &Window->SavedPlacement) ||
+            !GetMonitorInfoW(MonitorFromWindow(Window->Hwnd, MONITOR_DEFAULTTONEAREST), &Monitor))
+        {
+            return;
+        }
+        Window->SavedStyle = GetWindowLongW(Window->Hwnd, GWL_STYLE);
+        Window->Fullscreen = TRUE;
+        SetWindowLongW(Window->Hwnd, GWL_STYLE, Window->SavedStyle & ~(WS_CAPTION | WS_THICKFRAME));
+        SetWindowPos(Window->Hwnd, HWND_TOP, Monitor.rcMonitor.left, Monitor.rcMonitor.top,
+                     Monitor.rcMonitor.right - Monitor.rcMonitor.left, Monitor.rcMonitor.bottom - Monitor.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        return;
+    }
+    Window->Fullscreen = FALSE;
+    SetWindowLongW(Window->Hwnd, GWL_STYLE, Window->SavedStyle);
+    SetWindowPlacement(Window->Hwnd, &Window->SavedPlacement);
+    SetWindowPos(Window->Hwnd, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 }
 
 static
@@ -536,6 +579,42 @@ LxSetIcon(
 
 static
 VOID
+LxSetIconFile(
+    _In_ PLX_HOST_WINDOW Window,
+    _In_ PLX_WIN_ICON_FILE_MSG Message,
+    _In_ ULONG Size)
+{
+    ULONG Length = Size - sizeof(*Message), IconSize = 22 + Length;
+    HICON BigIcon, SmallIcon;
+    PUCHAR Icon;
+
+    if ((Size <= sizeof(*Message)) || (Message->Width == 0) || (Message->Height == 0) || (Length > 4 * 1024 * 1024))
+        return;
+    Icon = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, IconSize);
+    if (Icon == NULL)
+        return;
+    Icon[2] = 1;
+    Icon[4] = 1;
+    Icon[6] = (Message->Width >= 256) ? 0 : (UCHAR)Message->Width;
+    Icon[7] = (Message->Height >= 256) ? 0 : (UCHAR)Message->Height;
+    Icon[10] = 1;
+    Icon[12] = 32;
+    CopyMemory(Icon + 14, &Length, sizeof(Length));
+    Icon[18] = 22;
+    CopyMemory(Icon + 22, Message + 1, Length);
+    BigIcon = LxCreateIconFromIco(Icon, IconSize, GetSystemMetrics(SM_CXICON));
+    SmallIcon = LxCreateIconFromIco(Icon, IconSize, GetSystemMetrics(SM_CXSMICON));
+    if ((BigIcon != NULL) || (SmallIcon != NULL))
+    {
+        LxApplyIcons(Window, BigIcon, SmallIcon);
+        if (Window->AppIdLength != 0)
+            LxIconCacheStore(Window->AppId, Window->AppIdLength, Icon, IconSize);
+    }
+    HeapFree(GetProcessHeap(), 0, Icon);
+}
+
+static
+VOID
 LxDestroyAll(VOID)
 {
     while (LxWindows != NULL)
@@ -609,7 +688,7 @@ LxCreateWindow(
         X = Origin.x;
         Y = Origin.y;
         Style = WS_POPUP;
-        ExStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST;
+        ExStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_LAYERED;
     }
     else if (Message->Flags & LX_WIN_FLAG_DECORATED)
     {
@@ -630,10 +709,19 @@ LxCreateWindow(
         Width = Rect.right - Rect.left;
         Height = Rect.bottom - Rect.top;
     }
-    if (!(Message->Flags & LX_WIN_FLAG_POPUP) && !(Message->Flags & LX_WIN_FLAG_DECORATED))
+    if (!(Message->Flags & LX_WIN_FLAG_POPUP))
     {
-        X = max(0, (GetSystemMetrics(SM_CXSCREEN) - Width) / 2);
-        Y = max(0, (GetSystemMetrics(SM_CYSCREEN) - Height) / 3);
+        RECT Work;
+
+        if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &Work, 0))
+            SetRect(&Work, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+        Width = min(Width, Work.right - Work.left);
+        Height = min(Height, Work.bottom - Work.top);
+        if (!(Message->Flags & LX_WIN_FLAG_DECORATED))
+        {
+            X = Work.left + (Work.right - Work.left - Width) / 2;
+            Y = Work.top + (Work.bottom - Work.top - Height) / 3;
+        }
     }
 
     Window->Next = LxWindows;
@@ -641,6 +729,18 @@ LxCreateWindow(
     Window->Applying = TRUE;
     Window->Hwnd = CreateWindowExW(ExStyle, LX_HOST_CLASS, L"", Style, X, Y, Width, Height, Owner, NULL,
                                    GetModuleHandleW(NULL), Window);
+    if ((Window->Hwnd != NULL) && !(Message->Flags & LX_WIN_FLAG_POPUP))
+    {
+        RECT Placed;
+        POINT Origin;
+
+        GetWindowRect(Window->Hwnd, &Placed);
+        Origin.x = Placed.left;
+        Origin.y = Placed.top;
+        LxClampToWorkArea(&Origin, Placed.right - Placed.left, Placed.bottom - Placed.top);
+        if ((Origin.x != Placed.left) || (Origin.y != Placed.top))
+            SetWindowPos(Window->Hwnd, NULL, Origin.x, Origin.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     Window->Applying = FALSE;
     if (Window->Hwnd == NULL)
     {
@@ -678,7 +778,7 @@ LxApplyGeometry(
         GetClientRect(Window->Hwnd, &Client);
         if ((Client.right == Width) && (Client.bottom == Height))
             return;
-        if (IsZoomed(Window->Hwnd))
+        if (IsZoomed(Window->Hwnd) || Window->Fullscreen)
             return;
         Flags |= SWP_NOMOVE;
     }
@@ -712,8 +812,19 @@ LxApplyPixels(
                    Source + (SIZE_T)Row * Width * 4, (SIZE_T)Columns * 4);
     }
     GdiFlush();
-    SetRect(&Dirty, X, Y, X + Columns, Y + Row);
-    InvalidateRect(Window->Hwnd, &Dirty, FALSE);
+    if (Window->Flags & LX_WIN_FLAG_POPUP)
+    {
+        BLENDFUNCTION Blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        POINT Origin = { 0, 0 };
+        SIZE Size = { Window->Width, Window->Height };
+
+        UpdateLayeredWindow(Window->Hwnd, NULL, NULL, &Size, Window->MemoryDc, &Origin, 0, &Blend, ULW_ALPHA);
+    }
+    else
+    {
+        SetRect(&Dirty, X, Y, X + Columns, Y + Row);
+        InvalidateRect(Window->Hwnd, &Dirty, FALSE);
+    }
     if (!Window->Shown)
     {
         CHAR Text[96];
@@ -803,6 +914,7 @@ LxSendHello(VOID)
 {
     LX_WIN_HELLO_MSG Hello;
     HDC Screen = GetDC(NULL);
+    RECT Work, Frame = { 0, 0, 0, 0 };
 
     ZeroMemory(&Hello, sizeof(Hello));
     Hello.Header.Type = LX_WIN_HELLO;
@@ -811,8 +923,92 @@ LxSendHello(VOID)
     Hello.ScreenHeight = (ULONG)GetSystemMetrics(SM_CYSCREEN);
     Hello.Dpi = (ULONG)GetDeviceCaps(Screen, LOGPIXELSX);
     Hello.RefreshMilliHz = 60000;
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &Work, 0))
+        SetRect(&Work, 0, 0, (LONG)Hello.ScreenWidth, (LONG)Hello.ScreenHeight);
+    Hello.WorkWidth = (ULONG)(Work.right - Work.left);
+    Hello.WorkHeight = (ULONG)(Work.bottom - Work.top);
+    AdjustWindowRectEx(&Frame, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_APPWINDOW);
+    Hello.FrameWidth = (ULONG)(Frame.right - Frame.left);
+    Hello.FrameHeight = (ULONG)(Frame.bottom - Frame.top);
     ReleaseDC(NULL, Screen);
     LxSend(&Hello, sizeof(Hello));
+}
+
+static WCHAR LxRendererRoot[MAX_PATH];
+static HANDLE LxRendererWait;
+static ULONG LxRendererRestarts;
+static ULONGLONG LxRendererWindowStart;
+
+static
+VOID
+CALLBACK
+LxRendererExited(
+    _In_ PVOID Context,
+    _In_ BOOLEAN TimedOut)
+{
+    UNREFERENCED_PARAMETER(TimedOut);
+    PostMessageW(LxMessageWindow, WM_LX_RENDERER, 0, (LPARAM)Context);
+}
+
+static
+VOID
+LxStartRenderer(
+    _In_ PCWSTR NormalizedRoot)
+{
+    WCHAR Program[MAX_PATH], Command[2 * MAX_PATH + 64];
+    STARTUPINFOW Startup;
+    PROCESS_INFORMATION Process;
+    PWSTR Slash;
+    size_t Length = wcslen(NormalizedRoot);
+
+    if (!GetModuleFileNameW(NULL, Program, ARRAYSIZE(Program)) || ((Slash = wcsrchr(Program, L'\\')) == NULL) ||
+        ((size_t)(Slash + 1 - Program) + ARRAYSIZE(L"lxgpu.exe") > ARRAYSIZE(Program)))
+    {
+        return;
+    }
+    wcscpy(Slash + 1, L"lxgpu.exe");
+    if ((GetFileAttributesW(Program) == INVALID_FILE_ATTRIBUTES) ||
+        (_snwprintf(Command, ARRAYSIZE(Command), L"\"%s\" -r \"%s%s\" -p %lu", Program, NormalizedRoot,
+                    ((Length > 0) && (NormalizedRoot[Length - 1] == L'\\')) ? L"." : L"",
+                    GetCurrentProcessId()) < 0))
+    {
+        return;
+    }
+    Command[ARRAYSIZE(Command) - 1] = UNICODE_NULL;
+    ZeroMemory(&Startup, sizeof(Startup));
+    Startup.cb = sizeof(Startup);
+    if (CreateProcessW(Program, Command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &Startup, &Process))
+    {
+        CloseHandle(Process.hThread);
+        if (!RegisterWaitForSingleObject(&LxRendererWait, Process.hProcess, LxRendererExited, Process.hProcess, INFINITE,
+                                         WT_EXECUTEONLYONCE))
+        {
+            CloseHandle(Process.hProcess);
+        }
+    }
+}
+
+static
+VOID
+LxRendererGone(
+    _In_ HANDLE Process)
+{
+    ULONGLONG Now = GetTickCount64();
+    DWORD ExitCode = 0;
+
+    UnregisterWait(LxRendererWait);
+    LxRendererWait = NULL;
+    GetExitCodeProcess(Process, &ExitCode);
+    CloseHandle(Process);
+    if (ExitCode == 0)
+        return;
+    if (Now - LxRendererWindowStart > LX_RENDERER_RESTART_WINDOW)
+    {
+        LxRendererWindowStart = Now;
+        LxRendererRestarts = 0;
+    }
+    if (LxRendererRestarts++ < LX_RENDERER_RESTARTS)
+        LxStartRenderer(LxRendererRoot);
 }
 
 static
@@ -918,6 +1114,7 @@ LxHandleMessage(
 
         case LX_WIN_COMPOSITOR_DETACHED:
             LxDestroyAll();
+            PostQuitMessage(0);
             return;
 
         case LX_WIN_READY:
@@ -967,6 +1164,11 @@ LxHandleMessage(
                 LxSetIcon(Window, (PLX_WIN_ICON_MSG)Header, Header->Size);
             break;
 
+        case LX_WIN_ICON_FILE:
+            if (Header->Size > sizeof(LX_WIN_ICON_FILE_MSG))
+                LxSetIconFile(Window, (PLX_WIN_ICON_FILE_MSG)Header, Header->Size);
+            break;
+
         case LX_WIN_SHOW:
             if (Size >= sizeof(LX_WIN_VALUE_MSG))
             {
@@ -1013,9 +1215,27 @@ LxHandleMessage(
             {
                 switch (((PLX_WIN_VALUE_MSG)Header)->Value)
                 {
-                    case LX_WIN_STATE_MAXIMIZED: ShowWindow(Window->Hwnd, SW_MAXIMIZE); break;
-                    case LX_WIN_STATE_MINIMIZED: ShowWindow(Window->Hwnd, SW_MINIMIZE); break;
-                    default: ShowWindow(Window->Hwnd, SW_RESTORE); break;
+                    case LX_WIN_STATE_FULLSCREEN:
+                        LxSetFullscreen(Window, TRUE);
+                        break;
+                    case LX_WIN_STATE_MAXIMIZED:
+                        if (Window->Fullscreen)
+                            Window->SavedPlacement.showCmd = SW_SHOWMAXIMIZED;
+                        else
+                            ShowWindow(Window->Hwnd, SW_MAXIMIZE);
+                        break;
+                    case LX_WIN_STATE_MINIMIZED:
+                        ShowWindow(Window->Hwnd, SW_MINIMIZE);
+                        break;
+                    case LX_WIN_STATE_WINDOWED:
+                        LxSetFullscreen(Window, FALSE);
+                        break;
+                    default:
+                        if (Window->Fullscreen)
+                            Window->SavedPlacement.showCmd = SW_SHOWNORMAL;
+                        else
+                            ShowWindow(Window->Hwnd, SW_RESTORE);
+                        break;
                 }
                 LxSendConfigure(Window);
             }
@@ -1344,6 +1564,11 @@ LxMessageProc(
         LxSendClipboard();
         return 0;
     }
+    if (Message == WM_LX_RENDERER)
+    {
+        LxRendererGone((HANDLE)LParam);
+        return 0;
+    }
     if (Message == WM_LX_GONE)
     {
         LxDestroyAll();
@@ -1505,7 +1730,10 @@ wWinMain(
     LxPendingCount = __argc - First;
 
     if (LxNormalizeRoot(Root, FullRoot, ARRAYSIZE(FullRoot)))
+    {
         LxRootTagValue = LxRootTag(FullRoot);
+        wcscpy(LxRendererRoot, FullRoot);
+    }
     LxIconCacheInitialize(Root);
 
     ZeroMemory(&Class, sizeof(Class));
@@ -1533,6 +1761,8 @@ wWinMain(
     if (LxMessageWindow == NULL)
         return 3;
     AddClipboardFormatListener(LxMessageWindow);
+    if (LxRendererRoot[0] != UNICODE_NULL)
+        LxStartRenderer(LxRendererRoot);
 
     Reader = CreateThread(NULL, 0, LxReaderThread, NULL, 0, NULL);
     if (Reader == NULL)

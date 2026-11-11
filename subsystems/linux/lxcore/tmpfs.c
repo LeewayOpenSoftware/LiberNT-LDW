@@ -68,6 +68,10 @@ struct _LX_TMPFS_INODE
     PLX_TMPFS_RESIZE Resize;
     ULONG64 Size;
     BOOLEAN Mapped;
+    ULONG64 SquashInode;
+    volatile LONG SquashPending;
+    PVOID Private;
+    PLX_TMPFS_PRIVATE_RELEASE PrivateRelease;
 };
 
 struct _LX_TMPFS
@@ -81,6 +85,8 @@ struct _LX_TMPFS
     ULONG64 Limit;
     volatile LONG Inodes;
     LONG InodeLimit;
+    PLX_SQUASHFS Squash;
+    volatile LONG SquashMounted;
 };
 
 static PLX_TMPFS LxTmpfsShm;
@@ -269,6 +275,8 @@ LxTmpfsInodeFree(
     LxTmpfsStoreDereference(Inode->Store);
     LxFree(Inode->LinkTarget);
     LxFree(Inode->Xattr);
+    if (Inode->PrivateRelease != NULL)
+        Inode->PrivateRelease(Inode->Private);
     InterlockedDecrement(&Inode->Fs->Inodes);
     LxFree(Inode);
 }
@@ -280,6 +288,7 @@ LxTmpfsDereference(
     if (InterlockedDecrement(&Fs->RefCount) != 0)
         return;
     LxTmpfsInodeFree(Fs->Root);
+    LxSquashfsClose(Fs->Squash);
     ExDeleteResourceLite(&Fs->Lock);
     LxFree(Fs);
 }
@@ -611,6 +620,194 @@ LxTmpfsInitialize(VOID)
 
 static
 PLX_TMPFS_DIRENT
+LxTmpfsDirentAllocate(
+    _In_reads_(Length) PCSTR Name,
+    _In_ ULONG Length);
+
+static
+BOOLEAN
+LxTmpfsSquashPending(
+    _In_ PLX_TMPFS_INODE Inode)
+{
+    return InterlockedCompareExchange(&Inode->SquashPending, 0, 0) != 0;
+}
+
+static
+VOID
+LxTmpfsSquashApply(
+    _Inout_ PLX_TMPFS_INODE Inode,
+    _In_ ULONG64 Reference,
+    _In_ PLX_SQUASHFS_INODE Info)
+{
+    ULONG Type = Info->Mode & LX_S_IFMT;
+
+    Inode->Mode = Info->Mode;
+    Inode->Uid = Info->Uid;
+    Inode->Gid = Info->Gid;
+    Inode->Ino = Info->Number;
+    Inode->Nlink = Info->Nlink;
+    Inode->Device = Info->Device;
+    Inode->Size = (Type == LX_S_IFREG) ? Info->Size : 0;
+    Inode->Mtime.Seconds = Info->Mtime;
+    Inode->Mtime.Nanoseconds = 0;
+    Inode->Atime = Inode->Ctime = Inode->Mtime;
+    Inode->SquashInode = Reference;
+    Inode->SquashPending = ((Type == LX_S_IFDIR) || ((Type == LX_S_IFREG) && (Info->Size != 0))) ? 1 : 0;
+}
+
+static
+LONG
+LxTmpfsSquashAdd(
+    _In_ PVOID Context,
+    _In_reads_(Length) PCSTR Name,
+    _In_ ULONG Length,
+    _In_ ULONG64 Reference)
+{
+    PLX_TMPFS_INODE Directory = Context, Inode;
+    LX_SQUASHFS_INODE Info;
+    PLX_TMPFS_DIRENT Entry;
+    PSTR Target = NULL;
+    PUCHAR Xattr = NULL;
+    ULONG XattrLength = 0;
+    LONG Error;
+
+    Error = LxSquashfsReadInode(Directory->Fs->Squash, Reference, &Info);
+    if ((Error == 0) && ((Info.Mode & LX_S_IFMT) == LX_S_IFLNK))
+        Error = LxSquashfsReadLink(Directory->Fs->Squash, &Info, &Target);
+    if (Error == 0)
+        Error = LxSquashfsReadXattrs(Directory->Fs->Squash, &Info, &Xattr, &XattrLength);
+    if (Error == 0)
+        Error = LxTmpfsInodeCreate(Directory->Fs, Info.Mode, Info.Uid, Info.Gid, Info.Device, Target, &Inode);
+    LxFree(Target);
+    if (Error != 0)
+    {
+        LxFree(Xattr);
+        return Error;
+    }
+    LxTmpfsSquashApply(Inode, Reference, &Info);
+    Inode->Xattr = Xattr;
+    Inode->XattrLength = XattrLength;
+    Entry = LxTmpfsDirentAllocate(Name, Length);
+    if (Entry == NULL)
+    {
+        LxTmpfsInodeDereference(Inode);
+        return -LX_ENOMEM;
+    }
+    Entry->Inode = Inode;
+    Entry->Cookie = Directory->NextCookie++;
+    InsertTailList(&Directory->Entries, &Entry->Link);
+    Directory->EntryCount++;
+    if (LxTmpfsIsDirectory(Inode))
+        Inode->Parent = Directory;
+    return 0;
+}
+
+static
+LONG
+LxTmpfsSquashFill(
+    _In_ PLX_TMPFS_INODE Directory)
+{
+    LONG Error = 0;
+
+    if (!LxTmpfsSquashPending(Directory) || !LxTmpfsIsDirectory(Directory))
+        return 0;
+    LxTmpfsDataLock(Directory);
+    if (LxTmpfsSquashPending(Directory))
+    {
+        Error = LxSquashfsListDirectory(Directory->Fs->Squash, Directory->SquashInode, LxTmpfsSquashAdd, Directory);
+        if (Error == 0)
+        {
+            InterlockedExchange(&Directory->SquashPending, 0);
+        }
+        else
+        {
+            while (!IsListEmpty(&Directory->Entries))
+            {
+                PLX_TMPFS_DIRENT Entry = CONTAINING_RECORD(RemoveHeadList(&Directory->Entries), LX_TMPFS_DIRENT,
+                                                           Link);
+
+                Entry->Inode->Parent = NULL;
+                LxTmpfsInodeDereference(Entry->Inode);
+                LxFree(Entry);
+            }
+            Directory->EntryCount = 0;
+            Directory->NextCookie = 2;
+        }
+    }
+    LxTmpfsDataUnlock(Directory);
+    return Error;
+}
+
+static
+LONG
+LxTmpfsSquashLoad(
+    _In_ PLX_TMPFS_INODE Inode)
+{
+    PLX_TMPFS_STORE Store = NULL;
+    LONG Error = 0;
+
+    if (!LxTmpfsSquashPending(Inode) || LxTmpfsIsDirectory(Inode))
+        return 0;
+    LxTmpfsDataLock(Inode);
+    if (LxTmpfsSquashPending(Inode))
+    {
+        Error = LxTmpfsStoreCreate(Inode->Fs, LX_ALIGN_UP(Inode->Size, LX_PAGE_SIZE), &Store);
+        if (Error == 0)
+            Error = LxSquashfsReadFile(Inode->Fs->Squash, Inode->SquashInode, Store->View, Store->Capacity);
+        if (Error == 0)
+        {
+            ExAcquireFastMutex(&Inode->StoreLock);
+            Inode->Store = Store;
+            ExReleaseFastMutex(&Inode->StoreLock);
+            InterlockedExchange(&Inode->SquashPending, 0);
+            Store = NULL;
+        }
+        LxTmpfsStoreDereference(Store);
+    }
+    LxTmpfsDataUnlock(Inode);
+    return Error;
+}
+
+LONG
+LxTmpfsCreateSquashfs(
+    _In_ PLX_SQUASHFS Squash,
+    _Out_ PLX_TMPFS *Result)
+{
+    LX_SQUASHFS_INODE Info;
+    ULONG64 Root = LxSquashfsRoot(Squash);
+    PLX_TMPFS Fs;
+    PUCHAR Xattr = NULL;
+    ULONG XattrLength = 0;
+    LONG Error;
+
+    *Result = NULL;
+    Error = LxSquashfsReadInode(Squash, Root, &Info);
+    if (Error != 0)
+        return Error;
+    if ((Info.Mode & LX_S_IFMT) != LX_S_IFDIR)
+        return -LX_EINVAL;
+    Error = LxSquashfsReadXattrs(Squash, &Info, &Xattr, &XattrLength);
+    if (Error != 0)
+        return Error;
+    Fs = LxTmpfsCreate(Info.Mode & 07777);
+    if (Fs == NULL)
+    {
+        LxFree(Xattr);
+        return -LX_ENOMEM;
+    }
+    Fs->Limit = MAXULONG64;
+    Fs->InodeLimit = MAXLONG;
+    LxTmpfsSquashApply(Fs->Root, Root, &Info);
+    Fs->Root->Xattr = Xattr;
+    Fs->Root->XattrLength = XattrLength;
+    Fs->Squash = Squash;
+    Fs->SquashMounted = 1;
+    *Result = Fs;
+    return 0;
+}
+
+static
+PLX_TMPFS_DIRENT
 LxTmpfsFind(
     _In_ PLX_TMPFS_INODE Directory,
     _In_reads_(Length) PCSTR Name,
@@ -643,6 +840,7 @@ LxTmpfsWalk(
         PCSTR Component;
         ULONG Length;
         PLX_TMPFS_DIRENT Entry;
+        LONG Error;
 
         while ((Path < End) && (*Path == '/'))
             Path++;
@@ -662,6 +860,9 @@ LxTmpfsWalk(
                 Inode = Inode->Parent;
             continue;
         }
+        Error = LxTmpfsSquashFill(Inode);
+        if (Error != 0)
+            return Error;
         Entry = LxTmpfsFind(Inode, Component, Length);
         if (Entry == NULL)
             return -LX_ENOENT;
@@ -844,6 +1045,8 @@ LxTmpfsPurge(
         LxTmpfsInodeDereference(LxTmpfsDetach(Directory, Entry, &Now));
     }
     LxTmpfsUnlock(Fs);
+    if ((Fs->Squash != NULL) && (InterlockedExchange(&Fs->SquashMounted, 0) != 0))
+        LxSquashfsRemoveUser(Fs->Squash);
 }
 
 VOID
@@ -1371,6 +1574,42 @@ LxTmpfsXattrRead(
 }
 
 LONG
+LxTmpfsSetPrivate(
+    _In_ PLX_TMPFS_INODE Inode,
+    _In_ PVOID Object,
+    _In_ PLX_TMPFS_PRIVATE_RELEASE Release)
+{
+    LONG Error = 0;
+
+    LxTmpfsLockExclusive(Inode->Fs);
+    if (Inode->PrivateRelease != NULL)
+    {
+        Error = -LX_EEXIST;
+    }
+    else
+    {
+        Inode->Private = Object;
+        Inode->PrivateRelease = Release;
+    }
+    LxTmpfsUnlock(Inode->Fs);
+    return Error;
+}
+
+PVOID
+LxTmpfsGetPrivate(
+    _In_ PLX_TMPFS_INODE Inode,
+    _In_ PLX_TMPFS_PRIVATE_RELEASE Release)
+{
+    PVOID Object = NULL;
+
+    LxTmpfsLockShared(Inode->Fs);
+    if (Inode->PrivateRelease == Release)
+        Object = Inode->Private;
+    LxTmpfsUnlock(Inode->Fs);
+    return Object;
+}
+
+LONG
 LxTmpfsXattrWrite(
     _In_ PLX_TMPFS_INODE Inode,
     _In_reads_bytes_(Length) PUCHAR Blob,
@@ -1659,10 +1898,13 @@ LxTmpfsMapSection(
     _Out_ PHANDLE Handle,
     _Out_opt_ PULONG64 Size)
 {
-    PLX_TMPFS_STORE Store = LxTmpfsMappedStore(Inode, Shared, Size);
+    PLX_TMPFS_STORE Store;
     NTSTATUS Status;
 
     *Handle = NULL;
+    if (LxTmpfsSquashLoad(Inode) != 0)
+        return STATUS_DATA_ERROR;
+    Store = LxTmpfsMappedStore(Inode, Shared, Size);
     if (Store == NULL)
         return STATUS_MAPPED_FILE_SIZE_ZERO;
     Status = ObOpenObjectByPointer(Store->Section, OBJ_KERNEL_HANDLE, NULL, SECTION_ALL_ACCESS, NULL, KernelMode,
@@ -1678,9 +1920,12 @@ LxTmpfsInodeRemoveRange(
     _In_ ULONG64 End)
 {
     ULONG64 Size;
-    PLX_TMPFS_STORE Store = LxTmpfsMappedStore(Inode, TRUE, &Size);
+    PLX_TMPFS_STORE Store;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    if (Inode->Fs->Squash != NULL)
+        return -LX_EROFS;
+    Store = LxTmpfsMappedStore(Inode, TRUE, &Size);
     if (Store == NULL)
         return 0;
     End = min(min(End, Size), Store->Capacity);
@@ -1698,9 +1943,13 @@ LxTmpfsReadKernel(
     _In_ ULONG64 Offset)
 {
     ULONG64 Size, Count, Stored;
-    PLX_TMPFS_STORE Store = LxTmpfsReadStore(Inode, &Size);
+    PLX_TMPFS_STORE Store;
     NTSTATUS Status = STATUS_SUCCESS;
+    LONG Error = LxTmpfsSquashLoad(Inode);
 
+    if (Error != 0)
+        return Error;
+    Store = LxTmpfsReadStore(Inode, &Size);
     if (Offset >= Size)
     {
         LxTmpfsStoreDereference(Store);
@@ -1731,6 +1980,9 @@ LxTmpfsRead(
 
     if (LxTmpfsIsDirectory(Inode))
         return -LX_EISDIR;
+    Result = LxTmpfsSquashLoad(Inode);
+    if (Result != 0)
+        return Result;
     if (Offset == NULL)
         KeWaitForSingleObject(&File->Lock, Executive, KernelMode, FALSE, NULL);
     Position = (Offset != NULL) ? *Offset : File->Position;
@@ -1756,7 +2008,7 @@ LxTmpfsRead(
     LxTmpfsStoreDereference(Store);
     if (Offset == NULL)
         KeSetEvent(&File->Lock, IO_NO_INCREMENT, FALSE);
-    if (Result > 0)
+    if ((Result > 0) && (Inode->Fs->Squash == NULL))
     {
         LX_TIMESPEC Now;
 
@@ -1957,6 +2209,9 @@ LxTmpfsGetdents(
 
     if (!LxTmpfsIsDirectory(Inode))
         return -LX_ENOTDIR;
+    Result = LxTmpfsSquashFill(Inode);
+    if (Result != 0)
+        return Result;
     Out = LxAllocPaged(OutSize);
     if (Out == NULL)
         return -LX_ENOMEM;
@@ -2023,6 +2278,8 @@ LxTmpfsRelease(
         return;
     Fs = Inode->Fs;
     File->Object = NULL;
+    if (Fs->Squash != NULL)
+        LxSquashfsRemoveUser(Fs->Squash);
     LxTmpfsInodeDereference(Inode);
     LxTmpfsDereference(Fs);
 }
@@ -2053,6 +2310,8 @@ LxTmpfsOpenFile(
         return -LX_ENOMEM;
     LxTmpfsReference(Inode->Fs);
     LxTmpfsInodeReference(Inode);
+    if (Inode->Fs->Squash != NULL)
+        LxSquashfsAddUser(Inode->Fs->Squash);
     File->Object = Inode;
     File->Ino = Inode->Ino;
     File->Directory = LxTmpfsIsDirectory(Inode);
@@ -2098,6 +2357,15 @@ LxTmpfsStatfs(
 {
     ULONG64 Used = (ULONG64)Fs->Used;
     LONG Inodes = Fs->Inodes;
+
+    if (Fs->Squash != NULL)
+    {
+        LxSquashfsStatfs(Fs->Squash, Blocks, Files);
+        *Blocks = LX_ALIGN_UP(*Blocks, LX_PAGE_SIZE) / LX_PAGE_SIZE;
+        *Free = 0;
+        *FreeFiles = 0;
+        return;
+    }
 
     *Blocks = Fs->Limit / LX_PAGE_SIZE;
     *Free = (Used < Fs->Limit) ? (Fs->Limit - Used) / LX_PAGE_SIZE : 0;
