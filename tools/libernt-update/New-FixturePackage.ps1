@@ -11,6 +11,8 @@
         @{ Target = 'Windows\System32\foo.dll'; Content = 'text' }      replace/create with that content
         @{ Target = 'Windows\System32\old.dll'; Delete = $true }        delete
         @{ Target = 'Windows\System32\drivers\d.sys'; Content = 'x'; DriverStart = 3 }   driver
+        @{ Target = 'Windows\System32
+toskrnl.exe'; Content = 'x'; Class = 'boot' }     boot-class (swap route)
 
     Switches for negative fixtures:
         -Unsigned          no catalog.cat at all (valid for a non-driver package: the catalog is optional)
@@ -66,6 +68,7 @@ foreach ($it in $Items) {
     $sha = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLower()
     $entry = [ordered]@{ path = $rel; target = $it.Target; sha256 = $sha }
     if ($it.ContainsKey('DriverStart')) { $entry.driverStart = [int]$it.DriverStart }
+    if ($it.ContainsKey('Class')) { $entry.class = [string]$it.Class }           # 'boot' = boot-class swap route
     $payloads += $entry
 }
 
