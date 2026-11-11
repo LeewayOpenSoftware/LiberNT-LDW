@@ -184,8 +184,10 @@ NtfsFileRecordSetBasicInformation(
 {
     if (!Fr || !Information)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         SetBasicInformation(Information);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 BOOLEAN
@@ -205,8 +207,10 @@ NtfsFileRecordSetCaseSensitiveDirectory(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         SetCaseSensitiveDirectory(CaseSensitive);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -237,8 +241,10 @@ NtfsFileRecordUpdateAutomaticTimestamps(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         UpdateAutomaticTimestamps(Fields);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 BOOLEAN
@@ -270,8 +276,10 @@ NtfsFileRecordSetReparsePoint(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         SetReparsePoint(Buffer, BufferLength);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -283,8 +291,10 @@ NtfsFileRecordDeleteReparsePoint(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         DeleteReparsePoint(Buffer, BufferLength);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -293,8 +303,10 @@ NtfsFileRecordDeleteExternalBacking(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         DeleteExternalBacking();
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -321,9 +333,11 @@ NtfsFileRecordUpdateExtendedAttributes(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         UpdateExtendedAttributes(Updates,
                                  UpdateCount);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -347,9 +361,11 @@ NtfsFileRecordSetSecurityDescriptor(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetSecurityDescriptor(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetSecurityDescriptor(
         Buffer,
         BufferLength);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -363,7 +379,9 @@ NtfsFileRecordWriteFileData(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->WriteFileData(AttrType, StreamName, Buffer, Length, Offset);
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->WriteFileData(AttrType, StreamName, Buffer, Length, Offset);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -373,7 +391,9 @@ NtfsFileRecordCreateNamedDataStream(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->CreateNamedDataStream(StreamName);
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->CreateNamedDataStream(StreamName);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -383,7 +403,9 @@ NtfsFileRecordDeleteNamedDataStream(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->DeleteNamedDataStream(StreamName);
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->DeleteNamedDataStream(StreamName);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -395,10 +417,12 @@ NtfsFileRecordSetFileDataSize(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetFileDataSize(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetFileDataSize(
         AttrType,
         StreamName,
         NewSize);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 ULONGLONG
@@ -425,7 +449,9 @@ NTSTATUS NtfsFileRecordSetFileValidDataLength(_In_ PNtfsFileRecord Fr, _In_ Attr
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetFileValidDataLength(AttrType, StreamName, NewValidDataLength);
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetFileValidDataLength(AttrType, StreamName, NewValidDataLength);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -437,11 +463,25 @@ NtfsFileRecordSetFileAllocationSize(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
         SetFileAllocationSize(
             AttrType,
             StreamName,
         NewAllocationSize);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
+}
+
+NTSTATUS
+NtfsFileRecordTrimSpeculativeAllocation(
+    _In_ PNtfsFileRecord Fr)
+{
+    if (!Fr)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
+        TrimSpeculativeAllocation();
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -453,10 +493,12 @@ NtfsFileRecordSetSparse(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetSparse(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetSparse(
         AttrType,
         StreamName,
         SetSparse);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -467,9 +509,11 @@ NtfsFileRecordSetCompression(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetCompression(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetCompression(
         StreamName,
         Compress);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -483,12 +527,14 @@ NtfsFileRecordMoveClusters(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->MoveClusters(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->MoveClusters(
         AttrType,
         StreamName,
         StartingVcn,
         StartingLcn,
         ClusterCount);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS
@@ -523,11 +569,13 @@ NtfsFileRecordSetZeroData(
 {
     if (!Fr)
         return STATUS_INVALID_PARAMETER;
-    return reinterpret_cast<PFileRecord>(Fr)->SetZeroData(
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->SetZeroData(
         AttrType,
         StreamName,
         FileOffset,
         BeyondFinalZero);
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
 }
 
 NTSTATUS

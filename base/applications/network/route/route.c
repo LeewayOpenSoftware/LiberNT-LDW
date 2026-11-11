@@ -936,7 +936,8 @@ AddRoute(
 static
 DWORD
 DeleteActiveRoutes(
-    PWSTR DestinationPattern)
+    PWSTR DestinationPattern,
+    PBOOL Deleted)
 {
     WCHAR Destination[IPBUF], Netmask[IPBUF];
     PMIB_IPFORWARDTABLE IpForwardTable = NULL;
@@ -967,6 +968,7 @@ DeleteActiveRoutes(
             Error = DeleteIpForwardEntry(&IpForwardTable->table[i]);
             if (Error != ERROR_SUCCESS)
                 break;
+            *Deleted = TRUE;
         }
     }
 
@@ -980,7 +982,8 @@ done:
 static
 DWORD
 DeletePersistentRoutes(
-    PWSTR DestinationPattern)
+    PWSTR DestinationPattern,
+    PBOOL Deleted)
 {
 
     WCHAR szBuffer[64];
@@ -1027,6 +1030,7 @@ DeletePersistentRoutes(
                 Error = RegDeleteValueW(hKey, szBuffer);
                 if (Error != ERROR_SUCCESS)
                     break;
+                *Deleted = TRUE;
             }
 
             dwIndex++;
@@ -1047,6 +1051,7 @@ DeleteRoutes(
 {
     PWSTR DestinationPattern = NULL;
     DWORD Error;
+    BOOL Deleted = FALSE;
 
     if (argc > start && wcschr(argv[start], L':'))
         return DeleteRoutes6(argc, argv, start);
@@ -1059,9 +1064,13 @@ DeleteRoutes(
     if (flags & DELETE_FLAG)
         DeleteCustomRoutes();
 
-    Error = DeleteActiveRoutes(DestinationPattern);
+    Error = DeleteActiveRoutes(DestinationPattern, &Deleted);
     if (Error == ERROR_SUCCESS)
-        Error = DeletePersistentRoutes(DestinationPattern);
+        Error = DeletePersistentRoutes(DestinationPattern, &Deleted);
+
+    /* Windows: "The route deletion failed: Element not found." */
+    if (Error == ERROR_SUCCESS && !Deleted)
+        Error = ERROR_NOT_FOUND;
 
     if (Error != ERROR_SUCCESS)
     {

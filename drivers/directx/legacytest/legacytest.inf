@@ -1,0 +1,54 @@
+; LiberNT synthetic WDDM 1.x test miniport (S0 vehicle)
+
+[Version]
+Signature="$Windows NT$"
+LayoutFile=layout.inf
+Class=Display
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Provider=%LiberNT%
+DriverVer=11/03/2026,1.0.0.0
+
+[DestinationDirs]
+DefaultDestDir=12
+
+[Manufacturer]
+%LtnMfg%=LtnMfg
+
+[LtnMfg]
+%LegacyTest.DeviceDesc%=LegacyTest_Install,PCI\VEN_1234&DEV_1111
+
+[LegacyTest_Install]
+CopyFiles=LegacyTest_CopyFiles
+AddReg=LegacyTest_SoftwareSettings
+
+[LegacyTest_CopyFiles]
+legacytest.sys
+
+[LegacyTest_SoftwareSettings]
+HKR,,VgaCompatible,%REG_DWORD%,0
+HKR,,"Device Description",%REG_SZ%,"%LegacyTest.DeviceDesc%"
+
+[LegacyTest_Install.Services]
+AddService=legacytest,0x00000002,LegacyTest_Service
+
+[LegacyTest_Service]
+DisplayName=%LegacyTest.ServiceDesc%
+ServiceType=1
+StartType=1
+ErrorControl=0
+ServiceBinary=%12%\legacytest.sys
+LoadOrderGroup=Video
+AddReg=LegacyTest_Params
+
+[LegacyTest_Params]
+HKR,Parameters,DdiVersion,%REG_DWORD%,0x00001052
+HKR,Parameters,PoisonTail,%REG_DWORD%,0
+HKR,Parameters,ChildCount,%REG_DWORD%,0
+
+[Strings]
+LiberNT="LiberNT"
+LtnMfg="(LiberNT test devices)"
+LegacyTest.DeviceDesc="LiberNT WDDM 1.x Synthetic Test Miniport"
+LegacyTest.ServiceDesc="LiberNT legacytest WDDM miniport"
+REG_DWORD=0x00010001
+REG_SZ=0x00000000

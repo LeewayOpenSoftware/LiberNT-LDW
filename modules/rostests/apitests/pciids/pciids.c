@@ -177,7 +177,7 @@ LoadIdList(DEVINST DevInst, ULONG Property, WCHAR Buffer[ID_BUFFER_CCH])
 
 static
 VOID
-CheckLadderOrder(PCWSTR Ids, PCWSTR Expected[MAX_IDS], ULONG ExpectedCount,
+CheckLadderOrder(PCWSTR Ids, PCWSTR Expected[], ULONG ExpectedCount,
                  PCWSTR What, PCWSTR DevInstId)
 {
     PCWSTR Cursor = Ids;

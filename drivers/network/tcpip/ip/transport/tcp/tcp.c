@@ -456,7 +456,7 @@ NTSTATUS TCPConnect
         }
 
         /* Allocate the port in the port bitmap */
-        AllocatedPort = TCPAllocatePort(LocalPort);
+        AllocatedPort = TCPAllocatePortForAddress(&Connection->AddressFile->Address, LocalPort);
         /* This should never fail unless all ports are in use */
         if (AllocatedPort == (UINT) -1)
         {

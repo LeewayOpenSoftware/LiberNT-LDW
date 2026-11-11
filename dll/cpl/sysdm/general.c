@@ -619,23 +619,10 @@ static VOID AppendDlgItemText(HWND hwnd, INT nIDDlgItem, PCWSTR pszText)
 static VOID GetSystemRelease(HWND hwnd)
 {
     static const WCHAR szKey[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
-    WCHAR szVersion[32], szBuild[16], szLab[256], szText[256];
+    WCHAR szLab[256], szText[256];
     PWSTR Hash, Revision, Compiler, Scan;
     PCSTR Arch, ArchEnd;
-    DWORD cbData, dwUbr;
-
-    cbData = sizeof(szVersion);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, szKey, L"DisplayVersion", RRF_RT_REG_SZ, NULL, szVersion, &cbData) != ERROR_SUCCESS)
-        szVersion[0] = UNICODE_NULL;
-    cbData = sizeof(szBuild);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, szKey, L"CurrentBuild", RRF_RT_REG_SZ, NULL, szBuild, &cbData) != ERROR_SUCCESS)
-        szBuild[0] = UNICODE_NULL;
-    cbData = sizeof(dwUbr);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, szKey, L"UBR", RRF_RT_REG_DWORD, NULL, &dwUbr, &cbData) == ERROR_SUCCESS)
-        StringCchPrintfW(szText, _countof(szText), L" %s %s.%lu", szVersion, szBuild, dwUbr);
-    else
-        StringCchPrintfW(szText, _countof(szText), L" %s %s", szVersion, szBuild);
-    AppendDlgItemText(hwnd, IDC_ROSTARGET, szText);
+    DWORD cbData;
 
     cbData = sizeof(szLab);
     if (RegGetValueW(HKEY_LOCAL_MACHINE, szKey, L"BuildLab", RRF_RT_REG_SZ, NULL, szLab, &cbData) != ERROR_SUCCESS)

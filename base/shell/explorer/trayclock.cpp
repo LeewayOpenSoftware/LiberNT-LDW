@@ -1010,7 +1010,7 @@ LRESULT CTrayClockWnd::OnLButtonUp(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL
     }
 
     m_tooltip.Pop();
-    if (IsWindowVisible() && IsThemeActive())
+    if (IsWindowVisible())
     {
         RECT rc;
         GetWindowRect(&rc);

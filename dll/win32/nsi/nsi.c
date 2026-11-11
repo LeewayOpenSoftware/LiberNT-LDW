@@ -32,10 +32,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(nsi);
 
-#ifndef __REACTOS__
 static HANDLE nsi_device = INVALID_HANDLE_VALUE;
 static HANDLE nsi_device_async = INVALID_HANDLE_VALUE;
-#endif
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
 {
@@ -50,16 +48,14 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
         case DLL_PROCESS_DETACH:
 #ifdef __REACTOS__
             if (!reserved) nsi_reactos_cleanup();
-#else
+#endif
             if (nsi_device != INVALID_HANDLE_VALUE) CloseHandle( nsi_device );
             if (nsi_device_async != INVALID_HANDLE_VALUE) CloseHandle( nsi_device_async );
-#endif
             break;
     }
     return TRUE;
 }
 
-#ifndef __REACTOS__
 static inline HANDLE get_nsi_device( BOOL async )
 {
     HANDLE *cached_device = async ? &nsi_device_async : &nsi_device;
@@ -75,7 +71,6 @@ static inline HANDLE get_nsi_device( BOOL async )
     }
     return *cached_device;
 }
-#endif
 
 DWORD WINAPI NsiAllocateAndGetTable( DWORD unk, const NPI_MODULEID *module, DWORD table, void **key_data, DWORD key_size,
                                      void **rw_data, DWORD rw_size, void **dynamic_data, DWORD dynamic_size,
@@ -132,10 +127,11 @@ err:
 
 DWORD WINAPI NsiCancelChangeNotification( OVERLAPPED *ovr )
 {
-#ifdef __REACTOS__
-    return nsi_reactos_cancel_change_notification( ovr );
-#else
     DWORD err = ERROR_SUCCESS;
+
+#ifdef __REACTOS__
+    if (nsi_reactos_cancel_change_notification( ovr ) == ERROR_SUCCESS) return ERROR_SUCCESS;
+#endif
 
     TRACE( "%p.\n", ovr );
 
@@ -144,7 +140,6 @@ DWORD WINAPI NsiCancelChangeNotification( OVERLAPPED *ovr )
         err = GetLastError();
 
     return err;
-#endif
 }
 
 DWORD WINAPI NsiEnumerateObjectsAllParameters( DWORD unk, DWORD unk2, const NPI_MODULEID *module, DWORD table,
@@ -181,14 +176,15 @@ DWORD WINAPI NsiEnumerateObjectsAllParameters( DWORD unk, DWORD unk2, const NPI_
 
 DWORD WINAPI NsiEnumerateObjectsAllParametersEx( struct nsi_enumerate_all_ex *params )
 {
-#ifdef __REACTOS__
-    return nsi_reactos_enumerate_all( params );
-#else
-    DWORD out_size, received, err = ERROR_SUCCESS;
-    HANDLE device = get_nsi_device( FALSE );
+    DWORD out_size, received, copied, err = ERROR_SUCCESS;
+    HANDLE device;
     struct nsiproxy_enumerate_all in;
     BYTE *out, *ptr;
 
+#ifdef __REACTOS__
+    if (!nsi_reactos_use_device( params->module, params->table )) return nsi_reactos_enumerate_all( params );
+#endif
+    device = get_nsi_device( FALSE );
     if (device == INVALID_HANDLE_VALUE) return GetLastError();
 
     out_size = sizeof(DWORD) +
@@ -212,20 +208,25 @@ DWORD WINAPI NsiEnumerateObjectsAllParametersEx( struct nsi_enumerate_all_ex *pa
     if (err == ERROR_SUCCESS || err == ERROR_MORE_DATA)
     {
         params->count = *(DWORD *)out;
+        copied = params->count < in.count ? params->count : in.count;
         ptr = out + sizeof(DWORD);
-        if (params->key_size) memcpy( params->key_data, ptr, params->key_size * params->count );
+        if (params->key_size) memcpy( params->key_data, ptr, params->key_size * copied );
         ptr += params->key_size * in.count;
-        if (params->rw_size) memcpy( params->rw_data, ptr, params->rw_size * params->count );
+        if (params->rw_size) memcpy( params->rw_data, ptr, params->rw_size * copied );
         ptr += params->rw_size * in.count;
-        if (params->dynamic_size) memcpy( params->dynamic_data, ptr, params->dynamic_size * params->count );
+        if (params->dynamic_size) memcpy( params->dynamic_data, ptr, params->dynamic_size * copied );
         ptr += params->dynamic_size * in.count;
-        if (params->static_size) memcpy( params->static_data, ptr, params->static_size * params->count );
+        if (params->static_size) memcpy( params->static_data, ptr, params->static_size * copied );
+#ifdef __REACTOS__
+        nsi_reactos_overlay_rows( params->module, params->table, params->key_size ? params->key_data : NULL,
+                                  params->rw_size ? params->rw_data : NULL,
+                                  params->static_size ? params->static_data : NULL, copied );
+#endif
     }
 
     free( out );
 
     return err;
-#endif
 }
 
 void WINAPI NsiFreeTable( void *key_data, void *rw_data, void *dynamic_data, void *static_data )
@@ -266,16 +267,17 @@ DWORD WINAPI NsiGetAllParameters( DWORD unk, const NPI_MODULEID *module, DWORD t
 
 DWORD WINAPI NsiGetAllParametersEx( struct nsi_get_all_parameters_ex *params )
 {
-#ifdef __REACTOS__
-    return nsi_reactos_get_all( params );
-#else
-    HANDLE device = get_nsi_device( FALSE );
+    HANDLE device;
     struct nsiproxy_get_all_parameters *in;
     ULONG in_size = FIELD_OFFSET( struct nsiproxy_get_all_parameters, key[params->key_size] ), received;
     ULONG out_size = params->rw_size + params->dynamic_size + params->static_size;
     DWORD err = ERROR_SUCCESS;
     BYTE *out, *ptr;
 
+#ifdef __REACTOS__
+    if (!nsi_reactos_use_device( params->module, params->table )) return nsi_reactos_get_all( params );
+#endif
+    device = get_nsi_device( FALSE );
     if (device == INVALID_HANDLE_VALUE) return GetLastError();
 
     in = malloc( in_size );
@@ -305,13 +307,16 @@ DWORD WINAPI NsiGetAllParametersEx( struct nsi_get_all_parameters_ex *params )
         if (params->dynamic_size) memcpy( params->dynamic_data, ptr, params->dynamic_size );
         ptr += params->dynamic_size;
         if (params->static_size) memcpy( params->static_data, ptr, params->static_size );
+#ifdef __REACTOS__
+        nsi_reactos_overlay_rows( params->module, params->table, params->key, params->rw_size ? params->rw_data : NULL,
+                                  params->static_size ? params->static_data : NULL, 1 );
+#endif
     }
 
 err:
     free( out );
     free( in );
     return err;
-#endif
 }
 
 DWORD WINAPI NsiGetParameter( DWORD unk, const NPI_MODULEID *module, DWORD table, const void *key, DWORD key_size,
@@ -339,14 +344,16 @@ DWORD WINAPI NsiGetParameter( DWORD unk, const NPI_MODULEID *module, DWORD table
 
 DWORD WINAPI NsiGetParameterEx( struct nsi_get_parameter_ex *params )
 {
-#ifdef __REACTOS__
-    return nsi_reactos_get_parameter( params );
-#else
-    HANDLE device = get_nsi_device( FALSE );
+    HANDLE device;
     struct nsiproxy_get_parameter *in;
     ULONG in_size = FIELD_OFFSET( struct nsiproxy_get_parameter, key[params->key_size] ), received;
     DWORD err = ERROR_SUCCESS;
 
+#ifdef __REACTOS__
+    if (!nsi_reactos_use_device( params->module, params->table )) return nsi_reactos_get_parameter( params );
+    if (nsi_reactos_parameter_needs_overlay( params )) return nsi_reactos_device_get_parameter( params );
+#endif
+    device = get_nsi_device( FALSE );
     if (device == INVALID_HANDLE_VALUE) return GetLastError();
 
     in = malloc( in_size );
@@ -364,7 +371,6 @@ DWORD WINAPI NsiGetParameterEx( struct nsi_get_parameter_ex *params )
 
     free( in );
     return err;
-#endif
 }
 
 DWORD WINAPI NsiRequestChangeNotification( DWORD unk, const NPI_MODULEID *module, DWORD table, OVERLAPPED *ovr,
@@ -384,10 +390,7 @@ DWORD WINAPI NsiRequestChangeNotification( DWORD unk, const NPI_MODULEID *module
 
 DWORD WINAPI NsiRequestChangeNotificationEx( struct nsi_request_change_notification_ex *params )
 {
-#ifdef __REACTOS__
-    return nsi_reactos_request_change_notification( params );
-#else
-    HANDLE device = get_nsi_device( TRUE );
+    HANDLE device;
     struct nsiproxy_request_notification *in;
     ULONG in_size = sizeof(struct nsiproxy_get_parameter), received;
     OVERLAPPED overlapped, *ovr;
@@ -398,6 +401,10 @@ DWORD WINAPI NsiRequestChangeNotificationEx( struct nsi_request_change_notificat
 
     if (params->unk) FIXME( "unknown parameter %#lx.\n", params->unk );
 
+#ifdef __REACTOS__
+    if (!nsi_reactos_use_device( params->module, params->table )) return nsi_reactos_request_change_notification( params );
+#endif
+    device = get_nsi_device( TRUE );
     if (device == INVALID_HANDLE_VALUE) return GetLastError();
 
     in = malloc( in_size );
@@ -423,5 +430,4 @@ DWORD WINAPI NsiRequestChangeNotificationEx( struct nsi_request_change_notificat
 
     free( in );
     return err;
-#endif
 }

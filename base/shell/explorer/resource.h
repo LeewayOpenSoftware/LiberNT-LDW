@@ -233,7 +233,9 @@
 #define IDC_TASKBARPROP_LOCK                 1117
 #define IDC_TASKBARPROP_SHOWQL               1118
 #define IDC_TASKBARPROP_SMALLICONS           1119
-#define IDC_TASKBARPROP_LAST_CMD             1119
+#define IDC_TASKBARPROP_MMENABLE             1121
+#define IDC_TASKBARPROP_MMBUTTONS            1122
+#define IDC_TASKBARPROP_LAST_CMD             1122
 #define IDC_TASKBARPROP_TASKBARBITMAP        1120
 
 /* Startmenu Page */

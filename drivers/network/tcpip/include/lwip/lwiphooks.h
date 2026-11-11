@@ -29,4 +29,6 @@ u16_t LibIP4PathMtu(const ip4_addr_t *Destination, struct netif *Netif);
 void LibIP6PathOutput(struct netif *Netif, const ip6_addr_t *Source, const ip6_addr_t *Destination, u8_t NextHeader,
                       struct pbuf *p);
 void TiSignalChange(void);
+void LibIP6AddressStateChanged(void);
+void LibIP6NeighborChanged(void);
 err_t LibTCPWfpInPacket(struct tcp_pcb *pcb, struct tcp_hdr *hdr);

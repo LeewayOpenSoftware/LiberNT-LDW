@@ -445,24 +445,51 @@ NtfsCacheWriteBackOne(_In_ PDEVICE_OBJECT Owner,
     return Status;
 }
 
-/* Where the next budgeted pass starts. A pass resumes after the last slot
- * the previous one examined, so every slot comes round within
- * NTFS_CACHE_SLOTS / budget passes instead of the low sets being revisited
- * every second while a dirty block in a high set waits for the churn to end. */
+/*
+ * The lazy writer writes the OLDEST dirty blocks first. A block held back
+ * in the cache then waits for its age, bounded by the budget, instead of
+ * for the slot hand to come round to its set: with a budget of
+ * NTFS_CACHE_DIRTY_SLICE per pass and a churn that dirties more than that
+ * per second, a slot-order pass could leave a block dirtied early waiting a
+ * full circle of the slot array behind blocks dirtied after it (Lab04 round
+ * 2, cut 1: the rewritten left halves of seven successive index splits were
+ * all still unwritten 2.5 s later, while their right halves and parent,
+ * committed synchronously by the split, were on the disk). DirtySeq is the
+ * global write sequence stamped when a block went from clean to dirty, so
+ * ascending DirtySeq is ascending age.
+ *
+ * One pass over the slots under the cache mutex keeps the Budget smallest
+ * DirtySeq values in an insertion-sorted array (Budget is at most
+ * NTFS_CACHE_SLOTS / NTFS_CACHE_LAZY_DIVISOR in practice, so the pass is
+ * short). The owners are referenced under the mutex, as the slot-order pass
+ * did, and NtfsCacheWriteBackOne re-probes each block, so a block evicted or
+ * cleaned in between is simply skipped. A block whose FlushAfterSeq names an
+ * even older dependency still has that dependency written first by
+ * NtfsCacheWriteBackOne; the order here only decides which block is asked
+ * for first. If the pick array cannot be allocated, the slot-order pass
+ * below runs instead, so the lazy writer never stalls.
+ */
+typedef struct _NTFS_CACHE_DIRTY_PICK
+{
+    ULONGLONG Seq;
+    PDEVICE_OBJECT Owner;
+    ULONGLONG Block;
+} NTFS_CACHE_DIRTY_PICK;
+
+/* Where the next slot-order pass starts (fallback only). A pass resumes after
+ * the last slot the previous one examined, so every slot comes round within
+ * NTFS_CACHE_SLOTS / budget passes. */
 static ULONG NtfsCacheFlushHand = 0;
 C_ASSERT((NTFS_CACHE_SLOTS & (NTFS_CACHE_SLOTS - 1)) == 0);
 
 static
 NTSTATUS
-NtfsCacheFlushSome(_In_ ULONG Budget)
+NtfsCacheFlushSomeSlotOrder(_In_ ULONG Budget)
 {
     NTSTATUS Status = STATUS_SUCCESS;
     ULONG Start;
     ULONG Visited;
     ULONG Written = 0;
-
-    if (!NtfsCacheReady)
-        return STATUS_SUCCESS;
 
     Start = NtfsCacheFlushHand & (NTFS_CACHE_SLOTS - 1);
     for (Visited = 0; Visited < NTFS_CACHE_SLOTS && Written < Budget; Visited++)
@@ -494,6 +521,65 @@ NtfsCacheFlushSome(_In_ ULONG Budget)
     /* Resume after the last slot examined; a full circle lands on Start. */
     InterlockedExchange((volatile LONG*)&NtfsCacheFlushHand,
                         (LONG)((Start + Visited) & (NTFS_CACHE_SLOTS - 1)));
+    return Status;
+}
+
+static
+NTSTATUS
+NtfsCacheFlushSome(_In_ ULONG Budget)
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+    NTFS_CACHE_DIRTY_PICK* Picked;
+    ULONG PickedCount = 0;
+    ULONG Index;
+
+    if (!NtfsCacheReady || Budget == 0)
+        return STATUS_SUCCESS;
+    if (Budget > NTFS_CACHE_SLOTS)
+        Budget = NTFS_CACHE_SLOTS;
+
+    Picked = (NTFS_CACHE_DIRTY_PICK*)ExAllocatePoolUninitialized(
+        NonPagedPoolNx, Budget * sizeof(*Picked), 'CftN');
+    if (!Picked)
+        return NtfsCacheFlushSomeSlotOrder(Budget);
+
+    ExAcquireFastMutex(&NtfsCacheMutex);
+    for (Index = 0; Index < NTFS_CACHE_SLOTS; Index++)
+    {
+        NTFS_CACHE_SLOT* Slot = &NtfsCacheSlots[Index];
+        ULONG Pos;
+
+        if (!Slot->Dirty || !Slot->Owner || Slot->Tag == NTFS_CACHE_EMPTY)
+            continue;
+        /* Full, and this block is younger than every pick: skip it. */
+        if (PickedCount == Budget && Slot->DirtySeq >= Picked[Budget - 1].Seq)
+            continue;
+        /* Insert in ascending DirtySeq; when full, the youngest pick drops. */
+        Pos = (PickedCount == Budget) ? Budget - 1 : PickedCount;
+        while (Pos > 0 && Picked[Pos - 1].Seq > Slot->DirtySeq)
+        {
+            Picked[Pos] = Picked[Pos - 1];
+            Pos--;
+        }
+        Picked[Pos].Seq = Slot->DirtySeq;
+        Picked[Pos].Owner = Slot->Owner;
+        Picked[Pos].Block = Slot->Tag;
+        if (PickedCount < Budget)
+            PickedCount++;
+    }
+    for (Index = 0; Index < PickedCount; Index++)
+        ObReferenceObject(Picked[Index].Owner);
+    ExReleaseFastMutex(&NtfsCacheMutex);
+
+    for (Index = 0; Index < PickedCount; Index++)
+    {
+        NTSTATUS One = NtfsCacheWriteBackOne(Picked[Index].Owner, Picked[Index].Block);
+
+        if (!NT_SUCCESS(One))
+            Status = One;
+        ObDereferenceObject(Picked[Index].Owner);
+    }
+    ExFreePoolWithTag(Picked, 'CftN');
     return Status;
 }
 
@@ -683,6 +769,7 @@ NtfsCacheInstall(_In_ PDEVICE_OBJECT Owner,
 {
     NTFS_CACHE_SLOT* Slot;
     NTSTATUS Status;
+    BOOLEAN SameBlock;
 
     if (!NtfsCacheReady)
         return STATUS_SUCCESS;
@@ -721,6 +808,7 @@ NtfsCacheInstall(_In_ PDEVICE_OBJECT Owner,
         ExReleaseFastMutex(&NtfsCacheMutex);
         return STATUS_SUCCESS;
     }
+    SameBlock = (Slot->Tag == Block && Slot->Owner == Owner);
     if (!Slot->Data)
     {
         Slot->Data = (PUCHAR)ExAllocatePoolUninitialized(NonPagedPoolNx,
@@ -740,7 +828,17 @@ NtfsCacheInstall(_In_ PDEVICE_OBJECT Owner,
     Slot->Owner = Owner;
     Slot->Generation++;
     Slot->DirtySeq = 0;
-    Slot->FlushAfterSeq = 0;
+    /*
+     * A write-ordering constraint (BarrierAfter) may sit on a clean block
+     * ahead of the write that will dirty it. Re-filling that same block
+     * from the disk, which a concurrent read miss can do, must keep the
+     * constraint: resetting it would let the pointer write that follows
+     * reach the device unordered. Only a slot that changes identity starts
+     * without one; NtfsCacheVictim never hands out a clean constrained
+     * slot for another block.
+     */
+    if (!SameBlock)
+        Slot->FlushAfterSeq = 0;
     Slot->Dirty = FALSE;
     ExReleaseFastMutex(&NtfsCacheMutex);
     return STATUS_SUCCESS;
@@ -1213,6 +1311,23 @@ NtfsWriteBarrierEnabledContext(_In_opt_ void* Context)
 {
     UNREFERENCED_PARAMETER(Context);
     return NtfsWriteBarrierEnabledKm();
+}
+
+/*
+ * Read the registry settings of this environment once, from DriverEntry.
+ * The barrier selector is consulted while a record is allocated or an index
+ * is edited, with the volume's MetadataResource held exclusively. Reading
+ * the registry there takes the registry lock, while the configuration
+ * manager holds that lock exclusively during NtInitializeRegistry and waits
+ * for its hive-loading threads, which open the hive files on this volume
+ * and need the MetadataResource. The first allocation of the boot must not
+ * be the one that reads the value.
+ */
+extern "C"
+VOID
+NtfsDiskReadSettingsKm(VOID)
+{
+    (void)NtfsWriteBarrierEnabledKm();
 }
 
 /*

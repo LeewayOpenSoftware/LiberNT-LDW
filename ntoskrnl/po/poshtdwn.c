@@ -297,9 +297,21 @@ PopGracefulShutdown(IN PVOID Context)
     /* Note that modified pages should be written here (MiShutdownSystem) */
     MmShutdownSystem(0);
 
+    /* From here on the lazy writer runs only the passes the shutdown asks for:
+       none may start on its own while the file systems shut down. */
+    CcStopLazyWriterTimer();
+
     /* Flush all user files before we start shutting down IO */
     /* This is where modified pages are written back by the IO manager */
     CcShutdownSystem();
+
+    /*
+     * Let the lazy writer finish its pass (dirty pages, deferred writes and
+     * the closes of expired maps) before the file systems shut down. After
+     * their shutdown they have marked their volumes clean, and anything
+     * written later is a metadata update on a volume that says it is clean.
+     */
+    CcWaitForCurrentLazyWriterActivity();
 
     /* In this step, the I/O manager does last-chance shutdown notification */
     DPRINT1("I/O manager shutting down in phase 1\n");

@@ -275,9 +275,11 @@ EngpUpdateGraphicsDeviceList(VOID)
             ERR("failed to query the registry path:0x%lx\n", Status);
             continue;
         }
+        ERR("K2TRACE: W32K DEVICEMAP %S -> %S\n", awcDeviceName, awcBuffer);
 
         /* Initialize the driver for this device */
         pGraphicsDevice = InitDisplayDriver(awcDeviceName, awcBuffer);
+        ERR("K2TRACE: W32K InitDisplayDriver(%S) -> %p\n", awcDeviceName, pGraphicsDevice);
         if (!pGraphicsDevice) continue;
     }
 
@@ -755,10 +757,12 @@ EngpRegisterGraphicsDevice(
                                       &pDeviceObject);
     if (!NT_SUCCESS(Status))
     {
+        ERR("K2TRACE: W32K open FAILED %wZ status 0x%lx\n", pustrDeviceName, Status);
         ERR("Could not open device %wZ, 0x%lx\n", pustrDeviceName, Status);
         ExFreePoolWithTag(pGraphicsDevice, GDITAG_GDEVICE);
         return NULL;
     }
+    ERR("K2TRACE: W32K open ok %wZ devobj %p\n", pustrDeviceName, pDeviceObject);
 
     /* Copy the device and file object pointers */
     pGraphicsDevice->DeviceObject = pDeviceObject;
@@ -783,6 +787,8 @@ EngpRegisterGraphicsDevice(
         ERR("EngDeviceIoControl(0x%p, IOCTL_VIDEO_INIT_WIN32K_CALLBACKS) failed, Status 0x%lx\n",
             pDeviceObject, Status);
     }
+    ERR("K2TRACE: W32K INIT_WIN32K_CALLBACKS status 0x%lx pdo %p\n",
+        Status, Win32kCallbacks.pPhysDeviceObject);
     // TODO: Set flags according to the results.
     // if (Win32kCallbacks.bACPI)
     // if (Win32kCallbacks.DualviewFlags & ???)

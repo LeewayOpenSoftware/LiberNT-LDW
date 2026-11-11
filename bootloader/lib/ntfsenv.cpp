@@ -146,6 +146,33 @@ NtfsWriteVolumeContext(_In_opt_ void* Context,
         ? STATUS_SUCCESS : STATUS_UNEXPECTED_IO_ERROR;
 }
 
+/*
+ * DkWrite holds nothing back: it drops the range from its read cache and
+ * writes the blocks through the firmware at once. So a write-through is an
+ * ordinary write here, and a range flush has nothing left to commit (as in
+ * the user-mode environment).
+ */
+NTSTATUS
+NtfsWriteVolumeThroughContext(_In_opt_ void* Context,
+                              _In_ ULONG BytesPerSector,
+                              _In_ ULONGLONG Offset,
+                              _In_ ULONG Length,
+                              _Inout_ PUCHAR Buffer)
+{
+    return NtfsWriteVolumeContext(Context, BytesPerSector, Offset, Length, Buffer);
+}
+
+NTSTATUS
+NtfsFlushVolumeRangeContext(_In_opt_ void* Context,
+                            _In_ ULONGLONG Offset,
+                            _In_ ULONG Length)
+{
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Offset);
+    UNREFERENCED_PARAMETER(Length);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS
 NtfsCommitRangeContext(_In_opt_ void* Context,
                        _In_ ULONGLONG Offset,

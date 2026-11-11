@@ -128,6 +128,48 @@ ResolverReadRegistryString(PCWSTR Value, PWSTR Buffer, DWORD Count)
     RegCloseKey(Key);
 }
 
+/*
+ * A global list of DNS servers in Tcpip\Parameters\NameServer (IPv4 addresses separated by
+ * commas or blanks) replaces the servers of the adapters, as on Windows. Returns TRUE when it
+ * defined at least one server. The offline tests of the hosts file use it to point the
+ * resolver at a responder on 127.0.0.1.
+ */
+static
+BOOL
+ResolverLoadStaticServers(PRESOLVER_CONFIG Config)
+{
+    WCHAR List[256];
+    PWSTR Context = NULL, Token;
+    PRESOLVER_ADAPTER Entry = &Config->Adapters[0];
+
+    ResolverReadRegistryString(L"NameServer", List, ARRAYSIZE(List));
+    for (Token = wcstok_s(List, L", ", &Context); Token && Config->ServerCount < DNS_MAX_SERVERS;
+         Token = wcstok_s(NULL, L", ", &Context))
+    {
+        PRESOLVER_SERVER Slot = &Config->Servers[Config->ServerCount];
+        PCWSTR Terminator;
+        IN_ADDR Address;
+
+        Terminator = NULL;
+        if (!NT_SUCCESS(RtlIpv4StringToAddressW(Token, TRUE, &Terminator, &Address)) || !Terminator || *Terminator)
+            continue;
+        RtlZeroMemory(Slot, sizeof(*Slot));
+        Slot->Address.Ipv4.sin_family = AF_INET;
+        Slot->Address.Ipv4.sin_addr = Address;
+        Slot->Address.Ipv4.sin_port = htons(DNS_PORT);
+        Slot->Adapter = 0;
+        Config->ServerCount++;
+    }
+    if (!Config->ServerCount)
+        return FALSE;
+
+    RtlZeroMemory(Entry, sizeof(*Entry));
+    Entry->FirstServer = 0;
+    Entry->ServerCount = Config->ServerCount;
+    Config->AdapterCount = 1;
+    return TRUE;
+}
+
 static
 DNS_STATUS
 ResolverLoadConfig(PRESOLVER_CONFIG Config, PCWSTR Name)
@@ -142,97 +184,100 @@ ResolverLoadConfig(PRESOLVER_CONFIG Config, PCWSTR Name)
 
     RtlZeroMemory(Config, sizeof(*Config));
 
-    for (;;)
+    if (!ResolverLoadStaticServers(Config))
     {
-        List = RtlAllocateHeap(RtlGetProcessHeap(), 0, Size);
-        if (!List)
-            return ERROR_OUTOFMEMORY;
-        Error = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_FRIENDLY_NAME,
-                                     NULL, List, &Size);
-        if (Error != ERROR_BUFFER_OVERFLOW)
-            break;
-        RtlFreeHeap(RtlGetProcessHeap(), 0, List);
-    }
-    if (Error != ERROR_SUCCESS)
-    {
-        RtlFreeHeap(RtlGetProcessHeap(), 0, List);
-        return Error == ERROR_NO_DATA ? DNS_ERROR_NO_DNS_SERVERS : Error;
-    }
-
-    for (Adapter = List; Adapter && Config->AdapterCount < DNS_MAX_ADAPTERS; Adapter = Adapter->Next)
-    {
-        PIP_ADAPTER_DNS_SERVER_ADDRESS Server;
-        PIP_ADAPTER_DNS_SUFFIX Suffix;
-        PRESOLVER_ADAPTER Entry;
-
-        if (Adapter->OperStatus != IfOperStatusUp || Adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
-            !Adapter->FirstDnsServerAddress)
-            continue;
-
-        Entry = &Config->Adapters[Config->AdapterCount];
-        Entry->Metric = Adapter->Ipv4Metric;
-        if (Adapter->Ipv6Metric && (!Entry->Metric || Adapter->Ipv6Metric < Entry->Metric))
-            Entry->Metric = Adapter->Ipv6Metric;
-        if (Adapter->DnsSuffix)
-            StringCchCopyW(Entry->Suffix, ARRAYSIZE(Entry->Suffix), Adapter->DnsSuffix);
-        for (Suffix = Adapter->FirstDnsSuffix; Suffix; Suffix = Suffix->Next)
+        for (;;)
         {
-            if (Entry->SearchList[0])
-                StringCchCatW(Entry->SearchList, ARRAYSIZE(Entry->SearchList), L",");
-            StringCchCatW(Entry->SearchList, ARRAYSIZE(Entry->SearchList), Suffix->String);
+            List = RtlAllocateHeap(RtlGetProcessHeap(), 0, Size);
+            if (!List)
+                return ERROR_OUTOFMEMORY;
+            Error = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_FRIENDLY_NAME,
+                                         NULL, List, &Size);
+            if (Error != ERROR_BUFFER_OVERFLOW)
+                break;
+            RtlFreeHeap(RtlGetProcessHeap(), 0, List);
+        }
+        if (Error != ERROR_SUCCESS)
+        {
+            RtlFreeHeap(RtlGetProcessHeap(), 0, List);
+            return Error == ERROR_NO_DATA ? DNS_ERROR_NO_DNS_SERVERS : Error;
         }
 
-        Entry->FirstServer = Config->ServerCount;
-        for (Server = Adapter->FirstDnsServerAddress; Server && Config->ServerCount < DNS_MAX_SERVERS; Server = Server->Next)
+        for (Adapter = List; Adapter && Config->AdapterCount < DNS_MAX_ADAPTERS; Adapter = Adapter->Next)
         {
-            PRESOLVER_SERVER Slot = &Config->Servers[Config->ServerCount];
-            INT Length = Server->Address.iSockaddrLength;
+            PIP_ADAPTER_DNS_SERVER_ADDRESS Server;
+            PIP_ADAPTER_DNS_SUFFIX Suffix;
+            PRESOLVER_ADAPTER Entry;
 
-            if (!Server->Address.lpSockaddr || Length > (INT)sizeof(Slot->Address))
+            if (Adapter->OperStatus != IfOperStatusUp || Adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
+                !Adapter->FirstDnsServerAddress)
                 continue;
-            if (Server->Address.lpSockaddr->sa_family != AF_INET && Server->Address.lpSockaddr->sa_family != AF_INET6)
-                continue;
-            RtlZeroMemory(Slot, sizeof(*Slot));
-            RtlCopyMemory(&Slot->Address, Server->Address.lpSockaddr, Length);
-            if (Slot->Address.si_family == AF_INET6)
+
+            Entry = &Config->Adapters[Config->AdapterCount];
+            Entry->Metric = Adapter->Ipv4Metric;
+            if (Adapter->Ipv6Metric && (!Entry->Metric || Adapter->Ipv6Metric < Entry->Metric))
+                Entry->Metric = Adapter->Ipv6Metric;
+            if (Adapter->DnsSuffix)
+                StringCchCopyW(Entry->Suffix, ARRAYSIZE(Entry->Suffix), Adapter->DnsSuffix);
+            for (Suffix = Adapter->FirstDnsSuffix; Suffix; Suffix = Suffix->Next)
             {
-                Slot->Address.Ipv6.sin6_port = htons(DNS_PORT);
-                if (IN6_IS_ADDR_LINKLOCAL(&Slot->Address.Ipv6.sin6_addr) && !Slot->Address.Ipv6.sin6_scope_id)
-                    Slot->Address.Ipv6.sin6_scope_id = Adapter->Ipv6IfIndex;
+                if (Entry->SearchList[0])
+                    StringCchCatW(Entry->SearchList, ARRAYSIZE(Entry->SearchList), L",");
+                StringCchCatW(Entry->SearchList, ARRAYSIZE(Entry->SearchList), Suffix->String);
             }
-            else
+
+            Entry->FirstServer = Config->ServerCount;
+            for (Server = Adapter->FirstDnsServerAddress; Server && Config->ServerCount < DNS_MAX_SERVERS; Server = Server->Next)
             {
-                Slot->Address.Ipv4.sin_port = htons(DNS_PORT);
-            }
-            Slot->Adapter = Config->AdapterCount;
-            Config->ServerCount++;
-            Entry->ServerCount++;
-        }
-        if (Entry->ServerCount)
-            Config->AdapterCount++;
-    }
-    RtlFreeHeap(RtlGetProcessHeap(), 0, List);
+                PRESOLVER_SERVER Slot = &Config->Servers[Config->ServerCount];
+                INT Length = Server->Address.iSockaddrLength;
 
-    if (!Config->AdapterCount)
-        return DNS_ERROR_NO_DNS_SERVERS;
-
-    qsort(Config->Adapters, Config->AdapterCount, sizeof(Config->Adapters[0]), ResolverCompareAdapters);
-    {
-        RESOLVER_SERVER Saved[DNS_MAX_SERVERS];
-        ULONG j;
-
-        RtlCopyMemory(Saved, Config->Servers, sizeof(Saved));
-        Config->ServerCount = 0;
-        for (i = 0; i < Config->AdapterCount; i++)
-        {
-            ULONG First = Config->Adapters[i].FirstServer;
-
-            Config->Adapters[i].FirstServer = Config->ServerCount;
-            for (j = 0; j < Config->Adapters[i].ServerCount; j++)
-            {
-                Config->Servers[Config->ServerCount] = Saved[First + j];
-                Config->Servers[Config->ServerCount].Adapter = i;
+                if (!Server->Address.lpSockaddr || Length > (INT)sizeof(Slot->Address))
+                    continue;
+                if (Server->Address.lpSockaddr->sa_family != AF_INET && Server->Address.lpSockaddr->sa_family != AF_INET6)
+                    continue;
+                RtlZeroMemory(Slot, sizeof(*Slot));
+                RtlCopyMemory(&Slot->Address, Server->Address.lpSockaddr, Length);
+                if (Slot->Address.si_family == AF_INET6)
+                {
+                    Slot->Address.Ipv6.sin6_port = htons(DNS_PORT);
+                    if (IN6_IS_ADDR_LINKLOCAL(&Slot->Address.Ipv6.sin6_addr) && !Slot->Address.Ipv6.sin6_scope_id)
+                        Slot->Address.Ipv6.sin6_scope_id = Adapter->Ipv6IfIndex;
+                }
+                else
+                {
+                    Slot->Address.Ipv4.sin_port = htons(DNS_PORT);
+                }
+                Slot->Adapter = Config->AdapterCount;
                 Config->ServerCount++;
+                Entry->ServerCount++;
+            }
+            if (Entry->ServerCount)
+                Config->AdapterCount++;
+        }
+        RtlFreeHeap(RtlGetProcessHeap(), 0, List);
+
+        if (!Config->AdapterCount)
+            return DNS_ERROR_NO_DNS_SERVERS;
+
+        qsort(Config->Adapters, Config->AdapterCount, sizeof(Config->Adapters[0]), ResolverCompareAdapters);
+        {
+            RESOLVER_SERVER Saved[DNS_MAX_SERVERS];
+            ULONG j;
+
+            RtlCopyMemory(Saved, Config->Servers, sizeof(Saved));
+            Config->ServerCount = 0;
+            for (i = 0; i < Config->AdapterCount; i++)
+            {
+                ULONG First = Config->Adapters[i].FirstServer;
+
+                Config->Adapters[i].FirstServer = Config->ServerCount;
+                for (j = 0; j < Config->Adapters[i].ServerCount; j++)
+                {
+                    Config->Servers[Config->ServerCount] = Saved[First + j];
+                    Config->Servers[Config->ServerCount].Adapter = i;
+                    Config->ServerCount++;
+                }
             }
         }
     }

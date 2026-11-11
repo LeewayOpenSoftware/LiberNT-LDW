@@ -782,8 +782,10 @@ LibTCPSendCallback(void *arg)
 {
     struct lwip_callback_msg *msg = arg;
     PTCP_PCB pcb = msg->Input.Send.Connection->SocketContext;
-    ULONG SendLength;
-    UCHAR SendFlags;
+    ULONG SendLength, Space, Written;
+    UCHAR SendFlags, ChunkFlags;
+    u16_t Chunk;
+    err_t Error;
     BOOLEAN Urgent, NoDelay = TRUE;
 
     ASSERT(msg);
@@ -804,16 +806,17 @@ LibTCPSendCallback(void *arg)
     SendLength = msg->Input.Send.DataLength;
     if (msg->Input.Send.Flags & TDI_SEND_EXPEDITED)
         SendFlags |= TCP_WRITE_FLAG_URG;
-    if (tcp_sndbuf(pcb) == 0)
+    Space = pcb->snd_buf;
+    if (Space == 0)
     {
         /* No buffer space so return pending */
         msg->Output.Send.Error = ERR_INPROGRESS;
         goto done;
     }
-    else if (tcp_sndbuf(pcb) < SendLength)
+    else if (Space < SendLength)
     {
         /* We've got some room so let's send what we can */
-        SendLength = tcp_sndbuf(pcb);
+        SendLength = Space;
 
         /* Don't set the push flag */
         SendFlags |= TCP_WRITE_FLAG_MORE;
@@ -840,20 +843,37 @@ LibTCPSendCallback(void *arg)
         tcp_output(pcb);
     }
 
-    msg->Output.Send.Error = tcp_write(pcb,
-                                       msg->Input.Send.Data,
-                                       SendLength,
-                                       SendFlags);
-    if (msg->Output.Send.Error == ERR_OK)
+    Written = 0;
+    Error = ERR_OK;
+    while (Written < SendLength)
+    {
+        Chunk = (u16_t)min(SendLength - Written, 0xFFFF);
+        ChunkFlags = SendFlags;
+        if (Written + Chunk < SendLength)
+            ChunkFlags |= TCP_WRITE_FLAG_MORE;
+        Error = tcp_write(pcb,
+                          (PUCHAR)msg->Input.Send.Data + Written,
+                          Chunk,
+                          ChunkFlags);
+        if (Error != ERR_OK)
+            break;
+        Written += Chunk;
+    }
+    if (Written != 0)
     {
         /* Queued successfully so try to send it */
         tcp_output((PTCP_PCB)msg->Input.Send.Connection->SocketContext);
-        msg->Output.Send.Information = SendLength;
+        msg->Output.Send.Error = ERR_OK;
+        msg->Output.Send.Information = Written;
     }
-    else if (msg->Output.Send.Error == ERR_MEM)
+    else if (Error == ERR_MEM)
     {
         /* The queue is too long */
         msg->Output.Send.Error = ERR_INPROGRESS;
+    }
+    else
+    {
+        msg->Output.Send.Error = Error;
     }
 
     if (Urgent && !NoDelay)

@@ -23,15 +23,26 @@ The exact git SHA of every build is recorded in its build manifest, not in the l
 - **Builds within the same integration increment the second number:** `1058.1`, `1058.2`, …
 - **A cut goes through these states:** CUT REQUESTED, then CUT IN PROGRESS, then CUT VALIDATION, then PUBLISHED. The previous baseline then becomes SUPERSEDED.
   - A published cut's source snapshot is immutable (a commit or tag).
-  - Compilation attempts made while preparing a cut are provisional candidates under a separately approved scheme. They never take official numbers retroactively.
+  - Builds compiled while preparing a cut use the TARGET integration's normal build sequence (for cut 1059: `1059.1`, `1059.2`, …), failed attempts included. They keep their identities even if the cut is delayed or rejected. Publication approval is a separate decision. There is no provisional numbering scheme (owner clarification, 2026-11-08).
+- **No limit on builds per integration.** An integration may run to `1059.598` or beyond, through merges, features, fixes, upstream syncs and rebuilds. The build counter tracks compilation activity; the integration counter tracks owner-ordered consolidation milestones.
 - **Separate concepts:** build success, validation success, a cut and its publication are different things. Publication is not a production-stability declaration.
 
-## Current state
+## Cut boundaries
 
-| Integration | State | Date | Notes |
-|---|---|---|---|
-| **1059** | CUT REQUESTED | 2026-11-08 | Ordered by the owner on the current development state: 1058 → 1059 (+1, no jump authorized). Scope pending the owner's confirmation. Not published. |
-| **1058** | ACTIVE BASELINE | 2026-11-06 | Reached by 16 integration advances of +1 from the starting baseline 1042. Development since then (the direct commits below, today's work) belongs to 1058. |
+Every cut records four git boundaries:
+
+1. the exact commit of the previous published cut;
+2. the commits accumulated since that cut;
+3. the commit boundary captured when the owner orders the next cut;
+4. the final validated commit that is published as the new integration.
+
+When the owner says "Cut integration N", god consolidates every relevant commit accumulated since boundary 1, resolves the integration issues, validates the result and publishes it only after the owner's approval.
+
+| Cut | 1. Previous published cut | 2. Accumulated since | 3. Boundary at the order (2026-11-08) | 4. Validated and published |
+|---|---|---|---|---|
+| 1059 | 1058: `4fadd7fbf47` | `4fadd7fbf47..3146b7f39d5` on `leeway/main` (3 `[CMAKE]` fixes and 5 `[DOC]` commits), plus `test/integration-2026-11-08-zf` (merged re-authored as `824a9c4f7b6`) and the device write-cache flush port `d543e79c6b0` | `leeway/main` `177d092b22c` | **`82643adf6a4`** (`cut/1059-candidate`, build 1059.6), tag `integration-1059`, published 2026-11-10 on the owner's approval |
+
+SHAs before the 2026-11-09 authorship rewrite, for traceability: `73fb270537b` → `177d092b22c`, `6e541e6d75f` → `be158d4fec5` (`-zf` tip), `2f1be760b5d` → `d543e79c6b0`, `1605a09126e` → `8d8d7be8c52` (same tree).
 
 **Reconciliation note.** The 16 advances are the 16 landings on `leeway/main` listed below, read from its first-parent history and the hive integration records:
 - integration branches 1029–1032;
@@ -48,8 +59,10 @@ Dates are the commit dates of the landing tip (UTC-3). "—" rows are direct com
 
 | Integration | Former label in the earlier version of this file | Date | Landing (commit) | Summary |
 |---|---|---|---|---|
-| — | — | 2026-11-08 | `8c9e8b2a981`, `58c7caf229b`, `a29687ab92e` | `[CMAKE]` LLVMpipe payload download: retry on HTTP 504 with backoff, hash verified inside the retry loop, backoff index fix. Current `leeway/main` tip; rides with the next integration. |
-| **1058** | Build 16 | 2026-11-06 | upstream sync 1104–1106, tip `4fadd7fbf47` | About 493 LiberNT `main-nt10` commits brought forward in one landing: clean-prefix merge `5214e29251f` (28), 210 cherry-picks of run 1105 with the NUMA adaptation `5a371715618` (`leeway/upstream-sync-1105`), 248 cherry-picks of run 1106 (`leeway/upstream-sync-1106`, tip `6133fa62a7a`), the ancestry-reconciliation merge `2498bdfe839` (465) and four keep-ours resolutions (loader-lock cluster revert, NUMA bodies, debugging startup entries, API-set schema mapping). |
+| — | — | 2026-11-09 | `3de3d658206` … `049621fa4ce` (44 first-parent landings after the candidate merge) | After the 1059 order boundary, so outside the 1059 scope unless the owner widens it; rides with the next integration. Branch cleanup batches 1–3 (CI-green branches, 11:22–12:28); NET-S2/S4 notification and endpoint fixes `668434d8dff`; r149 round three via `leeway/integration-2026-11-09e` `91971777d06`; netstat/ipconfig fixes `ece5f9afeca`; durable `bootex.log` for autochk `b38b94934bf`; this file `049621fa4ce`. |
+| **1059** | — | 2026-11-09 | merge `adab569c06b` of `cut/1059-candidate` `82643adf6a4` | **PUBLISHED 2026-11-10 (owner approval) — ACTIVE BASELINE.** Published snapshot `82643adf6a4`, tag `integration-1059`. Ordered by the owner on 2026-11-08: 1058 → 1059 (+1, no jump authorized), scope "consolidate all of them". Part of 1059: the `[DOC]` build_number.md commits of 2026-11-08 (`75b6798b958`, `c2222b5116f`, `5ebeeec0941`, `177d092b22c`, `3146b7f39d5`: the LBI integration-cut policy and this file), then the candidate chain on `177d092b22c`: `-zf` merge `824a9c4f7b6`, write-cache flush port `d543e79c6b0`, build fixes `8d8d7be8c52` and `70d9de08022`, write-barrier deadlock fix `0dc4db9af4a`, hiberfil ordering `82643adf6a4`. Builds, in order of attempt: `1059.1` CI 42532982863 `d1f1df03406` FAILED; `1059.2` CI 42533468443 `6e541e6d75f` FAILED; `1059.3` CI 42537294225 `1605a09126e`; `1059.4` CI 42538701061 `8d8d7be8c52` FAILED (winload link); `1059.5` CI 42544665247 `70d9de08022` SUCCESS; `1059.6` CI 42571856875 `82643adf6a4` SUCCESS (img 13654948190), validated at the labs (Lab03 net smoke PASS, Lab01, Lab04). Note: the candidate was merged into `leeway/main` before publication. Known issues at publication: the netio WSK functional gaps, the W3 wedge (not in scope), the KNOWN networking rows, and the 2-40 checker gap (pre-existing, no data loss). |
+| — | — | 2026-11-08 09:08–09:10 | `8c9e8b2a981`, `58c7caf229b`, `a29687ab92e` | Intermediate step on 1058, carried into 1059: `[CMAKE]` LLVMpipe payload download: retry on HTTP 504 with backoff, hash verified inside the retry loop, backoff index fix. |
+| **1058** | Build 16 | 2026-11-06 | upstream sync 1104–1106, tip `4fadd7fbf47` | **SUPERSEDED by 1059 (2026-11-10).** About 493 LiberNT `main-nt10` commits brought forward in one landing: clean-prefix merge `5214e29251f` (28), 210 cherry-picks of run 1105 with the NUMA adaptation `5a371715618` (`leeway/upstream-sync-1105`), 248 cherry-picks of run 1106 (`leeway/upstream-sync-1106`, tip `6133fa62a7a`), the ancestry-reconciliation merge `2498bdfe839` (465) and four keep-ours resolutions (loader-lock cluster revert, NUMA bodies, debugging startup entries, API-set schema mapping). |
 | — | — | 2026-11-04 | `89c1f67e6f5`, `36a28891bae` | `[CI]` cancel superseded runs, clang amd64 only outside `leeway/main`; drop the i386 jobs. `leeway/main` stood at `36a28891bae` from 2026-11-04 to 2026-11-06 (the CI images the labs used). |
 | **1057** | Build 15 | 2026-11-03 | upstream sync `25739f4d792` | 145 LiberNT `main-nt10` commits (mirror `0a41bd81`), one conflict in kernelbase.spec. |
 | **1056** | Build 14 | 2026-11-03 | batch 7, tip `e25b5a9b91d` | 17 cherry-picks fast-forwarded from `65bfb3bdbab`: `fix-applier-anchor-write-nov1` (9 servicing commits), `telnetd-auth` (2), `feature/ntdll-ldr-gaps`, `fix/smss-pfro-backup-intent`, `fix/sos-show-drivers` (2), `leeway/fix-mouhid-absolute-flag2`, `leeway/fix-ndis-diag-flood`. |

@@ -62,6 +62,14 @@ enum FileRecordNumbers
  * NTFS metadata files and are hidden from directory enumeration.
  */
 #define NTFS_LAST_RESERVED_FILE_RECORD 15
+/*
+ * NTFS also keeps records 16 to 23 for itself: Windows marks them in use at
+ * format time and never allocates a file there. This is the first record a
+ * file may take, used by the format and by the record allocator. The readers
+ * keep hiding only records up to NTFS_LAST_RESERVED_FILE_RECORD, so a file
+ * that an earlier format left in 16 to 23 stays visible and unchanged.
+ */
+#define NTFS_FIRST_USER_FILE_RECORD 24
 
 /* File record flags */
 #define FR_IN_USE        0x01
@@ -612,6 +620,16 @@ NtfsFileRecordSetFileAllocationSize(
     _In_ ULONGLONG NewAllocationSize);
 
 /*
+ * Give back the clusters an append at end of file reserved beyond the
+ * unnamed data stream's end (growth is done in 1 MB steps), as NTFS does when
+ * the last handle is closed. An allocation size set explicitly is kept.
+ * Call it when the caller is done writing through this record.
+ */
+NTSTATUS
+NtfsFileRecordTrimSpeculativeAllocation(
+    _In_ NtfsFileRecord *FileRecord);
+
+/*
  * Implements the stream semantics of FSCTL_SET_SPARSE. Marking a stream
  * sparse does not discard allocation. Clearing sparse fully allocates every
  * hole before removing the sparse state.
@@ -1089,7 +1107,64 @@ typedef enum NtfsCheckEvent
     NtfsCheckAttributeListFixed,
     NtfsCheckDataAttributeInserted,
     NtfsCheckIndexNameMissing,
-    NtfsCheckLostNameRemoved
+    NtfsCheckLostNameRemoved,
+    /* Index repairs and the freeing of unused clusters were skipped (in-use
+     * clusters are still claimed). Argument1: structural
+     * problems left; Argument2: the first file record still holding one, or
+     * ~0 if none can be named. Not counted as a problem. */
+    NtfsCheckRepairsBlocked,
+    /* A name of an orphan could not be added back to its parent index.
+     * Argument1: the file record; Argument2: the NTSTATUS in the high 32 bits
+     * and the parent's file record in the low 32 bits. Diagnostic only; the
+     * orphan stays counted by NtfsCheckNameNotIndexed. */
+    NtfsCheckNameRelinkFailed,
+    /* A name the index walk did not count is found by a lookup in its parent
+     * directory, so it was not added again. Argument1: the file record;
+     * Argument2: the parent's file record. Diagnostic only. */
+    NtfsCheckNameFoundUncounted,
+    /* The attribute list of a file cannot be read or parsed. Argument1: the
+     * file record; Argument2: the NTSTATUS. */
+    NtfsCheckAttributeListUnreadable,
+    /* An attribute list that is unreadable, or names only the base record,
+     * was removed: every attribute of the file lives in its base record.
+     * Argument1: the file record. */
+    NtfsCheckAttributeListRemoved,
+    /* An index block is marked in use but no node of the index points to it.
+     * Argument1: the directory's file record; Argument2: the block's VCN. */
+    NtfsCheckIndexBlockUnreferenced,
+    /* An index whose tree could not be walked was emptied, so its names can
+     * be added back from the files' own names. Argument1: the directory's
+     * file record; Argument2: the index blocks that were in use. */
+    NtfsCheckIndexReset,
+    /* A second index entry for a name that is already counted. Argument1:
+     * the directory's file record; Argument2: the file reference. */
+    NtfsCheckIndexDuplicateEntry,
+    /* A node held entries above its range, which its right sibling holds
+     * after a split cut short; they were cut from the node. Argument1: the
+     * directory's file record; Argument2: the node's VCN. */
+    NtfsCheckIndexTailTrimmed,
+    NtfsCheckAttributeListUnneeded,
+    NtfsCheckRecordBeyondMft,
+    NtfsCheckRecordBeyondMftInUse,
+    NtfsCheckAttributeSizeInvalid,
+    NtfsCheckAttributeMappingMismatch,
+    NtfsCheckIndexEntryNotRemoved,
+    NtfsCheckMftBitmapNotWritten,       /* Arg1 = NTSTATUS, Arg2 = bitmap length in bytes */
+    NtfsCheckRecordKept,                /* Arg1 = file record, Arg2 = faults; not deleted */
+    /* An unreadable attribute list was written again from the attributes of
+     * the base record and of its extension records. Argument1: the file
+     * record; Argument2: the extension records found. */
+    NtfsCheckAttributeListRebuilt,
+    /* After the check and its repairs, the shape verifier found a broken
+     * invariant (src/verify), counted in Errors. Argument1: the
+     * NtfsShapeInvariant in bits 48-63, the file record in bits 0-47;
+     * Argument2: the fault's Detail. */
+    NtfsCheckShapeFault,
+    /* The shape verifier did not walk Argument1 indexes because each has more
+     * than Argument2 bytes of allocation (NTFS_CHECK_SHAPE_INDEX_BYTES). */
+    NtfsCheckShapeIndexesSkipped,
+    /* The shape verifier could not run; Argument1: NTSTATUS. Not an error. */
+    NtfsCheckShapeNotRun
 } NtfsCheckEvent;
 
 typedef struct NtfsCheckResult
@@ -1110,6 +1185,19 @@ typedef struct NtfsCheckResult
     UINT64 RepairedAttributeLists;
     UINT64 RemovedNames;
     UINT64 Errors;
+    /* Problems the first pass found, before any repair (Errors is what is
+     * left after the repairs and the verify pass). */
+    UINT64 FoundErrors;
+    /* MFT bitmap bits corrected for records found in use or free. */
+    UINT64 FixedRecordBitmapBits;
+    /* Indexes emptied because their tree could not be walked. */
+    UINT64 ResetIndexes;
+    /* Index blocks in use that no node referenced, released. */
+    UINT64 ReleasedIndexBlocks;
+    /* Files the shape verifier went through after the check (it stops at the
+     * first broken invariant), and indexes it skipped as too large. */
+    UINT64 ShapeFiles;
+    UINT64 ShapeSkippedIndexes;
 } NtfsCheckResult, *PNtfsCheckResult;
 
 typedef void (*PNtfsCheckCallback)(
@@ -1125,6 +1213,92 @@ NtfsVolumeCheck(
     _In_opt_ PNtfsCheckCallback Callback,
     _In_opt_ void* Context,
     _Out_ PNtfsCheckResult Result);
+
+/*
+ * Shape invariants of one file, read back from the disk (src/verify). The
+ * checked build runs them after each mutation; autochk and the host tests
+ * can run them on any file. Record is the file record the fault names,
+ * Detail depends on the invariant.
+ */
+typedef enum NtfsShapeInvariant
+{
+    NtfsShapeOk = 0,
+    NtfsShapeRecordUnreadable,          /* Detail: NTSTATUS */
+    NtfsShapeRecordMalformed,           /* Detail: attribute offset */
+    NtfsShapeNotBaseRecord,             /* Detail: its base reference */
+    NtfsShapeListUnreadable,            /* Detail: NTSTATUS */
+    NtfsShapeListEntryBad,              /* Detail: offset in the list */
+    NtfsShapeListEntryMissing,          /* Record: the record named; Detail: attribute type */
+    NtfsShapeAttributeNotListed,        /* Detail: attribute type */
+    NtfsShapeExtensionWithoutList,      /* Record: the extension; Detail: its base */
+    NtfsShapeExtensionNotListed,        /* Record: the extension; Detail: its base */
+    NtfsShapeMappingGap,                /* Detail: attribute type */
+    NtfsShapeIndexRootBad,              /* Detail: depends */
+    NtfsShapeIndexBlockBeyondAllocation,/* Detail: VCN */
+    NtfsShapeIndexBlockInvalid,         /* Detail: VCN */
+    NtfsShapeIndexBlockFree,            /* Detail: VCN (referenced, bitmap bit clear) */
+    NtfsShapeIndexBlockShared,          /* Detail: VCN (referenced twice) */
+    NtfsShapeIndexBlockUnreachable      /* Detail: VCN (in use, not referenced) */
+} NtfsShapeInvariant;
+
+typedef struct NtfsShapeFault
+{
+    NtfsShapeInvariant Invariant;
+    ULONGLONG Record;
+    ULONGLONG Detail;
+} NtfsShapeFault, *PNtfsShapeFault;
+
+/* Scan the whole MFT for extension records of the file (slow). */
+#define NTFS_VERIFY_SCAN_EXTENSIONS 0x1
+/* Internal: the bounded checked-build hook. */
+#define NTFS_VERIFY_HOOK            0x2
+
+/* STATUS_FILE_CORRUPT_ERROR with Fault filled when an invariant is broken. */
+NTSTATUS
+NtfsVerifyRecordShape(
+    _In_ PNtfsVolume DiskVolume,
+    _In_ ULONGLONG FileRecord,
+    _In_ ULONG Flags,
+    _Out_ PNtfsShapeFault Fault);
+
+NTSTATUS
+NtfsVerifyIndexShape(
+    _In_ PNtfsVolume DiskVolume,
+    _In_ ULONGLONG FileRecord,
+    _In_ PCWSTR IndexName,
+    _In_ ULONG Flags,
+    _Out_ PNtfsShapeFault Fault);
+
+/* Every file and every index of the volume, in one MFT pass; stops at the
+ * first broken invariant. */
+NTSTATUS
+NtfsVerifyVolumeShape(
+    _In_ PNtfsVolume DiskVolume,
+    _In_ ULONG Flags,
+    _Out_ PULONGLONG FilesChecked,
+    _Out_ PNtfsShapeFault Fault);
+
+typedef struct NtfsShapeVolumeStats
+{
+    ULONGLONG FilesChecked;
+    ULONGLONG IndexesChecked;
+    /* Indexes not walked: more than IndexByteLimit bytes of allocation. */
+    ULONGLONG IndexesSkipped;
+} NtfsShapeVolumeStats, *PNtfsShapeVolumeStats;
+
+/* NtfsVerifyVolumeShape with a bound: an index with more than IndexByteLimit
+ * bytes of allocation is counted in IndexesSkipped and not walked (0: walk
+ * every index). The check (NtfsVolumeCheck) runs it with
+ * NTFS_CHECK_SHAPE_INDEX_BYTES. */
+#define NTFS_CHECK_SHAPE_INDEX_BYTES (64ULL * 1024 * 1024)
+
+NTSTATUS
+NtfsVerifyVolumeShapeBounded(
+    _In_ PNtfsVolume DiskVolume,
+    _In_ ULONG Flags,
+    _In_ ULONGLONG IndexByteLimit,
+    _Out_ PNtfsShapeVolumeStats Stats,
+    _Out_ PNtfsShapeFault Fault);
 
 NTSTATUS
 NtfsVolumeQueryFlags(

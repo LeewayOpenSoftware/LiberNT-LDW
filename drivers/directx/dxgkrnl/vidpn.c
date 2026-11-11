@@ -2722,7 +2722,8 @@ DxgkpHotPlugRebuildWorker(
             DxgkpDrainConnectionChanges(Adapter);
         }
         KeAcquireSpinLock(&Adapter->ChildListLock, &OldIrql);
-        if (Adapter->State != DxgkAdapterStateStarted || InterlockedCompareExchange(&Adapter->RundownStarted, 0, 0) != 0)
+        if (Adapter->State != DxgkAdapterStateStarted || InterlockedCompareExchange(&Adapter->RundownStarted, 0, 0) != 0 ||
+            InterlockedCompareExchange(&Adapter->PostDisplayHandoffRolledBack, 0, 0) != 0)
         {
             (VOID)DxgkHotPlugWorkCoreCompleteLocked(&Adapter->HotPlugGeneration, &Adapter->HotPlugWorkActive, Adapter->HotPlugGeneration, FALSE);
             KeReleaseSpinLock(&Adapter->ChildListLock, OldIrql);
@@ -2737,8 +2738,11 @@ DxgkpHotPlugRebuildWorker(
         KeReleaseSpinLock(&Adapter->ChildListLock, OldIrql);
         Status = DxgkpVidPnRebuildForHotPlugGeneration(Adapter, ObservedGeneration);
         KeAcquireSpinLock(&Adapter->ChildListLock, &OldIrql);
-        if (Adapter->State != DxgkAdapterStateStarted || InterlockedCompareExchange(&Adapter->RundownStarted, 0, 0) != 0)
+        if (Adapter->State != DxgkAdapterStateStarted || InterlockedCompareExchange(&Adapter->RundownStarted, 0, 0) != 0 ||
+            InterlockedCompareExchange(&Adapter->PostDisplayHandoffRolledBack, 0, 0) != 0)
         {
+            /* A rollback that landed mid-pass resolves the handoff; the
+               pass outcome (and its retire line) is moot. */
             (VOID)DxgkHotPlugWorkCoreCompleteLocked(&Adapter->HotPlugGeneration, &Adapter->HotPlugWorkActive, Adapter->HotPlugGeneration, FALSE);
             KeReleaseSpinLock(&Adapter->ChildListLock, OldIrql);
             break;
@@ -2792,11 +2796,24 @@ DxgkVidPnQueueHotPlugRebuild(
     _In_ PDXGKRNL_ADAPTER Adapter)
 {
     KIRQL OldIrql;
+    NTSTATUS Status;
 
     if (Adapter == NULL)
         return STATUS_INVALID_PARAMETER;
     if (Adapter->State != DxgkAdapterStateStarted || InterlockedCompareExchange(&Adapter->RundownStarted, 0, 0) != 0)
         return STATUS_DELETE_PENDING;
+    /* A rebuild pass snapshots the child list, which is only valid once the
+       bus relations of the current enumeration epoch have published; the
+       query that publishes them queues the rebuild itself.  Queueing earlier
+       (the tail of an adapter start, before that query runs) only earns
+       DEVICE_NOT_READY retries. */
+    KeAcquireSpinLock(&Adapter->ChildListLock, &OldIrql);
+    Status = DxgkHotPlugWorkCoreValidateEnumerationLocked(&Adapter->ChildEnumerationEpoch,
+                                                          &Adapter->ChildRelationsEnumerated,
+                                                          Adapter->ChildEnumerationEpoch);
+    KeReleaseSpinLock(&Adapter->ChildListLock, OldIrql);
+    if (!NT_SUCCESS(Status))
+        return Status;
     KeAcquireSpinLock(&Adapter->ChildListLock, &OldIrql);
     (VOID)DxgkHotPlugWorkCorePublishLocked(&Adapter->HotPlugGeneration);
     KeReleaseSpinLock(&Adapter->ChildListLock, OldIrql);
@@ -3574,6 +3591,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
     PDXGK_CHILD_PDO_EXTENSION MatchingChild = NULL;
     KIRQL ChildOldIrql;
     BOOLEAN NotifyMonitorEvent = FALSE;
+    BOOLEAN CommitAttempted = FALSE;
     NTSTATUS Status;
 
     PAGED_CODE();
@@ -3652,6 +3670,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
         goto Cleanup;
     }
     KeReleaseSpinLock(&Adapter->ChildListLock, ChildOldIrql);
+    CommitAttempted = TRUE;
     Status = DxgkpDisplayCommitVidPnCandidate(Adapter, Candidate, &CommitResult);
     if (!NT_SUCCESS(Status) && CandidateObject->NumPaths > 1 &&
         Status != STATUS_DELETE_PENDING && Status != STATUS_DEVICE_REMOVED)
@@ -3680,6 +3699,7 @@ DxgkpVidPnRebuildForHotPlugGeneration(
     {
         KeReleaseSpinLock(&Adapter->ChildListLock, ChildOldIrql);
         KeReleaseMutex(&Adapter->VidPnMutex, FALSE);
+        CommitAttempted = TRUE;
         Status = DxgkpDisplayCommitVidPnCandidate(Adapter, OldVidPn, &RollbackResult);
         if (NT_SUCCESS(Status))
             Status = STATUS_RETRY;
@@ -3771,6 +3791,14 @@ Cleanup:
     }
     DxgkpEndSharedSurfaceMutationLocked(Adapter);
     KeReleaseMutex(&Adapter->SharedPrimaryMutex, FALSE);
+    /* The first VidPn commit attempt is final outside STATUS_RETRY: resolve
+       a deferred POST handoff either way (commit the claimant or roll the
+       desktop back to BasicDisplay).  A pass that never reached a commit
+       (no VidPn yet, stale generation, negotiation failure) leaves the
+       deferral armed: the ownership claim is not a resolution.  No rebuild
+       lock is held here. */
+    if (CommitAttempted)
+        DxgkpCompleteDeferredPostDisplayHandoff(Adapter, Status);
     if (DetachedVidPn != NULL)
         DxgkVidPnDestroy(DetachedVidPn);
     if (OldVidPn != NULL)
@@ -3795,6 +3823,8 @@ DxgkVidPnRebuildForHotPlug(
 
     if (Adapter == NULL)
         return STATUS_INVALID_PARAMETER;
+    if (InterlockedCompareExchange(&Adapter->PostDisplayHandoffRolledBack, 0, 0) != 0)
+        return STATUS_SUCCESS;
     ExpectedGeneration = InterlockedCompareExchange64(&Adapter->HotPlugGeneration, 0, 0);
     Status = DxgkpVidPnRebuildForHotPlugGeneration(Adapter, ExpectedGeneration);
     if (Status == STATUS_RETRY)

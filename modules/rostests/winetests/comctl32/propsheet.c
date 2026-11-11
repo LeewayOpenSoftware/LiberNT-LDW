@@ -489,6 +489,126 @@ static void test_wiznavigation(void)
     UnhookWindowsHookEx( hook );
 }
 
+static LONG aero_setactive_count;
+
+static INT_PTR CALLBACK aero_page_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    switch (msg)
+    {
+    case WM_NOTIFY:
+        {
+            LPNMHDR hdr = (LPNMHDR)lparam;
+            if (hdr->code == PSN_SETACTIVE)
+                InterlockedIncrement(&aero_setactive_count);
+        }
+        break;
+    }
+    return FALSE;
+}
+
+static void test_aero_wizard(void)
+{
+    HPROPSHEETPAGE hpsp[2];
+    PROPSHEETPAGEA psp[2];
+    PROPSHEETHEADERA psh;
+    HWND hdlg, hwndBack, hwndNext, hwndFinish, hwndCancel;
+    WCHAR text[64];
+
+    memset(psp, 0, sizeof(psp));
+    psp[0].dwSize = sizeof(PROPSHEETPAGEA);
+    psp[0].hInstance = GetModuleHandleA(NULL);
+    psp[0].pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_INTRO);
+    psp[0].pfnDlgProc = aero_page_proc;
+    hpsp[0] = pCreatePropertySheetPageA(&psp[0]);
+
+    psp[1] = psp[0];
+    psp[1].pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_EXIT);
+    hpsp[1] = pCreatePropertySheetPageA(&psp[1]);
+    ok(hpsp[0] && hpsp[1], "failed to create pages\n");
+
+    memset(&psh, 0, sizeof(psh));
+    psh.dwSize = PROPSHEETHEADERA_V1_SIZE;
+    psh.dwFlags = PSH_MODELESS | PSH_AEROWIZARD;
+    psh.pszCaption = "An Aero Wizard";
+    psh.nPages = 2;
+    psh.hwndParent = GetDesktopWindow();
+    psh.phpage = hpsp;
+
+    aero_setactive_count = 0;
+    hdlg = (HWND)pPropertySheetA(&psh);
+    ok(hdlg != NULL && hdlg != INVALID_HANDLE_VALUE, "got invalid handle %p\n", hdlg);
+    if (!hdlg || hdlg == INVALID_HANDLE_VALUE)
+    {
+        pDestroyPropertySheetPage(hpsp[0]);
+        pDestroyPropertySheetPage(hpsp[1]);
+        return;
+    }
+
+    hwndBack = GetDlgItem(hdlg, 12323);
+    hwndNext = GetDlgItem(hdlg, 12324);
+    hwndFinish = GetDlgItem(hdlg, 12325);
+    hwndCancel = GetDlgItem(hdlg, IDCANCEL);
+    ok(hwndBack != NULL, "Back button missing\n");
+    ok(hwndNext != NULL, "Next button missing\n");
+    ok(hwndFinish != NULL, "Finish button missing\n");
+    ok(hwndCancel != NULL, "Cancel button missing\n");
+
+    /* PSM_SETNEXTTEXT sets the Next button label (UNICODE-only message) */
+    SendMessageW(hdlg, PSM_SETNEXTTEXTW, 0, (LPARAM)L"Install");
+    GetWindowTextW(hwndNext, text, ARRAY_SIZE(text));
+    ok(!wcscmp(text, L"Install"), "Next text not updated, got %s\n", wine_dbgstr_w(text));
+
+    /* PSM_SETBUTTONTEXT sets any command-area button label */
+    SendMessageW(hdlg, PSM_SETBUTTONTEXTW, PSBTN_CANCEL, (LPARAM)L"Dismiss");
+    GetWindowTextW(hwndCancel, text, ARRAY_SIZE(text));
+    ok(!wcscmp(text, L"Dismiss"), "Cancel text not updated, got %s\n", wine_dbgstr_w(text));
+    SendMessageW(hdlg, PSM_SETBUTTONTEXTW, PSBTN_BACK, (LPARAM)L"Return");
+    GetWindowTextW(hwndBack, text, ARRAY_SIZE(text));
+    ok(!wcscmp(text, L"Return"), "Back text not updated, got %s\n", wine_dbgstr_w(text));
+
+    /* PSM_SHOWWIZBUTTONS is posted; a masked button shows only when in both sets */
+    flush_events();
+    PostMessageW(hdlg, PSM_SHOWWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_FINISH);
+    flush_events();
+    ok(!IsWindowVisible(hwndBack), "Back should be hidden\n");
+    ok(IsWindowVisible(hwndNext), "Next should still be visible\n");
+    ok(!IsWindowVisible(hwndFinish), "Finish should be hidden\n");
+    PostMessageW(hdlg, PSM_SHOWWIZBUTTONS, PSWIZB_BACK, PSWIZB_BACK);
+    flush_events();
+    ok(IsWindowVisible(hwndBack), "Back should be shown again\n");
+
+    /* PSWIZB_CANCEL bit controls the Cancel button */
+    PostMessageW(hdlg, PSM_SHOWWIZBUTTONS, 0, PSWIZB_CANCEL);
+    flush_events();
+    ok(!IsWindowVisible(hwndCancel), "Cancel should be hidden\n");
+    PostMessageW(hdlg, PSM_SHOWWIZBUTTONS, PSWIZB_CANCEL, PSWIZB_CANCEL);
+    flush_events();
+    ok(IsWindowVisible(hwndCancel), "Cancel should be shown again\n");
+
+    /* PSM_ENABLEWIZBUTTONS is posted */
+    PostMessageW(hdlg, PSM_ENABLEWIZBUTTONS, 0, PSWIZB_NEXT);
+    flush_events();
+    ok(!IsWindowEnabled(hwndNext), "Next should be disabled\n");
+    PostMessageW(hdlg, PSM_ENABLEWIZBUTTONS, PSWIZB_NEXT, PSWIZB_NEXT);
+    flush_events();
+    ok(IsWindowEnabled(hwndNext), "Next should be enabled\n");
+
+    /* existing PSM_SETWIZBUTTONS still owns the Next/Finish swap */
+    SendMessageW(hdlg, PSM_SETWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_DISABLEDFINISH);
+    ok(!IsWindowVisible(hwndNext), "Next should be hidden with DISABLEDFINISH\n");
+    ok(IsWindowVisible(hwndFinish), "Finish should be visible with DISABLEDFINISH\n");
+    ok(!IsWindowEnabled(hwndFinish), "Finish should be disabled with DISABLEDFINISH\n");
+    SendMessageW(hdlg, PSM_SETWIZBUTTONS, 0, PSWIZB_BACK | PSWIZB_NEXT);
+    ok(IsWindowVisible(hwndNext) && IsWindowEnabled(hwndNext), "Next should be restored\n");
+
+    ok(InterlockedCompareExchange(&aero_setactive_count, 0, 0) >= 1,
+       "PSN_SETACTIVE not received\n");
+
+    DestroyWindow(hdlg);
+    pDestroyPropertySheetPage(hpsp[0]);
+    pDestroyPropertySheetPage(hpsp[1]);
+}
+
 static void test_buttons(void)
 {
     HPROPSHEETPAGE hpsp[1];
@@ -1776,6 +1896,7 @@ START_TEST(propsheet)
     test_nopage();
     test_disableowner();
     test_wiznavigation();
+    test_aero_wizard();
     test_buttons();
     test_custom_default_button();
     test_messages();
@@ -1795,6 +1916,7 @@ START_TEST(propsheet)
     is_v6 = TRUE;
 
     test_page_dialog_texture();
+    test_aero_wizard();
 
     unload_v6_module(ctx_cookie, ctx);
 }

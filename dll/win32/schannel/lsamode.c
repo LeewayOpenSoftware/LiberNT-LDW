@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "precomp.h"
+
 #include <stdarg.h>
 
 #include "ntstatus.h"
@@ -87,27 +89,27 @@ static SECPKG_FUNCTION_TABLE secPkgFunctionTable[2] =
     NULL, /* CallPackagePassthrough */
     NULL, /* LogonUserEx */
     NULL, /* LogonUserEx2 */
-    NULL, /* Initialize */
-    NULL, /* Shutdown */
+    SchannelSpInitialize,
+    SchannelSpShutdown,
     SpGetInfoUnified,
     NULL, /* AcceptCredentials */
-    NULL, /* SpAcquireCredentialsHandle */
-    NULL, /* SpQueryCredentialsAttributes */
-    NULL, /* FreeCredentialsHandle */
+    SchannelSpAcquireCredentialsHandle,
+    SchannelSpQueryCredentialsAttributes,
+    SchannelSpFreeCredentialsHandle,
     NULL, /* SaveCredentials */
     NULL, /* GetCredentials */
     NULL, /* DeleteCredentials */
-    NULL, /* InitLsaModeContext */
-    NULL, /* AcceptLsaModeContext */
-    NULL, /* DeleteContext */
-    NULL, /* ApplyControlToken */
+    SchannelSpInitLsaModeContext,
+    SchannelSpAcceptLsaModeContext,
+    SchannelSpDeleteContext,
+    SchannelSpApplyControlToken,
     NULL, /* GetUserInfo */
     NULL, /* GetExtendedInformation */
-    NULL, /* SpQueryContextAttributes */
-    NULL, /* SpAddCredentials */
+    SchannelSpQueryContextAttributes,
+    SchannelSpAddCredentials,
     NULL, /* SetExtendedInformation */
-    NULL, /* SetContextAttributes */
-    NULL, /* SetCredentialsAttributes */
+    SchannelSpSetContextAttributes,
+    SchannelSpSetCredentialsAttributes,
     NULL, /* ChangeAccountPassword */
     NULL, /* QueryMetaData */
     NULL, /* ExchangeMetaData */
@@ -126,27 +128,27 @@ static SECPKG_FUNCTION_TABLE secPkgFunctionTable[2] =
     NULL, /* CallPackagePassthrough */
     NULL, /* LogonUserEx */
     NULL, /* LogonUserEx2 */
-    NULL, /* Initialize */
-    NULL, /* Shutdown */
+    SchannelSpInitialize,
+    SchannelSpShutdown,
     SpGetInfoSChannel,
     NULL, /* AcceptCredentials */
-    NULL, /* SpAcquireCredentialsHandle */
-    NULL, /* SpQueryCredentialsAttributes */
-    NULL, /* FreeCredentialsHandle */
+    SchannelSpAcquireCredentialsHandle,
+    SchannelSpQueryCredentialsAttributes,
+    SchannelSpFreeCredentialsHandle,
     NULL, /* SaveCredentials */
     NULL, /* GetCredentials */
     NULL, /* DeleteCredentials */
-    NULL, /* InitLsaModeContext */
-    NULL, /* AcceptLsaModeContext */
-    NULL, /* DeleteContext */
-    NULL, /* ApplyControlToken */
+    SchannelSpInitLsaModeContext,
+    SchannelSpAcceptLsaModeContext,
+    SchannelSpDeleteContext,
+    SchannelSpApplyControlToken,
     NULL, /* GetUserInfo */
     NULL, /* GetExtendedInformation */
-    NULL, /* SpQueryContextAttributes */
-    NULL, /* SpAddCredentials */
+    SchannelSpQueryContextAttributes,
+    SchannelSpAddCredentials,
     NULL, /* SetExtendedInformation */
-    NULL, /* SetContextAttributes */
-    NULL, /* SetCredentialsAttributes */
+    SchannelSpSetContextAttributes,
+    SchannelSpSetCredentialsAttributes,
     NULL, /* ChangeAccountPassword */
     NULL, /* QueryMetaData */
     NULL, /* ExchangeMetaData */

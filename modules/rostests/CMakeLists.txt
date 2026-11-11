@@ -1,6 +1,5 @@
 
 start_module_group(rostests)
-
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     add_link_options("-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/test-section.lds")
 endif()
@@ -16,6 +15,7 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
 endif()
 
 add_subdirectory(apitests)
+add_subdirectory(aerowizard)
 #add_subdirectory(dibtests)
 add_subdirectory(drivers)
 #add_subdirectory(dxtest)

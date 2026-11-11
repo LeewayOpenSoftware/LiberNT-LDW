@@ -9,8 +9,13 @@
 #include "ntfslib_new.h"
 #include "ntfslib_new_internal.h"
 
-/* Reads the $UpCase table into the Volume cache. The table is immutable,
- * so this happens once; every later UpcaseWideString() call reuses it.
+/*
+ * Reads the $UpCase table into the Volume cache. The table is immutable, so
+ * it is read once, normally at mount. It is read into a private buffer and
+ * published only once complete (NtfsPublishOnce): before, the pointer was
+ * set by the read itself, so a second reader could see the table with a
+ * length of 0 and compare names case-sensitively, and a failed read freed a
+ * table another reader already held.
  */
 NTSTATUS
 Volume::LoadUpcaseTable()
@@ -18,7 +23,8 @@ Volume::LoadUpcaseTable()
     NTSTATUS Status;
     PFileRecord UpCaseFile;
     PAttribute UpCaseData;
-    ULONG UpCaseDataLength;
+    PWSTR Table = NULL;
+    ULONG UpCaseDataLength = 0;
 
     // Get $UpCase file
     Status = MFT->GetFileAttributeFromFileRecordNumber(TypeData,
@@ -31,44 +37,68 @@ Volume::LoadUpcaseTable()
 
     // Get $DATA attribute contents from $UpCase
     Status = UpCaseFile->ReadAttributeAlloc(UpCaseData,
-                                            (PUCHAR*)&UpcaseTable,
+                                            (PUCHAR*)&Table,
                                             &UpCaseDataLength);
-
-    if (NT_SUCCESS(Status) &&
-        (UpCaseDataLength % sizeof(WCHAR)) == 0)
-    {
-        UpcaseTableLength = UpCaseDataLength / sizeof(WCHAR);
-    }
-    else
-    {
-        delete[] UpcaseTable;
-        UpcaseTable = NULL;
-        if (NT_SUCCESS(Status))
-            Status = STATUS_FILE_CORRUPT_ERROR;
-    }
-
     delete UpCaseFile;
-    return Status;
+    if (NT_SUCCESS(Status) &&
+        (UpCaseDataLength == 0 ||
+         (UpCaseDataLength % sizeof(WCHAR)) != 0))
+    {
+        Status = STATUS_FILE_CORRUPT_ERROR;
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        delete[] Table;
+        return Status;
+    }
+
+    /* Every loader stores the same length; the compare-exchange orders it
+     * before the pointer. */
+    UpcaseTableLength = UpCaseDataLength / sizeof(WCHAR);
+    if (NtfsPublishOnce(reinterpret_cast<PVOID volatile*>(&UpcaseTable), Table) != Table)
+        delete[] Table;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+Volume::GetUpcase(_Out_ PWSTR* Table,
+                  _Out_ PULONG Length)
+{
+    PWSTR Published;
+    NTSTATUS Status;
+
+    Published = static_cast<PWSTR>(
+        NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&UpcaseTable)));
+    if (!Published)
+    {
+        Status = LoadUpcaseTable();
+        if (!NT_SUCCESS(Status))
+            return Status;
+        Published = static_cast<PWSTR>(
+            NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&UpcaseTable)));
+    }
+    *Table = Published;
+    *Length = UpcaseTableLength;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
 Volume::UpcaseWideString(_Inout_ PWSTR WideString,
                          _In_    ULONG Length)
 {
+    PWSTR Table;
+    ULONG TableLength;
     NTSTATUS Status;
 
-    if (!UpcaseTable)
-    {
-        Status = LoadUpcaseTable();
-        if (!NT_SUCCESS(Status))
-            return Status;
-    }
+    Status = GetUpcase(&Table, &TableLength);
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     // Update each character according to its entry in the $UpCase table
     for (ULONG i = 0; i < Length; i++)
     {
-        if (WideString[i] < UpcaseTableLength)
-            WideString[i] = UpcaseTable[WideString[i]];
+        if (WideString[i] < TableLength)
+            WideString[i] = Table[WideString[i]];
     }
 
     return STATUS_SUCCESS;
@@ -80,6 +110,8 @@ Volume::CompareFileNames(_In_  PUNICODE_STRING Left,
                          _Out_ LONG* Result)
 {
     NTSTATUS Status;
+    PWSTR Table;
+    ULONG TableLength;
     ULONG LeftLength;
     ULONG RightLength;
     ULONG CommonLength;
@@ -93,12 +125,9 @@ Volume::CompareFileNames(_In_  PUNICODE_STRING Left,
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!UpcaseTable)
-    {
-        Status = LoadUpcaseTable();
-        if (!NT_SUCCESS(Status))
-            return Status;
-    }
+    Status = GetUpcase(&Table, &TableLength);
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     LeftLength = Left->Length / sizeof(WCHAR);
     RightLength = Right->Length / sizeof(WCHAR);
@@ -109,10 +138,10 @@ Volume::CompareFileNames(_In_  PUNICODE_STRING Left,
         WCHAR LeftCharacter = Left->Buffer[Index];
         WCHAR RightCharacter = Right->Buffer[Index];
 
-        if (LeftCharacter < UpcaseTableLength)
-            LeftCharacter = UpcaseTable[LeftCharacter];
-        if (RightCharacter < UpcaseTableLength)
-            RightCharacter = UpcaseTable[RightCharacter];
+        if (LeftCharacter < TableLength)
+            LeftCharacter = Table[LeftCharacter];
+        if (RightCharacter < TableLength)
+            RightCharacter = Table[RightCharacter];
 
         if (LeftCharacter != RightCharacter)
         {

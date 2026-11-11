@@ -115,8 +115,10 @@ RcddInitScreenInfo(
    ULONG Temp;
 
    ModeCount = RcddGetAvailableModes(ppdev->hDriver, &ModeInfo, &ModeInfoSize);
+   DbgPrint("K2TRACE: CDD modes %lu size %lu\n", ModeCount, ModeInfoSize);
    if (ModeCount == 0)
    {
+      DbgPrint("K2TRACE: CDD modes ZERO\n");
       return FALSE;
    }
 

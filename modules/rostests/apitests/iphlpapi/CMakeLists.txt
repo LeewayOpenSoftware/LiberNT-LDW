@@ -13,6 +13,7 @@ list(APPEND SOURCE
     InitializeIpInterfaceEntry.c
     loopback_alias.c
     NotifyIpInterfaceChange.c
+    NotifyRouteChange.c
     SendARP.c
     UnicastIpAddressChange.c
     testlist.c)

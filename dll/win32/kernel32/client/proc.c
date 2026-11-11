@@ -549,6 +549,7 @@ WINAPI
 BasepSxsCloseHandles(IN PBASE_MSG_SXS_HANDLES Handles)
 {
     NTSTATUS Status;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(Status);
 
     /* Sanity checks */
     ASSERT(Handles != NULL);
@@ -3396,6 +3397,7 @@ CreateProcessInternalW(IN HANDLE hUserToken,
     UNICODE_STRING VdmString, VdmUnicodeEnv;
     BOOLEAN IsWowApp;
     PBASE_CHECK_VDM CheckVdmMsg;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(ImageDbgStatus);
 
     /* Zero out the initial core variables and handles */
     QuerySection = FALSE;

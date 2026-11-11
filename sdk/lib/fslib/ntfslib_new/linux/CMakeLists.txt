@@ -11,6 +11,11 @@ option(
     "Link GNU C++ support into Linux test executables to avoid loader-dominated startup"
     ON
 )
+option(
+    NTFSLIB_SANITIZE
+    "Build the library, the FUSE frontend and the tests under AddressSanitizer and UndefinedBehaviorSanitizer, with asserts kept"
+    OFF
+)
 
 set(NTFSLIB_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 
@@ -60,6 +65,7 @@ add_library(ntfslib_linux STATIC
     "${NTFSLIB_ROOT}/src/volume/disk.cpp"
     "${NTFSLIB_ROOT}/src/volume/volume.cpp"
     "${NTFSLIB_ROOT}/src/util.cpp"
+    "${NTFSLIB_ROOT}/src/verify/shape.cpp"
 )
 
 # The formatter is independent of the environment layer, so it builds here as
@@ -97,6 +103,13 @@ if(NTFSLIB_DEBUG)
     target_compile_definitions(ntfslib_linux PRIVATE NTFSLIB_DEBUG=1)
 endif()
 
+# Shape invariants after each change (src/verify/shape.cpp), as in checked
+# builds: a broken one is printed and asserted.
+option(NTFSLIB_VERIFY_SHAPE "Verify record and index shapes after each change" OFF)
+if(NTFSLIB_VERIFY_SHAPE)
+    target_compile_definitions(ntfslib_linux PRIVATE NTFSLIB_VERIFY_SHAPE=1)
+endif()
+
 target_compile_options(ntfslib_linux PUBLIC
     -fshort-wchar
     -Wall
@@ -111,6 +124,28 @@ target_include_directories(ntfslib_linux
     PRIVATE
         "${NTFSLIB_ROOT}/include/internal"
 )
+
+# Sanitizers: one interface target carried PUBLIC by both libraries, so every
+# executable that links them (the FUSE frontend, the tests) is instrumented
+# and linked against the runtimes with the same flags, once. Undefined
+# behaviour is fatal, not recovered, and -UNDEBUG keeps the library's ASSERTs
+# live whatever the build type adds.
+if(NTFSLIB_SANITIZE)
+    add_library(ntfslib_sanitize INTERFACE)
+    target_compile_options(ntfslib_sanitize INTERFACE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+        -fno-sanitize-recover=undefined
+        -UNDEBUG
+    )
+    target_link_options(ntfslib_sanitize INTERFACE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+        -fno-sanitize-recover=undefined
+    )
+    target_link_libraries(ntfslib_linux PUBLIC ntfslib_sanitize)
+    target_link_libraries(ntfslib_format_host PUBLIC ntfslib_sanitize)
+endif()
 
 if(NTFSLIB_BUILD_FUSE)
     add_subdirectory(fuse)
@@ -158,6 +193,67 @@ if(BUILD_TESTING)
     add_test(
         NAME ntfslib_linux_resident_update
         COMMAND ntfslib_resident_update_test
+    )
+
+    # The index walk of the checker on hand-built nodes: a split cut short is
+    # trimmed, not reset. It includes check.cpp to reach the walk.
+    add_executable(ntfslib_check_split_trim_test
+        tests/check_split_trim.cpp
+    )
+    target_compile_features(ntfslib_check_split_trim_test PRIVATE cxx_std_17)
+    target_compile_options(ntfslib_check_split_trim_test PRIVATE
+        -Wall
+        -Wextra
+    )
+    target_include_directories(ntfslib_check_split_trim_test PRIVATE
+        "${NTFSLIB_ROOT}/include/internal"
+    )
+    target_link_libraries(ntfslib_check_split_trim_test PRIVATE ntfslib_linux)
+    add_test(
+        NAME ntfslib_linux_check_split_trim
+        COMMAND ntfslib_check_split_trim_test
+    )
+
+    add_executable(ntfslib_size_persist_times_test
+        tests/size_persist_times.cpp
+    )
+    target_compile_features(ntfslib_size_persist_times_test PRIVATE cxx_std_17)
+    target_compile_options(ntfslib_size_persist_times_test PRIVATE
+        -Wall
+        -Wextra
+    )
+    target_link_libraries(ntfslib_size_persist_times_test PRIVATE ntfslib_linux ntfslib_format_host)
+    add_test(
+        NAME ntfslib_linux_size_persist_times
+        COMMAND ntfslib_size_persist_times_test
+    )
+
+    add_executable(ntfslib_mft_mirror_fallback_test
+        tests/mft_mirror_fallback.cpp
+    )
+    target_compile_features(ntfslib_mft_mirror_fallback_test PRIVATE cxx_std_17)
+    target_compile_options(ntfslib_mft_mirror_fallback_test PRIVATE
+        -Wall
+        -Wextra
+    )
+    target_link_libraries(ntfslib_mft_mirror_fallback_test PRIVATE ntfslib_linux ntfslib_format_host)
+    add_test(
+        NAME ntfslib_linux_mft_mirror_fallback
+        COMMAND ntfslib_mft_mirror_fallback_test
+    )
+
+    add_executable(ntfslib_lookup_index_cache_test
+        tests/lookup_index_cache.cpp
+    )
+    target_compile_features(ntfslib_lookup_index_cache_test PRIVATE cxx_std_17)
+    target_compile_options(ntfslib_lookup_index_cache_test PRIVATE
+        -Wall
+        -Wextra
+    )
+    target_link_libraries(ntfslib_lookup_index_cache_test PRIVATE ntfslib_linux ntfslib_format_host)
+    add_test(
+        NAME ntfslib_linux_lookup_index_cache
+        COMMAND ntfslib_lookup_index_cache_test
     )
 
     add_executable(ntfslib_lznt1_roundtrip_test
@@ -225,6 +321,15 @@ if(BUILD_TESTING AND NTFSLIB_BUILD_FUSE)
                 "${NTFSLS_EXECUTABLE}"
                 "${NTFSCAT_EXECUTABLE}"
                 "${NTFSINFO_EXECUTABLE}"
+        )
+    endif()
+    if(MKNTFS_EXECUTABLE)
+        add_test(
+            NAME ntfslib_linux_grow_fragmented_index
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/grow_fragmented_index_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
         )
     endif()
     if(MKNTFS_EXECUTABLE AND
@@ -571,6 +676,50 @@ if(BUILD_TESTING AND NTFSLIB_BUILD_FUSE)
             NAME ntfslib_linux_startup_repair
             COMMAND /bin/sh
                 "${CMAKE_CURRENT_LIST_DIR}/tests/startup_repair_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+    endif()
+    if(MKNTFS_EXECUTABLE)
+        add_test(
+            NAME ntfslib_linux_check_claim
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_claim_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_verify_shape
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/verify_shape_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_check_attrlist
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_attrlist_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_check_attrlist_rebuild
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_attrlist_rebuild_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_data_mapping_spill
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/data_mapping_spill_smoke.sh"
+                "$<TARGET_FILE:ntfslib_fuse>"
+                "${MKNTFS_EXECUTABLE}"
+        )
+        add_test(
+            NAME ntfslib_linux_check_shape
+            COMMAND /bin/sh
+                "${CMAKE_CURRENT_LIST_DIR}/tests/check_shape_smoke.sh"
                 "$<TARGET_FILE:ntfslib_fuse>"
                 "${MKNTFS_EXECUTABLE}"
         )

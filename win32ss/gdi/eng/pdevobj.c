@@ -211,6 +211,11 @@ PDEVOBJ_bEnablePDEV(
                                   (HDEV)ppdev,
                                   ppdev->pGraphicsDevice ? ppdev->pGraphicsDevice->pwszDescription : NULL,
                                   ppdev->pGraphicsDevice ? ppdev->pGraphicsDevice->DeviceObject : NULL);
+    ERR("K2TRACE: W32K DrvEnablePDEV(%S %lux%lu) dhpdev %p\n",
+        ppdev->pGraphicsDevice ? ppdev->pGraphicsDevice->szNtDeviceName : L"(none)",
+        pdevmode ? pdevmode->dmPelsWidth : 0,
+        pdevmode ? pdevmode->dmPelsHeight : 0,
+        ppdev->dhpdev);
     TRACE("DrvEnablePDEV(pdevmode %p hdev %p) => dhpdev %p\n", pdevmode, ppdev, ppdev->dhpdev);
     if (ppdev->dhpdev == NULL)
     {
@@ -504,6 +509,11 @@ PDEVOBJ_vRefreshModeList(
     pGraphicsDevice->pdevmodeInfo = NULL;
     ExFreePoolWithTag(pGraphicsDevice->pDevModeList, GDITAG_GDEVICE);
     pGraphicsDevice->pDevModeList = NULL;
+    /* The index list and its count go together: after a failed refresh the
+       count must not outlive the list or UserEnumDisplaySettings walks a
+       NULL pDevModeList (observed: DrvGetModes returned 0 after a WDDM
+       mode switch, then a NULL deref on the next modeset enumeration). */
+    pGraphicsDevice->cDevModes = 0;
 
     /* Update available display mode list */
     LDEVOBJ_bBuildDevmodeList(pGraphicsDevice);

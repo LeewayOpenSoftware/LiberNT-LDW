@@ -37,6 +37,7 @@ DWORD createIpForwardEntry( PMIB_IPFORWARDROW pRoute ) {
     IPRouteEntry *rte;
     TDIEntityID   id;
     DWORD         returnSize = 0;
+    DWORD         error = NO_ERROR;
 
     TRACE("Called.\n");
 
@@ -68,25 +69,31 @@ DWORD createIpForwardEntry( PMIB_IPFORWARDROW pRoute ) {
             rte->ire_metric4 = pRoute->dwForwardMetric4;
             rte->ire_metric5 = pRoute->dwForwardMetric5;
 
-            status = DeviceIoControl( tcpFile,
-                                      IOCTL_TCP_SET_INFORMATION_EX,
-                                      &req,
-                                      sizeof(req),
-                                      NULL,
-                                      0,
-                                      &returnSize,
-                                      NULL );
+            /* DeviceIoControl returns a BOOL, not an NTSTATUS: NT_SUCCESS() of
+             * either outcome is true, which made a route the stack refused
+             * (for one, any route on the loopback interface) report NO_ERROR. */
+            if (DeviceIoControl( tcpFile,
+                                 IOCTL_TCP_SET_INFORMATION_EX,
+                                 &req,
+                                 sizeof(req),
+                                 NULL,
+                                 0,
+                                 &returnSize,
+                                 NULL ))
+                error = NO_ERROR;
+            else
+                error = GetLastError();
         }
 
         closeTcpFile( tcpFile );
     }
 
-    TRACE("Returning: %08x (IOCTL was %08x)\n", status, IOCTL_TCP_SET_INFORMATION_EX);
+    if( !NT_SUCCESS(status) )
+        error = RtlNtStatusToDosError( status );
 
-    if( NT_SUCCESS(status) )
-	return NO_ERROR;
-    else
-	return status;
+    TRACE("Returning: %lu (status %08x)\n", error, status);
+
+    return error;
 }
 
 DWORD setIpForwardEntry( PMIB_IPFORWARDROW pRoute ) {
@@ -102,6 +109,7 @@ DWORD deleteIpForwardEntry( PMIB_IPFORWARDROW pRoute ) {
     IPRouteEntry *rte;
     TDIEntityID   id;
     DWORD         returnSize = 0;
+    DWORD         error = NO_ERROR;
 
     TRACE("Called.\n");
 
@@ -133,23 +141,29 @@ DWORD deleteIpForwardEntry( PMIB_IPFORWARDROW pRoute ) {
             rte->ire_metric4 = INADDR_NONE;
             rte->ire_metric5 = INADDR_NONE;
 
-            status = DeviceIoControl( tcpFile,
-                                      IOCTL_TCP_SET_INFORMATION_EX,
-                                      &req,
-                                      sizeof(req),
-                                      NULL,
-                                      0,
-                                      &returnSize,
-                                      NULL );
+            /* DeviceIoControl returns a BOOL, not an NTSTATUS: NT_SUCCESS() of
+             * either outcome is true, which made a route the stack refused
+             * (for one, any route on the loopback interface) report NO_ERROR. */
+            if (DeviceIoControl( tcpFile,
+                                 IOCTL_TCP_SET_INFORMATION_EX,
+                                 &req,
+                                 sizeof(req),
+                                 NULL,
+                                 0,
+                                 &returnSize,
+                                 NULL ))
+                error = NO_ERROR;
+            else
+                error = GetLastError();
         }
 
         closeTcpFile( tcpFile );
     }
 
-    TRACE("Returning: %08x (IOCTL was %08x)\n", status, IOCTL_TCP_SET_INFORMATION_EX);
+    if( !NT_SUCCESS(status) )
+        error = RtlNtStatusToDosError( status );
 
-    if( NT_SUCCESS(status) )
-	return NO_ERROR;
-    else
-	return status;
+    TRACE("Returning: %lu (status %08x)\n", error, status);
+
+    return error;
 }

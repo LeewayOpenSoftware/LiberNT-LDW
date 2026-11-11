@@ -75,6 +75,8 @@ typedef struct _CC_CACHE
     ULONG BcbBytes;
     VOID (*BcbCreated)(_Inout_ struct _CC_BCB *Bcb);
     VOID (*BcbDeleting)(_Inout_ struct _CC_BCB *Bcb);
+    /* Optional. Called under DirtyLock when a clean map gets its first dirty page. */
+    VOID (*MapDirtied)(_Inout_ struct _CC_MAP *Map);
 
     volatile LONG64 ViewHits;
     volatile LONG64 ViewMisses;

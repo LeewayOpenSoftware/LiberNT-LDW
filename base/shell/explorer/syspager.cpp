@@ -21,8 +21,43 @@
 
 #include "precomp.h"
 #include <ime/indicml.h>
+#include <mmsystem.h>
 
 #define BALLOON_MAXWIDTH 340
+
+/* Vista+ notification flags the SDK headers here do not define yet. */
+#ifndef NIF_REALTIME
+#define NIF_REALTIME 0x00000040
+#endif
+#ifndef NIF_SHOWTIP
+#define NIF_SHOWTIP 0x00000080
+#endif
+#ifndef NIIF_LARGE_ICON
+#define NIIF_LARGE_ICON 0x00000020
+#endif
+#ifndef NIIF_RESPECT_QUIET_TIME
+#define NIIF_RESPECT_QUIET_TIME 0x00000080
+#endif
+#ifndef NIN_POPUPOPEN
+#define NIN_POPUPOPEN (WM_USER + 6)
+#endif
+#ifndef NIN_POPUPCLOSE
+#define NIN_POPUPCLOSE (WM_USER + 7)
+#endif
+
+/* Private SysPager messages. */
+#define SPWM_OWNERDIED        (WM_APP + 0x51) /* wParam = process id; sent by the icon watcher */
+#define SPWM_BROADCASTCREATED (WM_APP + 0x52) /* posted to self once the tray exists */
+
+/* SysPager timers (the balloon queue uses CBalloonQueue::BalloonsTimerId = 1). */
+#define SP_TIMER_SWEEP        2
+#define SP_SWEEP_INTERVAL     5000
+
+/* CNotifyToolbar timer for the VERSION_4 rich pop-up (NIN_POPUPOPEN). */
+#define NT_TIMER_POPUP        0x5E01
+
+/* A notification callback to another process must not hang Explorer. */
+#define TRAY_CALLBACK_TIMEOUT 2000
 
 struct InternalIconData : NOTIFYICONDATA
 {
@@ -31,7 +66,18 @@ struct InternalIconData : NOTIFYICONDATA
     INT Kind;
     BOOL bPromoted;
     BOOL bRemoved;
+    // NIF_SHOWTIP: a VERSION_4 icon shows the standard tooltip only with it.
+    BOOL bShowTip;
+    // The process that owns hWnd, and whether the icon watcher waits on it.
+    DWORD dwOwnerPid;
+    BOOL bWatched;
 };
+
+static BOOL
+TrayIconUsesPopup(_In_ CONST InternalIconData *pItem)
+{
+    return pItem->uVersionCopy >= NOTIFYICON_VERSION_4 && !pItem->bShowTip;
+}
 
 static VOID
 TrayCallbackParams(_In_ CONST InternalIconData *pItem,
@@ -213,19 +259,18 @@ TraySavePromoted(_In_ const InternalIconData *pItem)
     }
 }
 
+/* One entry per icon-owning process. RefCount counts its icons; an entry
+   with RefCount 0 is dead and only the watcher thread deletes it, so a
+   handle is never closed while the thread may be waiting on it. */
 struct IconWatcherData
 {
     HANDLE hProcess;
     DWORD ProcessId;
-    NOTIFYICONDATA IconData;
+    ULONG RefCount;
 
-    IconWatcherData(CONST NOTIFYICONDATA *iconData) :
-        hProcess(NULL), ProcessId(0)
+    IconWatcherData(DWORD pid, HANDLE process) :
+        hProcess(process), ProcessId(pid), RefCount(1)
     {
-        IconData.cbSize = sizeof(NOTIFYICONDATA);
-        IconData.hWnd = iconData->hWnd;
-        IconData.uID = iconData->uID;
-        IconData.guidItem = iconData->guidItem;
     }
 
     ~IconWatcherData()
@@ -242,6 +287,7 @@ class CIconWatcher
     CAtlList<IconWatcherData *> m_WatcherList;
     CRITICAL_SECTION m_ListLock;
     HANDLE m_hWatcherThread;
+    unsigned m_WatcherThreadId;
     HANDLE m_WakeUpEvent;
     HWND m_hwndSysTray;
     bool m_Loop;
@@ -254,12 +300,13 @@ public:
     bool Initialize(_In_ HWND hWndParent);
     void Uninitialize();
 
-    bool AddIconToWatcher(_In_ CONST NOTIFYICONDATA *iconData);
-    bool RemoveIconFromWatcher(_In_ CONST NOTIFYICONDATA *iconData);
-
-    IconWatcherData* GetListEntry(_In_opt_ CONST NOTIFYICONDATA *iconData, _In_opt_ HANDLE hProcess, _In_ bool Remove);
+    /* TRUE when the process is now watched; FALSE when it cannot be (the
+       wait limit is reached, or no handle): the SysPager sweep covers it. */
+    bool WatchProcess(_In_ DWORD ProcessId);
+    void ReleaseProcess(_In_ DWORD ProcessId);
 
 private:
+    IconWatcherData* FindLiveEntry(_In_ DWORD ProcessId);
 
     static UINT WINAPI WatcherThread(_In_opt_ LPVOID lpParam);
 };
@@ -283,16 +330,26 @@ private:
         WCHAR szInfoTitle[64];
         WPARAM uIcon;
         UINT uTimeout;
+        BOOL bNoSound;
 
         Info(InternalIconData * source)
         {
+            UINT IconType = source->dwInfoFlags & NIIF_ICON_MASK;
+
             pSource = source;
             StringCchCopy(szInfo, _countof(szInfo), source->szInfo);
             StringCchCopy(szInfoTitle, _countof(szInfoTitle), source->szInfoTitle);
-            uIcon = source->dwInfoFlags & NIIF_ICON_MASK;
-            if (source->dwInfoFlags == NIIF_USER)
-                uIcon = reinterpret_cast<WPARAM>(source->hIcon);
+            /* TTM_SETTITLE takes TTI_NONE..TTI_ERROR or an HICON. NIIF_USER uses
+               hBalloonIcon, else the tray icon. NIIF_LARGE_ICON and
+               NIIF_RESPECT_QUIET_TIME are accepted and not acted on. */
+            uIcon = (IconType <= NIIF_ERROR) ? IconType : NIIF_NONE;
+            if (IconType == NIIF_USER)
+            {
+                HICON hUser = source->hBalloonIcon ? source->hBalloonIcon : source->hIcon;
+                uIcon = hUser ? reinterpret_cast<WPARAM>(hUser) : NIIF_NONE;
+            }
             uTimeout = source->uTimeout;
+            bNoSound = (source->dwInfoFlags & NIIF_NOSOUND) != 0;
         }
     };
 
@@ -315,9 +372,9 @@ public:
     void Deinit();
 
     bool OnTimer(int timerId);
-    void UpdateInfo(InternalIconData * notifyItem);
+    void UpdateInfo(InternalIconData * notifyItem, BOOL bRealtime);
     void RemoveInfo(InternalIconData * notifyItem);
-    void CloseCurrent();
+    void CloseCurrent(UINT uReason = NIN_BALLOONTIMEOUT);
 
 private:
 
@@ -338,8 +395,11 @@ class CNotifyToolbar :
     INT m_iPressed;
     POINT m_ptPressed;
     BOOL m_bDragging;
+    InternalIconData *m_pPopupItem;
+    BOOL m_bPopupOpen;
 
     CBalloonQueue * m_BalloonQueue;
+    CIconWatcher * m_Watcher;
 
 public:
     CNotifyToolbar();
@@ -348,7 +408,12 @@ public:
     int GetVisibleButtonCount();
     int GetFirstVisibleIndex();
     int FindItem(IN HWND hWnd, IN UINT uID, InternalIconData ** pdata);
+    int FindIconItem(IN CONST NOTIFYICONDATA *iconData, InternalIconData ** pdata);
     int FindExistingSharedIcon(HICON handle);
+    BOOL RemoveItemAt(IN INT index);
+    INT RemoveIconsOfProcess(IN DWORD ProcessId);
+    INT RemoveDeadIcons(OUT BOOL *pbSweepNeeded);
+    BOOL NeedsSweep();
     BOOL AddButton(IN CONST NOTIFYICONDATA *iconData);
     BOOL SwitchVersion(IN CONST NOTIFYICONDATA *iconData);
     BOOL UpdateButton(IN CONST NOTIFYICONDATA *iconData);
@@ -380,16 +445,22 @@ private:
     VOID SendMouseEvent(IN WORD wIndex, IN UINT uMsg, IN WPARAM wParam);
     LRESULT OnMouseEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
     LRESULT OnTooltipShow(INT uCode, LPNMHDR hdr, BOOL& bHandled);
+    LRESULT OnPopupTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+    LRESULT OnMouseLeave(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+    VOID UpdatePopupHover(IN InternalIconData *pItem);
+    VOID ClosePopup();
 
 public:
     BEGIN_MSG_MAP(CNotifyToolbar)
         MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
         MESSAGE_HANDLER(WM_CONTEXTMENU, OnCtxMenu)
+        MESSAGE_HANDLER(WM_TIMER, OnPopupTimer)
+        MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
         MESSAGE_RANGE_HANDLER(WM_MOUSEFIRST, WM_MOUSELAST, OnMouseEvent)
         NOTIFY_CODE_HANDLER(TTN_SHOW, OnTooltipShow)
     END_MSG_MAP()
 
-    void Initialize(HWND hWndParent, CBalloonQueue * queue);
+    void Initialize(HWND hWndParent, CBalloonQueue * queue, CIconWatcher * watcher);
 };
 
 
@@ -541,6 +612,10 @@ public:
     LRESULT OnTrayIconEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
     LRESULT OnSetPromoted(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
     LRESULT OnForwardNotify(INT uCode, LPNMHDR hdr, BOOL& bHandled);
+    LRESULT OnOwnerDied(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+    LRESULT OnBroadcastCreated(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+    VOID IconsRemoved(INT Removed);
+    VOID UpdateSweepTimer();
 
 public:
     // *** IOleWindow methods ***
@@ -586,6 +661,8 @@ public:
         MESSAGE_HANDLER(TNWM_GETTRAYICONS, OnGetTrayIcons)
         MESSAGE_HANDLER(TNWM_TRAYICONEVENT, OnTrayIconEvent)
         MESSAGE_HANDLER(TNWM_SETPROMOTED, OnSetPromoted)
+        MESSAGE_HANDLER(SPWM_OWNERDIED, OnOwnerDied)
+        MESSAGE_HANDLER(SPWM_BROADCASTCREATED, OnBroadcastCreated)
         NOTIFY_CODE_HANDLER(NTNWM_REALIGN, OnForwardNotify)
         NOTIFY_CODE_HANDLER(NTNWM_ICONSCHANGED, OnForwardNotify)
         NOTIFY_CODE_HANDLER(TTN_POP, OnBalloonPop)
@@ -602,6 +679,7 @@ public:
 
 CIconWatcher::CIconWatcher() :
     m_hWatcherThread(NULL),
+    m_WatcherThreadId(0),
     m_WakeUpEvent(NULL),
     m_hwndSysTray(NULL),
     m_Loop(false)
@@ -628,14 +706,19 @@ bool CIconWatcher::Initialize(_In_ HWND hWndParent)
     if (m_WakeUpEvent == NULL)
         return false;
 
+    /* Set before the thread starts, so icons added at once are watched. */
+    m_Loop = true;
     m_hWatcherThread = (HANDLE)_beginthreadex(NULL,
                                                 0,
                                                 WatcherThread,
                                                 (LPVOID)this,
                                                 0,
-                                                NULL);
+                                                &m_WatcherThreadId);
     if (m_hWatcherThread == NULL)
+    {
+        m_Loop = false; /* nothing watches: the sweep covers every icon */
         return false;
+    }
 
     return true;
 }
@@ -646,165 +729,134 @@ void CIconWatcher::Uninitialize()
     if (m_WakeUpEvent)
         SetEvent(m_WakeUpEvent);
 
+    /* Let the thread leave its wait before its handles are closed. It may be
+       waiting for this (window) thread in SendMessageTimeout, so do not wait
+       long. When called on the watcher thread itself, do not wait at all. */
+    if (m_hWatcherThread && m_WatcherThreadId != GetCurrentThreadId())
+        WaitForSingleObject(m_hWatcherThread, 1000);
+
     EnterCriticalSection(&m_ListLock);
 
-    POSITION Pos;
-    for (size_t i = 0; i < m_WatcherList.GetCount(); i++)
+    for (POSITION Pos = m_WatcherList.GetHeadPosition(); Pos;)
     {
-        Pos = m_WatcherList.FindIndex(i);
-        if (Pos)
-        {
-            IconWatcherData *Icon;
-            Icon = m_WatcherList.GetAt(Pos);
-            delete Icon;
-        }
+        IconWatcherData *Icon = m_WatcherList.GetNext(Pos);
+        delete Icon;
     }
     m_WatcherList.RemoveAll();
 
     LeaveCriticalSection(&m_ListLock);
 }
 
-bool CIconWatcher::AddIconToWatcher(_In_ CONST NOTIFYICONDATA *iconData)
+IconWatcherData* CIconWatcher::FindLiveEntry(_In_ DWORD ProcessId)
 {
-    DWORD ProcessId;
-    (void)GetWindowThreadProcessId(iconData->hWnd, &ProcessId);
-
-    HANDLE hProcess;
-    hProcess = OpenProcess(SYNCHRONIZE, FALSE, ProcessId);
-    if (hProcess == NULL)
+    for (POSITION Pos = m_WatcherList.GetHeadPosition(); Pos;)
     {
-        return false;
-    }
-
-    IconWatcherData *Icon = new IconWatcherData(iconData);
-    Icon->hProcess = hProcess;
-    Icon->ProcessId = ProcessId;
-
-    bool Added = false;
-    EnterCriticalSection(&m_ListLock);
-
-    // The likelyhood of someone having more than 64 icons in their tray is
-    // pretty slim. We could spin up a new thread for each multiple of 64, but
-    // it's not worth the effort, so we just won't bother watching those icons
-    if (m_WatcherList.GetCount() < MAXIMUM_WAIT_OBJECTS)
-    {
-        m_WatcherList.AddTail(Icon);
-        SetEvent(m_WakeUpEvent);
-        Added = true;
-    }
-
-    LeaveCriticalSection(&m_ListLock);
-
-    if (!Added)
-    {
-        delete Icon;
-    }
-
-    return Added;
-}
-
-bool CIconWatcher::RemoveIconFromWatcher(_In_ CONST NOTIFYICONDATA *iconData)
-{
-    EnterCriticalSection(&m_ListLock);
-
-    IconWatcherData *Icon;
-    Icon = GetListEntry(iconData, NULL, true);
-
-    SetEvent(m_WakeUpEvent);
-    LeaveCriticalSection(&m_ListLock);
-
-    delete Icon;
-    return true;
-}
-
-IconWatcherData* CIconWatcher::GetListEntry(_In_opt_ CONST NOTIFYICONDATA *iconData, _In_opt_ HANDLE hProcess, _In_ bool Remove)
-{
-    IconWatcherData *Entry = NULL;
-    for (POSITION NextPosition = m_WatcherList.GetHeadPosition(); NextPosition;)
-    {
-        POSITION Position = NextPosition;
-        Entry = m_WatcherList.GetNext(NextPosition); // Note: This will advance NextPosition
-        if (Entry)
-        {
-            if ((iconData && ((Entry->IconData.hWnd == iconData->hWnd) && (Entry->IconData.uID == iconData->uID))) ||
-                    (hProcess && (Entry->hProcess == hProcess)))
-            {
-                if (Remove)
-                    m_WatcherList.RemoveAt(Position);
-                return Entry;
-            }
-        }
+        IconWatcherData *Entry = m_WatcherList.GetNext(Pos);
+        if (Entry && Entry->RefCount && Entry->ProcessId == ProcessId)
+            return Entry;
     }
     return NULL;
+}
+
+bool CIconWatcher::WatchProcess(_In_ DWORD ProcessId)
+{
+    bool Watched = false;
+
+    if (!ProcessId || !m_Loop)
+        return false;
+
+    EnterCriticalSection(&m_ListLock);
+    IconWatcherData *Entry = FindLiveEntry(ProcessId);
+    if (Entry)
+    {
+        Entry->RefCount++;
+        Watched = true;
+    }
+    /* The thread also waits on the wake-up event. */
+    else if (m_WatcherList.GetCount() < MAXIMUM_WAIT_OBJECTS - 1)
+    {
+        HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, ProcessId);
+        if (hProcess)
+        {
+            m_WatcherList.AddTail(new IconWatcherData(ProcessId, hProcess));
+            SetEvent(m_WakeUpEvent);
+            Watched = true;
+        }
+    }
+    LeaveCriticalSection(&m_ListLock);
+
+    if (!Watched)
+        TRACE("Pid %lu is not watched; the sweep removes its dead icons\n", ProcessId);
+    return Watched;
+}
+
+void CIconWatcher::ReleaseProcess(_In_ DWORD ProcessId)
+{
+    EnterCriticalSection(&m_ListLock);
+    IconWatcherData *Entry = FindLiveEntry(ProcessId);
+    if (Entry && --Entry->RefCount == 0)
+        SetEvent(m_WakeUpEvent); /* the thread deletes it */
+    LeaveCriticalSection(&m_ListLock);
 }
 
 UINT WINAPI CIconWatcher::WatcherThread(_In_opt_ LPVOID lpParam)
 {
     CIconWatcher* This = reinterpret_cast<CIconWatcher *>(lpParam);
-    HANDLE *WatchList = NULL;
+    HANDLE WatchList[MAXIMUM_WAIT_OBJECTS];
+    DWORD WatchPid[MAXIMUM_WAIT_OBJECTS];
 
-    This->m_Loop = true;
     while (This->m_Loop)
     {
+        DWORD Size = 1;
+
         EnterCriticalSection(&This->m_ListLock);
-
-        DWORD Size;
-        Size = This->m_WatcherList.GetCount() + 1;
-        ASSERT(Size <= MAXIMUM_WAIT_OBJECTS);
-
-        if (WatchList)
-            delete[] WatchList;
-        WatchList = new HANDLE[Size];
         WatchList[0] = This->m_WakeUpEvent;
-
-        POSITION Pos;
-        for (size_t i = 0; i < This->m_WatcherList.GetCount(); i++)
+        WatchPid[0] = 0;
+        for (POSITION Pos = This->m_WatcherList.GetHeadPosition(); Pos;)
         {
-            Pos = This->m_WatcherList.FindIndex(i);
-            if (Pos)
+            POSITION Current = Pos;
+            IconWatcherData *Entry = This->m_WatcherList.GetNext(Pos);
+            if (!Entry->RefCount)
             {
-                IconWatcherData *Icon;
-                Icon = This->m_WatcherList.GetAt(Pos);
-                WatchList[i + 1] = Icon->hProcess;
+                This->m_WatcherList.RemoveAt(Current);
+                delete Entry;
+                continue;
+            }
+            if (Size < MAXIMUM_WAIT_OBJECTS)
+            {
+                WatchList[Size] = Entry->hProcess;
+                WatchPid[Size] = Entry->ProcessId;
+                Size++;
             }
         }
-
         LeaveCriticalSection(&This->m_ListLock);
 
-        DWORD Status;
-        Status = WaitForMultipleObjects(Size,
-                                        WatchList,
-                                        FALSE,
-                                        INFINITE);
+        DWORD Status = WaitForMultipleObjects(Size, WatchList, FALSE, INFINITE);
         if (Status == WAIT_OBJECT_0)
         {
             // We've been kicked, we have updates to our list (or we're exiting the thread)
             if (This->m_Loop)
                 TRACE("Updating watched icon list\n");
         }
-        else if ((Status >= WAIT_OBJECT_0 + 1) && (Status < Size))
+        else if (Status > WAIT_OBJECT_0 && Status < WAIT_OBJECT_0 + Size)
         {
-            IconWatcherData *Icon;
-            Icon = This->GetListEntry(NULL, WatchList[Status], false);
+            DWORD ProcessId = WatchPid[Status - WAIT_OBJECT_0];
 
-            TRACE("Pid %lu owns a notification icon and has stopped without deleting it. We'll cleanup on its behalf\n", Icon->ProcessId);
+            TRACE("Pid %lu owns notification icons and has stopped without deleting them. We'll clean up on its behalf\n", ProcessId);
 
-            TRAYNOTIFYDATAW tnid = {0};
-            tnid.dwSignature = NI_NOTIFY_SIG;
-            tnid.dwMessage   = NIM_DELETE;
-            CopyMemory(&tnid.nid, &Icon->IconData, Icon->IconData.cbSize);
+            /* Mark it dead first, so the next loop drops the signalled handle
+               whatever the window thread does. */
+            EnterCriticalSection(&This->m_ListLock);
+            IconWatcherData *Entry = This->FindLiveEntry(ProcessId);
+            if (Entry)
+                Entry->RefCount = 0;
+            LeaveCriticalSection(&This->m_ListLock);
 
-            COPYDATASTRUCT data;
-            data.dwData = 1;
-            data.cbData = sizeof(tnid);
-            data.lpData = &tnid;
-
-            BOOL Success = ::SendMessage(This->m_hwndSysTray, WM_COPYDATA,
-                                         (WPARAM)&Icon->IconData, (LPARAM)&data);
-            if (!Success)
+            if (This->m_Loop)
             {
-                // If we failed to handle the delete message, forcibly remove it
-                This->RemoveIconFromWatcher(&Icon->IconData);
+                DWORD_PTR Result;
+                SendMessageTimeoutW(This->m_hwndSysTray, SPWM_OWNERDIED, ProcessId, 0,
+                                    SMTO_NORMAL, 10000, &Result);
             }
         }
         else
@@ -813,13 +865,10 @@ UINT WINAPI CIconWatcher::WatcherThread(_In_opt_ LPVOID lpParam)
             {
                 Status = GetLastError();
             }
-            ERR("Failed to wait on process handles : %lu\n", Status);
+            WARN("Failed to wait on process handles : %lu\n", Status);
             This->Uninitialize();
         }
     }
-
-    if (WatchList)
-        delete[] WatchList;
 
     return 0;
 }
@@ -876,49 +925,64 @@ bool CBalloonQueue::OnTimer(int timerId)
     return true;
 }
 
-void CBalloonQueue::UpdateInfo(InternalIconData * notifyItem)
+void CBalloonQueue::UpdateInfo(InternalIconData * notifyItem, BOOL bRealtime)
 {
-    if (notifyItem->szInfo[0])
+    if (!notifyItem->szInfo[0])
     {
-        Info info(notifyItem);
+        /* Empty text hides this icon's balloon and drops its queued one. */
+        RemoveInfo(notifyItem);
+        return;
+    }
 
-        // If m_current == notifyItem, we want to replace the previous balloon even if there is a queue.
-        if (m_current != notifyItem && (m_current != NULL || !m_queue.IsEmpty()))
-        {
-            m_queue.AddTail(info);
-        }
-        else
-        {
-            Show(info);
-        }
-    }
-    else
+    Info info(notifyItem);
+
+    // If m_current == notifyItem, we want to replace the previous balloon even if there is a queue.
+    if (m_current == notifyItem || (m_current == NULL && m_queue.IsEmpty()))
     {
-        Close(notifyItem, NIN_BALLOONHIDE);
+        Show(info);
+        return;
     }
+
+    /* NIF_REALTIME: a balloon that cannot be shown now is discarded. */
+    if (bRealtime)
+    {
+        TRACE("Realtime balloon of icon %d from hWnd %p discarded: another is showing\n",
+              notifyItem->uID, notifyItem->hWnd);
+        return;
+    }
+
+    /* A newer balloon from the same icon replaces its queued one in place. */
+    for (POSITION next = m_queue.GetHeadPosition(); next;)
+    {
+        Info& queued = m_queue.GetNext(next);
+        if (queued.pSource == notifyItem)
+        {
+            queued = info;
+            return;
+        }
+    }
+    m_queue.AddTail(info);
 }
 
 void CBalloonQueue::RemoveInfo(InternalIconData * notifyItem)
 {
     Close(notifyItem, NIN_BALLOONHIDE);
 
+    /* Drop every queued entry: the item may be about to be freed. */
     for (POSITION next = m_queue.GetHeadPosition(); next;)
     {
         POSITION current = next;
         Info& info = m_queue.GetNext(next); // Note: This will advance the position
         if (info.pSource == notifyItem)
-        {
             m_queue.RemoveAt(current);
-            break;
-        }
     }
 }
 
-void CBalloonQueue::CloseCurrent()
+void CBalloonQueue::CloseCurrent(UINT uReason)
 {
     if (m_current != NULL)
     {
-        Close(m_current, NIN_BALLOONTIMEOUT);
+        Close(m_current, uReason);
     }
 }
 
@@ -941,8 +1005,6 @@ void CBalloonQueue::SetTimer(int length)
 void CBalloonQueue::Show(Info& info)
 {
     TRACE("ShowBalloonTip called for flags=%x text=%ws; title=%ws\n", info.uIcon, info.szInfo, info.szInfoTitle);
-
-    // TODO: NIF_REALTIME, NIIF_NOSOUND, other Vista+ flags
 
     m_current = info.pSource;
     RECT rc;
@@ -992,6 +1054,10 @@ void CBalloonQueue::Show(Info& info)
     m_tooltips->UpdateTipText(m_hwndParent, reinterpret_cast<LPARAM>(m_toolbar->m_hWnd), info.szInfo);
     m_tooltips->TrackActivate(m_hwndParent, reinterpret_cast<LPARAM>(m_toolbar->m_hWnd));
 
+    /* The balloon sound, unless NIIF_NOSOUND. Silent when the user's scheme has none. */
+    if (!info.bNoSound)
+        PlaySoundW(L"SystemNotification", NULL, SND_ALIAS | SND_ASYNC | SND_NODEFAULT);
+
     int timeout = info.uTimeout;
     if (timeout < MinTimeout) timeout = MinTimeout;
     if (timeout > MaxTimeout) timeout = MaxTimeout;
@@ -1027,7 +1093,10 @@ CNotifyToolbar::CNotifyToolbar() :
     m_NextCommand(0),
     m_iPressed(-1),
     m_bDragging(FALSE),
-    m_BalloonQueue(NULL)
+    m_pPopupItem(NULL),
+    m_bPopupOpen(FALSE),
+    m_BalloonQueue(NULL),
+    m_Watcher(NULL)
 {
     m_ptPressed.x = m_ptPressed.y = 0;
 }
@@ -1063,6 +1132,28 @@ int CNotifyToolbar::FindItem(IN HWND hWnd, IN UINT uID, InternalIconData ** pdat
 
         if (data->hWnd == hWnd &&
             data->uID == uID)
+        {
+            if (pdata)
+                *pdata = data;
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/* NIF_GUID identifies an icon by its GUID alone; otherwise hWnd + uID do. */
+int CNotifyToolbar::FindIconItem(IN CONST NOTIFYICONDATA *iconData, InternalIconData ** pdata)
+{
+    if (!(iconData->uFlags & NIF_GUID) || IsEqualGUID(iconData->guidItem, GUID_NULL))
+        return FindItem(iconData->hWnd, iconData->uID, pdata);
+
+    int count = GetButtonCount();
+    for (int i = 0; i < count; i++)
+    {
+        InternalIconData * data = GetItemData(i);
+
+        if ((data->uFlags & NIF_GUID) && IsEqualGUID(data->guidItem, iconData->guidItem))
         {
             if (pdata)
                 *pdata = data;
@@ -1131,11 +1222,27 @@ BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
         (iconData->dwState & NIS_HIDDEN) ? " HIDDEN" : "",
         (iconData->dwState & NIS_SHAREDICON) ? " SHARED" : "");
 
-    int index = FindItem(iconData->hWnd, iconData->uID, &notifyItem);
+    if (iconData->hWnd && !::IsWindow(iconData->hWnd))
+    {
+        WARN("Icon %d: owner window %p does not exist\n", iconData->uID, iconData->hWnd);
+        return FALSE;
+    }
+
+    int index = FindIconItem(iconData, &notifyItem);
     if (index >= 0)
     {
-        TRACE("Icon %d from hWnd %08x ALREADY EXISTS!\n", iconData->uID, iconData->hWnd);
-        return FALSE;
+        /* A GUID icon whose owner died without NIM_DELETE moves to the new owner. */
+        if ((iconData->uFlags & NIF_GUID) && notifyItem->hWnd != iconData->hWnd &&
+            !::IsWindow(notifyItem->hWnd))
+        {
+            TRACE("GUID icon from dead hWnd %p re-added by hWnd %p\n", notifyItem->hWnd, iconData->hWnd);
+            RemoveItemAt(index);
+        }
+        else
+        {
+            TRACE("Icon %d from hWnd %08x ALREADY EXISTS!\n", iconData->uID, iconData->hWnd);
+            return FALSE;
+        }
     }
 
     notifyItem = new InternalIconData();
@@ -1146,6 +1253,11 @@ BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
     notifyItem->uFlags = iconData->uFlags;
     if (iconData->uFlags & NIF_GUID)
         notifyItem->guidItem = iconData->guidItem;
+    notifyItem->bShowTip = (iconData->uFlags & NIF_SHOWTIP) != 0;
+    if (iconData->hWnd)
+        GetWindowThreadProcessId(iconData->hWnd, &notifyItem->dwOwnerPid);
+    if (notifyItem->dwOwnerPid && notifyItem->dwOwnerPid != GetCurrentProcessId() && m_Watcher)
+        notifyItem->bWatched = m_Watcher->WatchProcess(notifyItem->dwOwnerPid);
 
     notifyItem->Kind = TrayClassifyIcon(iconData->hWnd, iconData->uID);
     if (notifyItem->Kind == TRAYICON_APP)
@@ -1200,6 +1312,7 @@ BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
         StringCchCopy(notifyItem->szInfoTitle, _countof(notifyItem->szInfoTitle), iconData->szInfoTitle);
         notifyItem->dwInfoFlags = iconData->dwInfoFlags;
         notifyItem->uTimeout = iconData->uTimeout;
+        notifyItem->hBalloonIcon = iconData->hBalloonIcon;
     }
 
     if (!IsItemVisible(notifyItem))
@@ -1207,15 +1320,13 @@ BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
         tbBtn.fsState |= TBSTATE_HIDDEN;
     }
 
-    /* TODO: support VERSION_4 (NIF_GUID, NIF_REALTIME, NIF_SHOWTIP) */
-
     CToolbar::InsertButton(InsertIndex(notifyItem->Kind), &tbBtn);
     ApplyButtonSize();
     UpdateVisibility();
 
     if (iconData->uFlags & NIF_INFO)
     {
-        m_BalloonQueue->UpdateInfo(notifyItem);
+        m_BalloonQueue->UpdateInfo(notifyItem, (iconData->uFlags & NIF_REALTIME) != 0);
     }
 
     return TRUE;
@@ -1224,7 +1335,7 @@ BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
 BOOL CNotifyToolbar::SwitchVersion(_In_ CONST NOTIFYICONDATA *iconData)
 {
     InternalIconData * notifyItem;
-    int index = FindItem(iconData->hWnd, iconData->uID, &notifyItem);
+    int index = FindIconItem(iconData, &notifyItem);
     if (index < 0)
     {
         WARN("Icon %d from hWnd %08x DOES NOT EXIST!\n", iconData->uID, iconData->hWnd);
@@ -1258,7 +1369,7 @@ BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData)
         (iconData->dwState & NIS_HIDDEN) ? " HIDDEN" : "",
         (iconData->dwState & NIS_SHAREDICON) ? " SHARED" : "");
 
-    int index = FindItem(iconData->hWnd, iconData->uID, &notifyItem);
+    int index = FindIconItem(iconData, &notifyItem);
     if (index < 0)
     {
         WARN("Icon %d from hWnd %08x DOES NOT EXIST!\n", iconData->uID, iconData->hWnd);
@@ -1268,6 +1379,10 @@ BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData)
     TBBUTTON btn;
     GetButton(index, &btn);
     int oldIconIndex = btn.iBitmap;
+
+    /* NIF_SHOWTIP is re-evaluated whenever the tooltip is (re)set. */
+    if (iconData->uFlags & (NIF_SHOWTIP | NIF_TIP))
+        notifyItem->bShowTip = (iconData->uFlags & NIF_SHOWTIP) != 0;
 
     tbbi.cbSize = sizeof(tbbi);
     tbbi.dwMask = TBIF_BYINDEX;
@@ -1320,16 +1435,15 @@ BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData)
         StringCchCopy(notifyItem->szInfoTitle, _countof(notifyItem->szInfoTitle), iconData->szInfoTitle);
         notifyItem->dwInfoFlags = iconData->dwInfoFlags;
         notifyItem->uTimeout = iconData->uTimeout;
+        notifyItem->hBalloonIcon = iconData->hBalloonIcon;
     }
-
-    /* TODO: support VERSION_4 (NIF_GUID, NIF_REALTIME, NIF_SHOWTIP) */
 
     SetButtonInfo(index, &tbbi);
     UpdateVisibility();
 
     if (iconData->uFlags & NIF_INFO)
     {
-        m_BalloonQueue->UpdateInfo(notifyItem);
+        m_BalloonQueue->UpdateInfo(notifyItem, (iconData->uFlags & NIF_REALTIME) != 0);
     }
 
     return TRUE;
@@ -1337,41 +1451,62 @@ BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData)
 
 BOOL CNotifyToolbar::RemoveButton(_In_ CONST NOTIFYICONDATA *iconData)
 {
-    InternalIconData * notifyItem;
-
     TRACE("Removing icon %d from hWnd %08x\n", iconData->uID, iconData->hWnd);
 
-    int index = FindItem(iconData->hWnd, iconData->uID, &notifyItem);
+    int index = FindIconItem(iconData, NULL);
     if (index < 0)
     {
         TRACE("Icon %d from hWnd %08x ALREADY MISSING!\n", iconData->uID, iconData->hWnd);
 
         return FALSE;
     }
-    if (notifyItem->bRemoved)
+    return RemoveItemAt(index);
+}
+
+BOOL CNotifyToolbar::RemoveItemAt(IN INT index)
+{
+    InternalIconData * notifyItem = GetItemData(index);
+
+    if (!notifyItem || notifyItem->bRemoved)
         return FALSE;
     notifyItem->bRemoved = TRUE;
 
-    if (!(notifyItem->dwState & NIS_SHAREDICON))
+    if (notifyItem == m_pPopupItem)
     {
-        TBBUTTON btn;
-        GetButton(index, &btn);
-        int oldIconIndex = btn.iBitmap;
+        KillTimer(NT_TIMER_POPUP);
+        m_pPopupItem = NULL;
+        m_bPopupOpen = FALSE;
+    }
+
+    /* Remove the image only when no other button (a NIS_SHAREDICON one)
+       still shows it; then renumber the images after it. */
+    TBBUTTON btn;
+    GetButton(index, &btn);
+    int oldIconIndex = btn.iBitmap;
+    int count = GetButtonCount();
+    BOOL bImageInUse = FALSE;
+    for (int i = 0; i < count && oldIconIndex >= 0; i++)
+    {
+        TBBUTTON other;
+        if (i != index && GetButton(i, &other) && other.iBitmap == oldIconIndex)
+            bImageInUse = TRUE;
+    }
+    if (oldIconIndex >= 0 && !bImageInUse)
+    {
         ImageList_Remove(m_ImageList, oldIconIndex);
 
         // Update other icons!
-        int count = GetButtonCount();
         for (int i = 0; i < count; i++)
         {
-            TBBUTTON btn;
-            GetButton(i, &btn);
+            TBBUTTON other;
+            GetButton(i, &other);
 
-            if (btn.iBitmap > oldIconIndex)
+            if (other.iBitmap > oldIconIndex)
             {
                 TBBUTTONINFO tbbi2 = { 0 };
                 tbbi2.cbSize = sizeof(tbbi2);
                 tbbi2.dwMask = TBIF_BYINDEX | TBIF_IMAGE;
-                tbbi2.iImage = btn.iBitmap-1;
+                tbbi2.iImage = other.iBitmap-1;
                 SetButtonInfo(i, &tbbi2);
             }
         }
@@ -1390,11 +1525,60 @@ BOOL CNotifyToolbar::RemoveButton(_In_ CONST NOTIFYICONDATA *iconData)
         m_iPressed--;
     }
 
+    if (notifyItem->bWatched && m_Watcher)
+        m_Watcher->ReleaseProcess(notifyItem->dwOwnerPid);
+
     delete notifyItem;
 
     UpdateVisibility();
 
     return TRUE;
+}
+
+/* All icons of a process that ended without NIM_DELETE. */
+INT CNotifyToolbar::RemoveIconsOfProcess(IN DWORD ProcessId)
+{
+    INT Removed = 0;
+
+    for (int i = GetButtonCount() - 1; i >= 0; i--)
+    {
+        InternalIconData *pItem = GetItemData(i);
+        if (pItem && pItem->dwOwnerPid == ProcessId && RemoveItemAt(i))
+            Removed++;
+    }
+    return Removed;
+}
+
+/* Icons the watcher does not cover (too many owner processes, or no
+   process handle): drop those whose window is gone. */
+BOOL CNotifyToolbar::NeedsSweep()
+{
+    int count = GetButtonCount();
+    for (int i = 0; i < count; i++)
+    {
+        InternalIconData *pItem = GetItemData(i);
+        if (pItem && pItem->hWnd && !pItem->bWatched && pItem->dwOwnerPid != GetCurrentProcessId())
+            return TRUE;
+    }
+    return FALSE;
+}
+
+INT CNotifyToolbar::RemoveDeadIcons(OUT BOOL *pbSweepNeeded)
+{
+    INT Removed = 0;
+
+    for (int i = GetButtonCount() - 1; i >= 0; i--)
+    {
+        InternalIconData *pItem = GetItemData(i);
+        if (pItem && pItem->hWnd && !pItem->bWatched && !::IsWindow(pItem->hWnd))
+        {
+            TRACE("Sweep: icon %d of dead hWnd %p removed\n", pItem->uID, pItem->hWnd);
+            if (RemoveItemAt(i))
+                Removed++;
+        }
+    }
+    *pbSweepNeeded = NeedsSweep();
+    return Removed;
 }
 
 BOOL CNotifyToolbar::IsItemVisible(InternalIconData *pItem)
@@ -1622,6 +1806,10 @@ VOID CNotifyToolbar::ResizeImagelist()
 
 LRESULT CNotifyToolbar::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
+    KillTimer(NT_TIMER_POPUP);
+    m_pPopupItem = NULL;
+    m_bPopupOpen = FALSE;
+
     if (m_ImageList)
     {
         ImageList_Destroy(m_ImageList);
@@ -1695,7 +1883,14 @@ bool CNotifyToolbar::SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg)
         // Alternatively we could search for them periodically (would waste more resources).
         TRACE("Destroying icon %d with invalid handle hWnd=%08x\n", notifyItem->uID, notifyItem->hWnd);
 
-        RemoveButton(notifyItem);
+        int index = -1;
+        for (int i = 0; i < GetButtonCount(); i++)
+        {
+            if (GetItemData(i) == notifyItem)
+                index = i;
+        }
+        if (index >= 0)
+            RemoveItemAt(index);
 
         /* Ask the parent to resize */
         NMHDR nmh = {GetParent(), 0, NTNWM_REALIGN};
@@ -1720,10 +1915,14 @@ bool CNotifyToolbar::SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg)
     }
     else
     {
-        ::SendMessage(notifyItem->hWnd,
-                      notifyItem->uCallbackMessage,
-                      wParam,
-                      lParam);
+        DWORD_PTR Result;
+        ::SendMessageTimeoutW(notifyItem->hWnd,
+                              notifyItem->uCallbackMessage,
+                              wParam,
+                              lParam,
+                              SMTO_ABORTIFHUNG,
+                              TRAY_CALLBACK_TIMEOUT,
+                              &Result);
     }
     return false;
 }
@@ -1824,6 +2023,11 @@ LRESULT CNotifyToolbar::OnMouseEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BO
         }
     }
 
+    if (uMsg == WM_MOUSEMOVE)
+        UpdatePopupHover((iBtn >= 0 && iBtn < GetButtonCount()) ? GetItemData(iBtn) : NULL);
+    else if (uMsg != WM_MOUSEWHEEL)
+        UpdatePopupHover(NULL); /* a click closes the rich pop-up */
+
     if (iBtn >= 0)
     {
         SendMouseEvent(iBtn, uMsg, wParam);
@@ -1833,10 +2037,70 @@ LRESULT CNotifyToolbar::OnMouseEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BO
     return FALSE;
 }
 
+/* VERSION_4 icons without NIF_SHOWTIP get NIN_POPUPOPEN after the hover
+   time instead of the standard tooltip, and NIN_POPUPCLOSE when the
+   pointer leaves the icon. */
+VOID CNotifyToolbar::UpdatePopupHover(IN InternalIconData *pItem)
+{
+    if (pItem && !TrayIconUsesPopup(pItem))
+        pItem = NULL;
+    if (pItem == m_pPopupItem)
+        return;
+
+    ClosePopup();
+    if (!pItem)
+        return;
+
+    UINT uHover = 400;
+    TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, m_hWnd, 0 };
+
+    SystemParametersInfoW(SPI_GETMOUSEHOVERTIME, 0, &uHover, 0);
+    m_pPopupItem = pItem;
+    SetTimer(NT_TIMER_POPUP, uHover, NULL);
+    TrackMouseEvent(&tme);
+}
+
+VOID CNotifyToolbar::ClosePopup()
+{
+    InternalIconData *pItem = m_pPopupItem;
+    BOOL bOpen = m_bPopupOpen;
+
+    KillTimer(NT_TIMER_POPUP);
+    m_pPopupItem = NULL;
+    m_bPopupOpen = FALSE;
+    if (pItem && bOpen)
+        SendNotifyCallback(pItem, NIN_POPUPCLOSE);
+}
+
+LRESULT CNotifyToolbar::OnPopupTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+    if (wParam != NT_TIMER_POPUP)
+    {
+        bHandled = FALSE;
+        return 0;
+    }
+
+    KillTimer(NT_TIMER_POPUP);
+    INT iHot = GetHotItem();
+    if (m_pPopupItem && !m_bPopupOpen && iHot >= 0 && GetItemData(iHot) == m_pPopupItem)
+    {
+        m_bPopupOpen = TRUE;
+        SendNotifyCallback(m_pPopupItem, NIN_POPUPOPEN);
+    }
+    return 0;
+}
+
+LRESULT CNotifyToolbar::OnMouseLeave(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+    UpdatePopupHover(NULL);
+    bHandled = FALSE; /* the toolbar tracks its hot item too */
+    return 0;
+}
+
 static VOID GetTooltipText(LPARAM data, LPTSTR szTip, DWORD cchTip)
 {
     InternalIconData * notifyItem = reinterpret_cast<InternalIconData *>(data);
-    if (notifyItem)
+    if (notifyItem && !TrayIconUsesPopup(notifyItem))
     {
         StringCchCopy(szTip, cchTip, notifyItem->szTip);
     }
@@ -1899,9 +2163,10 @@ LRESULT CNotifyToolbar::OnTooltipShow(INT uCode, LPNMHDR hdr, BOOL& bHandled)
     return 0;
 }
 
-void CNotifyToolbar::Initialize(HWND hWndParent, CBalloonQueue * queue)
+void CNotifyToolbar::Initialize(HWND hWndParent, CBalloonQueue * queue, CIconWatcher * watcher)
 {
     m_BalloonQueue = queue;
+    m_Watcher = watcher;
 
     DWORD styles =
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN |
@@ -1991,8 +2256,8 @@ LRESULT CSysPagerWnd::OnEraseBackground(UINT uMsg, WPARAM wParam, LPARAM lParam,
 
 LRESULT CSysPagerWnd::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
-    Toolbar.Initialize(m_hWnd, &m_BalloonQueue);
     CIconWatcher::Initialize(m_hWnd);
+    Toolbar.Initialize(m_hWnd, &m_BalloonQueue, this);
 
     HWND hWndTop = GetAncestor(m_hWnd, GA_ROOT);
 
@@ -2014,19 +2279,59 @@ LRESULT CSysPagerWnd::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bH
 
     m_BalloonQueue.Init(m_hWnd, &Toolbar, &m_Balloons);
 
-    // Explicitly request running applications to re-register their systray icons
-    ::SendNotifyMessageW(HWND_BROADCAST,
-                            RegisterWindowMessageW(L"TaskbarCreated"),
-                            0, 0);
+    /* Ask running applications to re-register their icons once the whole
+       tray exists and this thread pumps messages, so their NIM_ADD finds it. */
+    PostMessageW(SPWM_BROADCASTCREATED, 0, 0);
 
     return TRUE;
 }
 
+LRESULT CSysPagerWnd::OnBroadcastCreated(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+    TRACE("Broadcasting TaskbarCreated\n");
+    ::SendNotifyMessageW(HWND_BROADCAST, RegisterWindowMessageW(L"TaskbarCreated"), 0, 0);
+    return 0;
+}
+
 LRESULT CSysPagerWnd::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
+    KillTimer(SP_TIMER_SWEEP);
     m_BalloonQueue.Deinit();
     CIconWatcher::Uninitialize();
     return TRUE;
+}
+
+VOID CSysPagerWnd::IconsRemoved(INT Removed)
+{
+    if (Removed <= 0)
+        return;
+
+    /* Ask the parent to resize */
+    NMHDR nmh = {GetParent(), 0, NTNWM_REALIGN};
+    GetParent().SendMessage(WM_NOTIFY, 0, (LPARAM) &nmh);
+    if (Toolbar.IsModern())
+    {
+        NMHDR nmhIcons = {m_hWnd, 0, NTNWM_ICONSCHANGED};
+        GetParent().SendMessage(WM_NOTIFY, 0, (LPARAM) &nmhIcons);
+    }
+}
+
+/* The sweep timer runs only while some icon is not covered by the watcher. */
+VOID CSysPagerWnd::UpdateSweepTimer()
+{
+    if (Toolbar.NeedsSweep())
+        SetTimer(SP_TIMER_SWEEP, SP_SWEEP_INTERVAL, NULL);
+    else
+        KillTimer(SP_TIMER_SWEEP);
+}
+
+LRESULT CSysPagerWnd::OnOwnerDied(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+    INT Removed = Toolbar.RemoveIconsOfProcess((DWORD)wParam);
+
+    TRACE("Pid %lu ended: %d icon(s) removed\n", (DWORD)wParam, Removed);
+    IconsRemoved(Removed);
+    return 0;
 }
 
 BOOL CSysPagerWnd::NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconData)
@@ -2042,9 +2347,7 @@ BOOL CSysPagerWnd::NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconDa
     case NIM_ADD:
         ret = Toolbar.AddButton(iconData);
         if (ret == TRUE)
-        {
-            (void)AddIconToWatcher(iconData);
-        }
+            UpdateSweepTimer();
         break;
 
     case NIM_MODIFY:
@@ -2053,17 +2356,13 @@ BOOL CSysPagerWnd::NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconDa
 
     case NIM_DELETE:
         ret = Toolbar.RemoveButton(iconData);
-        if (ret == TRUE)
-        {
-            (void)RemoveIconFromWatcher(iconData);
-        }
         break;
 
     case NIM_SETFOCUS:
         if (::SetForegroundWindow(GetTaskbarWindow()))
         {
             InternalIconData *pData;
-            int index = Toolbar.FindItem(iconData->hWnd, iconData->uID, &pData);
+            int index = Toolbar.FindIconItem(iconData, &pData);
             if (index < 0 || (pData->dwState & NIS_HIDDEN))
                 index = Toolbar.GetFirstVisibleIndex();
             Toolbar.SetFocus();
@@ -2229,22 +2528,23 @@ LRESULT CSysPagerWnd::OnCommand(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& b
     if (!::IsWindow(notifyItem->hWnd))
         return 0;
 
-    // TODO: Improve keyboard handling by looking whether one presses
-    // on ENTER, etc..., which roughly translates into "double-clicking".
+    /* Enter or Space on a focused icon is a keyboard selection. */
+    BOOL bKeyboard = (lParam == -1) ||
+                     (GetKeyState(VK_RETURN) & 0x8000) || (GetKeyState(VK_SPACE) & 0x8000);
 
     if (notifyItem->uVersionCopy >= NOTIFYICON_VERSION)
     {
-        POINT ptAnchor = (lParam == -1) ? Toolbar.GetIconAnchor(iBtn) : TrayCursorAnchor();
+        POINT ptAnchor = bKeyboard ? Toolbar.GetIconAnchor(iBtn) : TrayCursorAnchor();
         WPARAM wCallback;
         LPARAM lCallback;
 
-        TrayCallbackParams(notifyItem, NIN_SELECT, ptAnchor, &wCallback, &lCallback);
+        TrayCallbackParams(notifyItem, bKeyboard ? NIN_KEYSELECT : NIN_SELECT, ptAnchor, &wCallback, &lCallback);
 
         /* Use new-style notifications if the notification icon supports them */
         ::SendNotifyMessage(notifyItem->hWnd,
                             notifyItem->uCallbackMessage,
                             wCallback,
-                            lCallback); // TODO: Distinguish with NIN_KEYSELECT
+                            lCallback);
     }
     else if (lParam == -1)
     {
@@ -2303,13 +2603,25 @@ LRESULT CSysPagerWnd::OnCtxMenu(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& b
 
 LRESULT CSysPagerWnd::OnBalloonPop(UINT uCode, LPNMHDR hdr , BOOL& bHandled)
 {
-    m_BalloonQueue.CloseCurrent();
+    /* Our own closes clear the current balloon before the pop arrives, so a
+       pop with a current balloon is the user's click on it. */
+    m_BalloonQueue.CloseCurrent((GetKeyState(VK_LBUTTON) & 0x8000) ? NIN_BALLOONUSERCLICK
+                                                                  : NIN_BALLOONTIMEOUT);
     bHandled = TRUE;
     return 0;
 }
 
 LRESULT CSysPagerWnd::OnTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
+    if (wParam == SP_TIMER_SWEEP)
+    {
+        BOOL bSweepNeeded;
+        IconsRemoved(Toolbar.RemoveDeadIcons(&bSweepNeeded));
+        if (!bSweepNeeded)
+            KillTimer(SP_TIMER_SWEEP);
+        return 0;
+    }
+
     if (m_BalloonQueue.OnTimer(wParam))
     {
         bHandled = TRUE;

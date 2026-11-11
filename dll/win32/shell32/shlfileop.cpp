@@ -2141,8 +2141,12 @@ cleanup:
     TRACE("SHFO FINISHOPERATIONS %#x (%d)\n", hr, ret);
     FileOpCallback(&op, FOCE_FINISHOPERATIONS, NULL, NULL, 0, hr);
 
-    if (FAILED(hr) && CanShowFileOpErrorUI(*op.req) && !op.bHasDisplayedError)
+    // A cancel by the user is not an error to report (as on Windows).
+    if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED) &&
+        CanShowFileOpErrorUI(*op.req) && !op.bHasDisplayedError)
+    {
         SHELL_ErrorBox(op.hWndOwner, hr);
+    }
 
     CoUninitialize();
 

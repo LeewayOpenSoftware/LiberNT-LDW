@@ -7,9 +7,12 @@ extern void func_BusyLoopback(void);
 extern void func_CloseCompletion(void);
 extern void func_MulticastInterface(void);
 extern void func_ReuseDelivery(void);
+extern void func_accept_backlog(void);
 extern void func_addresslistsort(void);
+extern void func_afunix(void);
 extern void func_bind(void);
 extern void func_broadcast(void);
+extern void func_cancel(void);
 extern void func_close(void);
 extern void func_connect_select(void);
 extern void func_dualstack(void);
@@ -21,10 +24,14 @@ extern void func_getservbyport(void);
 extern void func_ioctlsocket(void);
 extern void func_nonblocking(void);
 extern void func_nostartup(void);
+extern void func_oob(void);
 extern void func_open_osfhandle(void);
 extern void func_pollable_event(void);
 extern void func_recv(void);
+extern void func_select_edge(void);
 extern void func_send(void);
+extern void func_shutdown_linger(void);
+extern void func_sockopt(void);
 extern void func_udp_quic(void);
 extern void func_WSAAsync(void);
 extern void func_WSAIoctl(void);
@@ -39,9 +46,12 @@ const struct test winetest_testlist[] =
     { "CloseCompletion", func_CloseCompletion },
     { "MulticastInterface", func_MulticastInterface },
     { "ReuseDelivery", func_ReuseDelivery },
+    { "accept_backlog", func_accept_backlog },
     { "addresslistsort", func_addresslistsort },
+    { "afunix", func_afunix },
     { "bind", func_bind },
     { "broadcast", func_broadcast },
+    { "cancel", func_cancel },
     { "close", func_close },
     { "connect_select", func_connect_select },
     { "dualstack", func_dualstack },
@@ -53,10 +63,14 @@ const struct test winetest_testlist[] =
     { "ioctlsocket", func_ioctlsocket },
     { "nonblocking", func_nonblocking },
     { "nostartup", func_nostartup },
+    { "oob", func_oob },
     { "open_osfhandle", func_open_osfhandle },
     { "pollable_event", func_pollable_event },
     { "recv", func_recv },
+    { "select_edge", func_select_edge },
     { "send", func_send },
+    { "shutdown_linger", func_shutdown_linger },
+    { "sockopt", func_sockopt },
     { "udp_quic", func_udp_quic },
     { "WSAAsync", func_WSAAsync },
     { "WSAIoctl", func_WSAIoctl },

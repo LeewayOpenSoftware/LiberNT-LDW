@@ -42,6 +42,7 @@ typedef struct
     ULONG AuthenticationPackage;
     BOOL bDisableCAD;
     BOOL bAutoAdminLogon;
+    BOOL bUserShellStarted;
     BOOL bDontDisplayLastUserName;
     BOOL bShutdownWithoutLogon;
     BOOL bIgnoreShiftOverride;

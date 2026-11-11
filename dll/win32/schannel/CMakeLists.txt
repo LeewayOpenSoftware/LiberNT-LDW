@@ -3,6 +3,7 @@ add_definitions(-D_WINE)
 spec2def(schannel.dll schannel.spec)
 
 list(APPEND SOURCE
+    adapters.c
     lsamode.c
     schannel_main.c
     usermode.c

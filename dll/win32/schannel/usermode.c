@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "precomp.h"
+
 #include <stdarg.h>
 
 #include "ntstatus.h"
@@ -33,35 +35,35 @@ WINE_DEFAULT_DEBUG_CHANNEL(schannel);
 
 static SECPKG_USER_FUNCTION_TABLE secPkgUserTables[2] =
 { {
-    NULL, /* InstanceInit */
+    SchannelSpInstanceInit,
     NULL, /* InitUserModeContext */
-    NULL, /* MakeSignature */
-    NULL, /* VerifySignature */
-    NULL, /* SealMessage */
-    NULL, /* UnsealMessage */
-    NULL, /* GetContextToken */
-    NULL, /* SpQueryContextAttributes */
-    NULL, /* CompleteAuthToken */
-    NULL, /* DeleteUserModeContext */
+    SchannelUsrMakeSignature,
+    SchannelUsrVerifySignature,
+    SchannelUsrSealMessage,
+    SchannelUsrUnsealMessage,
+    SchannelUsrGetContextToken,
+    SchannelSpQueryContextAttributes,
+    SchannelUsrCompleteAuthToken,
+    SchannelUsrDeleteUserModeContext,
     NULL, /* FormatCredentials */
     NULL, /* MarshallSupplementalCreds */
-    NULL, /* ExportContext */
-    NULL, /* ImportContext */
+    SchannelUsrExportContext,
+    SchannelUsrImportContext,
   }, {
-    NULL, /* InstanceInit */
+    SchannelSpInstanceInit,
     NULL, /* InitUserModeContext */
-    NULL, /* MakeSignature */
-    NULL, /* VerifySignature */
-    NULL, /* SealMessage */
-    NULL, /* UnsealMessage */
-    NULL, /* GetContextToken */
-    NULL, /* SpQueryContextAttributes */
-    NULL, /* CompleteAuthToken */
-    NULL, /* DeleteUserModeContext */
+    SchannelUsrMakeSignature,
+    SchannelUsrVerifySignature,
+    SchannelUsrSealMessage,
+    SchannelUsrUnsealMessage,
+    SchannelUsrGetContextToken,
+    SchannelSpQueryContextAttributes,
+    SchannelUsrCompleteAuthToken,
+    SchannelUsrDeleteUserModeContext,
     NULL, /* FormatCredentials */
     NULL, /* MarshallSupplementalCreds */
-    NULL, /* ExportContext */
-    NULL, /* ImportContext */
+    SchannelUsrExportContext,
+    SchannelUsrImportContext,
   }
 };
 

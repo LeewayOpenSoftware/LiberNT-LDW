@@ -112,6 +112,36 @@ static BOOL CRYPT_CheckRestrictedRoot(HCERTSTORE store)
     return ret;
 }
 
+typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT
+{
+    DWORD       cbSize;
+    HCERTSTORE  hRestrictedRoot;
+    HCERTSTORE  hRestrictedTrust;
+    HCERTSTORE  hRestrictedOther;
+    DWORD       cAdditionalStore;
+    HCERTSTORE *rghAdditionalStore;
+    DWORD       dwFlags;
+    DWORD       dwUrlRetrievalTimeout;
+    DWORD       MaximumCachedCertificates;
+    DWORD       CycleDetectionModulus;
+} CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT;
+
+typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS
+{
+    DWORD       cbSize;
+    HCERTSTORE  hRestrictedRoot;
+    HCERTSTORE  hRestrictedTrust;
+    HCERTSTORE  hRestrictedOther;
+    DWORD       cAdditionalStore;
+    HCERTSTORE *rghAdditionalStore;
+    DWORD       dwFlags;
+    DWORD       dwUrlRetrievalTimeout;
+    DWORD       MaximumCachedCertificates;
+    DWORD       CycleDetectionModulus;
+    HCERTSTORE  hExclusiveRoot;
+    HCERTSTORE  hExclusiveTrustedPeople;
+} CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS;
+
 HCERTCHAINENGINE CRYPT_CreateChainEngine(HCERTSTORE root, DWORD system_store, const CERT_CHAIN_ENGINE_CONFIG *config)
 {
     CertificateChainEngine *engine;
@@ -120,7 +150,7 @@ HCERTCHAINENGINE CRYPT_CreateChainEngine(HCERTSTORE root, DWORD system_store, co
     if (root) {
         root = CertDuplicateStore(root);
     } else {
-        if(config->cbSize >= sizeof(CERT_CHAIN_ENGINE_CONFIG) && config->hExclusiveRoot)
+        if(config->cbSize >= sizeof(CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS) && config->hExclusiveRoot)
             root = CertDuplicateStore(config->hExclusiveRoot);
         else if (config->hRestrictedRoot)
             root = CertDuplicateStore(config->hRestrictedRoot);
@@ -206,36 +236,6 @@ static void free_chain_engine(CertificateChainEngine *engine)
     CertCloseStore(engine->hRoot, 0);
     CryptMemFree(engine);
 }
-
-typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT
-{
-    DWORD       cbSize;
-    HCERTSTORE  hRestrictedRoot;
-    HCERTSTORE  hRestrictedTrust;
-    HCERTSTORE  hRestrictedOther;
-    DWORD       cAdditionalStore;
-    HCERTSTORE *rghAdditionalStore;
-    DWORD       dwFlags;
-    DWORD       dwUrlRetrievalTimeout;
-    DWORD       MaximumCachedCertificates;
-    DWORD       CycleDetectionModulus;
-} CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT;
-
-typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS
-{
-    DWORD       cbSize;
-    HCERTSTORE  hRestrictedRoot;
-    HCERTSTORE  hRestrictedTrust;
-    HCERTSTORE  hRestrictedOther;
-    DWORD       cAdditionalStore;
-    HCERTSTORE *rghAdditionalStore;
-    DWORD       dwFlags;
-    DWORD       dwUrlRetrievalTimeout;
-    DWORD       MaximumCachedCertificates;
-    DWORD       CycleDetectionModulus;
-    HCERTSTORE  hExclusiveRoot;
-    HCERTSTORE  hExclusiveTrustedPeople;
-} CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS;
 
 BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig,
  HCERTCHAINENGINE *phChainEngine)
@@ -3231,12 +3231,46 @@ static BOOL WINAPI verify_basic_constraints_policy(LPCSTR szPolicyOID,
     return TRUE;
 }
 
+/* Parses a dotted-quad IPv4 literal. Returns FALSE for anything else, so a
+ * host name is never mistaken for an address. */
+static BOOL parse_ipv4_literal(LPCWSTR str, BYTE addr[4])
+{
+    DWORD part;
+    int i;
+
+    for (i = 0; i < 4; i++)
+    {
+        DWORD digits = 0;
+
+        part = 0;
+        while (*str >= '0' && *str <= '9')
+        {
+            part = part * 10 + (*str - '0');
+            if (part > 255 || ++digits > 3)
+                return FALSE;
+            str++;
+        }
+        if (!digits)
+            return FALSE;
+        addr[i] = (BYTE)part;
+        if (i < 3)
+        {
+            if (*str != '.')
+                return FALSE;
+            str++;
+        }
+    }
+    return *str == 0;
+}
+
 static BOOL match_dns_to_subject_alt_name(const CERT_EXTENSION *ext,
  LPCWSTR server_name)
 {
     BOOL matches = FALSE;
     CERT_ALT_NAME_INFO *subjectName;
     DWORD size;
+    BYTE ip[4];
+    BOOL is_ip = server_name && parse_ipv4_literal(server_name, ip);
 
     TRACE_(chain)("%s\n", debugstr_w(server_name));
     /* This could be spoofed by the embedded NULL vulnerability, since the
@@ -3260,7 +3294,17 @@ static BOOL match_dns_to_subject_alt_name(const CERT_EXTENSION *ext,
          */
         for (i = 0; !matches && i < subjectName->cAltEntry; i++)
         {
-            if (subjectName->rgAltEntry[i].dwAltNameChoice ==
+            /* An IP literal server name is matched against iPAddress entries,
+             * as native crypt32 does; the 4 bytes are the IPv4 address. */
+            if (is_ip &&
+             subjectName->rgAltEntry[i].dwAltNameChoice ==
+             CERT_ALT_NAME_IP_ADDRESS)
+            {
+                if (subjectName->rgAltEntry[i].IPAddress.cbData == 4 &&
+                 !memcmp(subjectName->rgAltEntry[i].IPAddress.pbData, ip, 4))
+                    matches = TRUE;
+            }
+            else if (subjectName->rgAltEntry[i].dwAltNameChoice ==
              CERT_ALT_NAME_DNS_NAME)
             {
                 TRACE_(chain)("dNSName: %s\n", debugstr_w(
@@ -3580,6 +3624,18 @@ static BOOL WINAPI verify_ssl_policy(LPCSTR szPolicyOID,
         /* For a cyclic chain, which element is a cycle isn't meaningful */
         pPolicyStatus->lElementIndex = -1;
     }
+#ifdef __REACTOS__
+    else if (pChainContext->TrustStatus.dwErrorStatus &
+     CERT_TRUST_IS_PARTIAL_CHAIN &&
+     !(checks & SECURITY_FLAG_IGNORE_UNKNOWN_CA) &&
+     !(baseChecks & CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG))
+    {
+        pPolicyStatus->dwError = CERT_E_CHAINING;
+        find_element_with_error(pChainContext,
+         CERT_TRUST_IS_PARTIAL_CHAIN, &pPolicyStatus->lChainIndex,
+         &pPolicyStatus->lElementIndex);
+    }
+#endif
     else if (pChainContext->TrustStatus.dwErrorStatus &
      CERT_TRUST_IS_NOT_TIME_VALID &&
      !(checks & SECURITY_FLAG_IGNORE_CERT_DATE_INVALID) &&

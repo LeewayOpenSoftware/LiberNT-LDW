@@ -301,6 +301,8 @@ CSR_SERVER_DLL_INIT(UserServerDllInitialization)
         return Status;
     }
 
+    CallInitCommonControls();
+
     Status = CsrExecServerThread(UserPowerRequestThread, 0);
     if (!NT_SUCCESS(Status))
     {

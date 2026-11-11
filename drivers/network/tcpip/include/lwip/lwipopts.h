@@ -77,7 +77,8 @@
 
 #define LWIP_HOOK_IP4_DONT_FRAGMENT(proto) ((proto) == IP_PROTO_TCP)
 #define LWIP_HOOK_IP6_PATH_OUTPUT(netif, src, dest, nexth, p) LibIP6PathOutput(netif, src, dest, nexth, p)
-#define LWIP_HOOK_IP6_ADDR_STATE_CHANGED(netif, idx) TiSignalChange()
+#define LWIP_HOOK_IP6_ADDR_STATE_CHANGED(netif, idx) LibIP6AddressStateChanged()
+#define LWIP_HOOK_ND6_NEIGHBOR_CHANGED() LibIP6NeighborChanged()
 
 unsigned int Random(void);
 #define LWIP_RAND() ((u32_t)Random())

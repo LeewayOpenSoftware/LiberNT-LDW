@@ -147,6 +147,11 @@ static const MIB_IPINTERFACE_ROW *find_interface_row(const MIB_IPINTERFACE_TABLE
     return NULL;
 }
 
+/* A row is NULL only for MibInitialNotification. Every other notification
+ * names the row it is about: an NSI completion that leaves the table as the
+ * last snapshot saw it (another table's change, a failed read) is not
+ * reported, because a parameter notification without a row tells the caller
+ * nothing and arrives by the hundreds while the stack is busy. */
 static void call_network_change_notification(struct network_change_notification *notification, void *row, MIB_NOTIFICATION_TYPE type)
 {
     EnterCriticalSection(&notification->callback_lock);
@@ -166,13 +171,11 @@ static void dispatch_interface_changes(struct network_change_notification *notif
     const MIB_IPINTERFACE_ROW *old_row;
     ULONG index;
     DWORD error;
-    BOOL notified = FALSE;
 
     error = GetIpInterfaceTable(family, &current);
     if (error)
     {
         if (current) FreeMibTable(current);
-        call_network_change_notification(notification, NULL, MibParameterNotification);
         return;
     }
 
@@ -182,12 +185,10 @@ static void dispatch_interface_changes(struct network_change_notification *notif
         if (!old_row)
         {
             call_network_change_notification(notification, &current->Table[index], MibAddInstance);
-            notified = TRUE;
         }
         else if (memcmp(old_row, &current->Table[index], sizeof(*old_row)))
         {
             call_network_change_notification(notification, &current->Table[index], MibParameterNotification);
-            notified = TRUE;
         }
     }
 
@@ -197,11 +198,9 @@ static void dispatch_interface_changes(struct network_change_notification *notif
         {
             if (find_interface_row(current, &snapshot->Table[index])) continue;
             call_network_change_notification(notification, &snapshot->Table[index], MibDeleteInstance);
-            notified = TRUE;
         }
     }
 
-    if (!notified && !network_change_notification_cancelled(notification)) call_network_change_notification(notification, NULL, MibParameterNotification);
     if (snapshot) FreeMibTable(snapshot);
     if (family == AF_INET) notification->ipv4_snapshot = current;
     else notification->ipv6_snapshot = current;
@@ -231,13 +230,11 @@ static void dispatch_unicast_changes(struct network_change_notification *notific
     const MIB_UNICASTIPADDRESS_ROW *old_row;
     ULONG index;
     DWORD error;
-    BOOL notified = FALSE;
 
     error = GetUnicastIpAddressTable(family, &current);
     if (error)
     {
         if (current) FreeMibTable(current);
-        call_network_change_notification(notification, NULL, MibParameterNotification);
         return;
     }
 
@@ -247,12 +244,10 @@ static void dispatch_unicast_changes(struct network_change_notification *notific
         if (!old_row)
         {
             call_network_change_notification(notification, &current->Table[index], MibAddInstance);
-            notified = TRUE;
         }
         else if (memcmp(old_row, &current->Table[index], sizeof(*old_row)))
         {
             call_network_change_notification(notification, &current->Table[index], MibParameterNotification);
-            notified = TRUE;
         }
     }
 
@@ -262,11 +257,9 @@ static void dispatch_unicast_changes(struct network_change_notification *notific
         {
             if (find_unicast_row(current, &snapshot->Table[index])) continue;
             call_network_change_notification(notification, &snapshot->Table[index], MibDeleteInstance);
-            notified = TRUE;
         }
     }
 
-    if (!notified && !network_change_notification_cancelled(notification)) call_network_change_notification(notification, NULL, MibParameterNotification);
     if (snapshot) FreeMibTable(snapshot);
     if (family == AF_INET) notification->ipv4_snapshot = current;
     else notification->ipv6_snapshot = current;
@@ -299,13 +292,11 @@ static void dispatch_route_changes(struct network_change_notification *notificat
     const MIB_IPFORWARD_ROW2 *old_row;
     ULONG index;
     DWORD error;
-    BOOL notified = FALSE;
 
     error = GetIpForwardTable2(family, &current);
     if (error)
     {
         if (current) FreeMibTable(current);
-        call_network_change_notification(notification, NULL, MibParameterNotification);
         return;
     }
 
@@ -315,12 +306,10 @@ static void dispatch_route_changes(struct network_change_notification *notificat
         if (!old_row)
         {
             call_network_change_notification(notification, &current->Table[index], MibAddInstance);
-            notified = TRUE;
         }
         else if (memcmp(old_row, &current->Table[index], sizeof(*old_row)))
         {
             call_network_change_notification(notification, &current->Table[index], MibParameterNotification);
-            notified = TRUE;
         }
     }
 
@@ -330,11 +319,9 @@ static void dispatch_route_changes(struct network_change_notification *notificat
         {
             if (find_route_row(current, &snapshot->Table[index])) continue;
             call_network_change_notification(notification, &snapshot->Table[index], MibDeleteInstance);
-            notified = TRUE;
         }
     }
 
-    if (!notified && !network_change_notification_cancelled(notification)) call_network_change_notification(notification, NULL, MibParameterNotification);
     if (snapshot) FreeMibTable(snapshot);
     if (family == AF_INET) notification->ipv4_snapshot = current;
     else notification->ipv6_snapshot = current;

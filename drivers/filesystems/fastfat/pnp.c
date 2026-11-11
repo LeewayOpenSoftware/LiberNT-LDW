@@ -714,6 +714,20 @@ Return Value:
     FatAcquireExclusiveVcb( IrpContext, Vcb );
 
     //
+    //  The backing device is physically gone. Mark the volume bad and ask
+    //  the real device to verify, so any further or retried writes fail fast
+    //  instead of being requeued by the cache manager. This lets the purge
+    //  below actually discard the (now unrecoverable) dirty data rather than
+    //  finding pages pinned under a write that can never succeed - otherwise
+    //  the FCB data section and its stream file object keep a reference on
+    //  the target device and the volume never dismounts (no safe removal).
+    //
+    Vcb->VcbCondition = VcbBad;
+    if (Vcb->Vpb != NULL && Vcb->Vpb->RealDevice != NULL) {
+        SetFlag( Vcb->Vpb->RealDevice->Flags, DO_VERIFY_VOLUME );
+    }
+
+    //
     //  We need to pass this down before starting the dismount, which
     //  could disconnect us immediately from the stack.
     //

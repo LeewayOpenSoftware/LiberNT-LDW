@@ -1217,14 +1217,8 @@ public:
         m_Tray = pTray;
         m_hwndTray = hwndTray;
 
-        HDC hdc = ::GetDC(NULL);
-        if (hdc)
-        {
-            m_iDpi = GetDeviceCaps(hdc, LOGPIXELSY);
-            ::ReleaseDC(NULL, hdc);
-        }
-        if (m_iDpi <= 0)
-            m_iDpi = 96;
+        /* The real per-monitor DPI is read in OnCreate, once the window
+         * exists (ShellGetDpiForWindow); keep the constructor default until then. */
 
         if (!SM2GetLastUsed(SM2_KEY, L"RecentlyAddedSince"))
             SM2SetLastUsed(SM2_KEY, L"RecentlyAddedSince");
@@ -2793,9 +2787,8 @@ public:
         return DefSubclassProc(hWnd, uMsg, wParam, lParam);
     }
 
-    LRESULT OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+    VOID BuildFonts()
     {
-        RefreshLiquidMaterial();
         NONCLIENTMETRICSW ncm;
         ncm.cbSize = sizeof(ncm);
         LOGFONTW lf;
@@ -2819,6 +2812,26 @@ public:
 
         m_hSearchIcon = (HICON)LoadImageW(hExplorerInstance, MAKEINTRESOURCEW(IDI_FLU_SEARCHREG),
                                           IMAGE_ICON, Sc(16), Sc(16), LR_DEFAULTCOLOR);
+    }
+
+    VOID DestroyFonts()
+    {
+        if (m_hFont) { DeleteObject(m_hFont); m_hFont = NULL; }
+        if (m_hFontCue) { DeleteObject(m_hFontCue); m_hFontCue = NULL; }
+        if (m_hFontUser) { DeleteObject(m_hFontUser); m_hFontUser = NULL; }
+        if (m_hSearchIcon) { DestroyIcon(m_hSearchIcon); m_hSearchIcon = NULL; }
+    }
+
+    LRESULT OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+    {
+        RefreshLiquidMaterial();
+
+        /* Now that the window exists, pick up its monitor's DPI. */
+        m_iDpi = (int)ShellGetDpiForWindow(m_hWnd);
+        if (m_iDpi <= 0)
+            m_iDpi = 96;
+
+        BuildFonts();
 
         if (!GetCurrentLoggedOnUserName(m_szUser, _countof(m_szUser)))
             StringCchCopyW(m_szUser, _countof(m_szUser), L"User");
@@ -2854,10 +2867,7 @@ public:
         if (m_UserPic.IsWindow())
             m_UserPic.DestroyWindow();
         ClearViewAnim();
-        if (m_hFont) { DeleteObject(m_hFont); m_hFont = NULL; }
-        if (m_hFontCue) { DeleteObject(m_hFontCue); m_hFontCue = NULL; }
-        if (m_hFontUser) { DeleteObject(m_hFontUser); m_hFontUser = NULL; }
-        if (m_hSearchIcon) { DestroyIcon(m_hSearchIcon); m_hSearchIcon = NULL; }
+        DestroyFonts();
         if (m_hLiquidTheme)
         {
             CloseThemeData(m_hLiquidTheme);
@@ -2871,6 +2881,31 @@ public:
     LRESULT OnThemeChanged(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
     {
         RefreshLiquidMaterial();
+        InvalidateRect(NULL, TRUE);
+        return 0;
+    }
+
+    /* Re-read the window's DPI and rebuild the scaled resources when the
+     * monitor DPI or display layout changes (WM_SETTINGCHANGE / WM_DISPLAYCHANGE). */
+    LRESULT OnDpiChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+    {
+        bHandled = FALSE; /* a broadcast: let default processing run too */
+
+        int iNewDpi = (int)ShellGetDpiForWindow(m_hWnd);
+        if (iNewDpi <= 0 || iNewDpi == m_iDpi)
+            return 0;
+
+        m_iDpi = iNewDpi;
+
+        DestroyFonts();
+        BuildFonts();
+        if (m_hwndEdit)
+            ::SendMessageW(m_hwndEdit, WM_SETFONT, (WPARAM)m_hFont, TRUE);
+        m_UserPic.m_iDpi = m_iDpi;
+
+        if (IsWindowVisible())
+            SetWindowPos(NULL, 0, 0, MenuW(), MenuH(),
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         InvalidateRect(NULL, TRUE);
         return 0;
     }
@@ -3172,6 +3207,8 @@ public:
         MESSAGE_HANDLER(WM_CREATE, OnCreate)
         MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
         MESSAGE_HANDLER(WM_THEMECHANGED, OnThemeChanged)
+        MESSAGE_HANDLER(WM_SETTINGCHANGE, OnDpiChange)
+        MESSAGE_HANDLER(WM_DISPLAYCHANGE, OnDpiChange)
         MESSAGE_HANDLER(WM_PAINT, OnPaint)
         MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBkgnd)
         MESSAGE_HANDLER(WM_TIMER, OnTimer)

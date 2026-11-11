@@ -582,6 +582,10 @@ WlxActivateUserShell(
     if (!ret)
         return ret;
 
+    /* The shell's first window takes the display from the boot screen, so later
+     * status messages need a window of their own (see GUIDisplayStatusMessage). */
+    pgContext->bUserShellStarted = TRUE;
+
     /* For convenience, store in the logged-in user's Explorer key, the user name
      * that was entered verbatim in the "Log On" dialog to log into the system.
      * This name may differ from the resulting user name used during authentication. */

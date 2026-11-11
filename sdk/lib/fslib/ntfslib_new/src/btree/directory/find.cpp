@@ -133,7 +133,6 @@ Directory::FindNextFile(_In_  PFileRecord File,
     ULONG IndexRecordSize;
     ULONGLONG BitmapLength;
     ULONGLONG ChildVCN;
-    ULONGLONG DirectoryReference;
     ULONGLONG VisitedVCNs[64];
     ULONG VisitedCount = 0;
     BOOLEAN Descend;
@@ -143,7 +142,6 @@ Directory::FindNextFile(_In_  PFileRecord File,
     if (!File || !(File->Header->Flags & FR_IS_DIRECTORY))
         return STATUS_NOT_FOUND;
     CaseSensitive = File->IsCaseSensitiveDirectory();
-    DirectoryReference = MakeFileReference(File);
 
     ElementLength = PathElementLength(FileName);
     if (ElementLength == 0)
@@ -206,17 +204,8 @@ Directory::FindNextFile(_In_  PFileRecord File,
     if (BitmapLength == 0)
         return STATUS_FILE_CORRUPT_ERROR;
 
-    if (!DiskVolume->IndexWorkBuffer ||
-        DiskVolume->IndexWorkBufferSize < IndexRecordSize)
-    {
-        delete[] DiskVolume->IndexWorkBuffer;
-        DiskVolume->IndexWorkBuffer =
-            new(PagedPool, TAG_NTFS) UCHAR[IndexRecordSize];
-        DiskVolume->IndexWorkBufferSize =
-            DiskVolume->IndexWorkBuffer ? IndexRecordSize : 0;
-        DiskVolume->IndexWorkBufferValid = FALSE;
-    }
-    IndexBufferData = DiskVolume->IndexWorkBuffer;
+    /* This lookup's own buffer: a descent reads each node once. */
+    IndexBufferData = DiskVolume->AcquireIndexScratch(IndexRecordSize);
     if (!IndexBufferData)
     {
         Status = STATUS_INSUFFICIENT_RESOURCES;
@@ -274,9 +263,6 @@ Directory::FindNextFile(_In_  PFileRecord File,
             goto Done;
         }
 
-        if (!DiskVolume->IndexWorkBufferValid ||
-            DiskVolume->IndexWorkFileReference != DirectoryReference ||
-            DiskVolume->IndexWorkVCN != ChildVCN)
         {
             BitmapByte = IndexRecordNumber >> 3;
             BitmapMask = (UCHAR)(1 << (IndexRecordNumber & 7));
@@ -317,10 +303,6 @@ Directory::FindNextFile(_In_  PFileRecord File,
                 Status = STATUS_FILE_CORRUPT_ERROR;
                 goto Done;
             }
-
-            DiskVolume->IndexWorkFileReference = DirectoryReference;
-            DiskVolume->IndexWorkVCN = ChildVCN;
-            DiskVolume->IndexWorkBufferValid = TRUE;
         }
 
         NodeBuffer = (PIndexBuffer)IndexBufferData;
@@ -339,6 +321,7 @@ Directory::FindNextFile(_In_  PFileRecord File,
     }
 
 Done:
-    /* Volume-owned scratch. */
+    if (IndexBufferData)
+        DiskVolume->ReleaseIndexScratch(IndexBufferData, IndexRecordSize);
     return Status;
 }

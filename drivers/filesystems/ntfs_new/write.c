@@ -74,6 +74,7 @@ NtfsGrowForCachedWrite(_In_ PVolumeContextBlock VolCB,
     }
 
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     Header->AllocationSize.QuadPart = Allocation;
     if (Header->FileSize.QuadPart < EndOffset)
         Header->FileSize.QuadPart = EndOffset;
@@ -104,8 +105,34 @@ NtfsPersistPendingSize(_In_ PVolumeContextBlock VolCB,
     FileSize = Header->FileSize.QuadPart;
 
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+    if (!NT_SUCCESS(Status))
+    {
+        NtfsReleaseMetadata(VolCB);
+        ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
+        return Status;
+    }
+    /*
+     * The size a cached write grew is written to the record here, at
+     * cleanup or just before an explicit size change. That is bookkeeping
+     * for writes that stamped the times when they happened (NtfsFastIoWrite
+     * and the write path do, once per system time tick), so the times stay
+     * where the last write left them, as on Windows, where a close moves
+     * nothing (Lab03 L3 P1: every file grown by cached writes had its
+     * LastWriteTime and ChangeTime jump to the close time, and tstime's
+     * append-close scenario shows it). SetFileDataSize and
+     * SetFileAllocationSize stamp inside the library, so take the automatic
+     * fields out of the record's mask for these two calls only. The handle's
+     * own mask comes back right after, and NtfsRefreshDirectoryRecord sets
+     * it again before any later use. An explicit SetEndOfFile or
+     * FileAllocationInformation keeps its stamp: it calls the library itself
+     * after this returns, with the handle's mask in place.
+     */
+    Status = NtfsFileRecordSetAutomaticTimestampMask(
+        FileCB->FileRec,
+        FileCB->AutomaticTimestampMask & ~NTFS_AUTOMATIC_TIMESTAMP_FIELDS);
     if (!NT_SUCCESS(Status))
     {
         NtfsReleaseMetadata(VolCB);
@@ -135,6 +162,7 @@ NtfsPersistPendingSize(_In_ PVolumeContextBlock VolCB,
     {
         Status = STATUS_FILE_CORRUPT_ERROR;
     }
+    (void)NtfsFileRecordSetAutomaticTimestampMask(FileCB->FileRec, FileCB->AutomaticTimestampMask);
     NtfsReleaseMetadata(VolCB);
 
     if (NT_SUCCESS(Status))
@@ -192,7 +220,13 @@ NtfsCommitFileRange(_In_ PVolumeContextBlock VolCB,
             ReturnedStartingVcn > Vcn ||
             Extent.NextVcn <= Vcn)
         {
-            return STATUS_SUCCESS;
+            /*
+             * The range cannot be mapped to disk offsets, so the held-back
+             * blocks cannot be picked out. The caller was promised the data
+             * is on the disk: commit everything the block cache holds for
+             * this volume instead of reporting a commit that did not happen.
+             */
+            return NtfsDiskFlushVolumeKm(VolCB->StorageDevice);
         }
 
         RunEndVcn = min(Extent.NextVcn, EndVcn);
@@ -290,6 +324,24 @@ NtfsCachedWrite(_In_ PVolumeContextBlock VolCB,
 
     ExReleaseResourceLite(NtfsGetMainResource(FileCB));
 
+    /*
+     * Write times, as measured on Windows 11 26100: LastWriteTime and
+     * ChangeTime move on every write, a second write on the same handle
+     * included, and not at close. Paging writes never stamp them (below),
+     * so every cached write does, at most once per system time tick per
+     * stream: a write within the same tick would store the same time.
+     */
+    if (Handled && NT_SUCCESS(*Status) && FileCB->StreamCB)
+    {
+        LARGE_INTEGER Now;
+
+        KeQuerySystemTime(&Now);
+        if (Now.QuadPart != FileCB->StreamCB->LastWriteStampTime)
+        {
+            FileCB->StreamCB->LastWriteStampTime = Now.QuadPart;
+            FileCB->WriteTimesStamped = FALSE;
+        }
+    }
     if (Handled && NT_SUCCESS(*Status) && !FileCB->WriteTimesStamped)
     {
         FileCB->WriteTimesStamped = TRUE;
@@ -317,6 +369,21 @@ NTAPI
 NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
              _Inout_ PIRP Irp)
 {
+    /* See NtfsFsdRead: a dismounted volume rejects every existing handle
+       except the DASD handle that issued the dismount. */
+    if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject &&
+        ((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension)->Dismounted)
+    {
+        PFileContextBlock FileCB =
+            NtfsGetFileContext(IoGetCurrentIrpStackLocation(Irp)->FileObject);
+        if (FileCB == NULL || !FileCB->DismountedVolume)
+        {
+            Irp->IoStatus.Status = STATUS_VOLUME_DISMOUNTED;
+            Irp->IoStatus.Information = 0;
+            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+            return STATUS_VOLUME_DISMOUNTED;
+        }
+    }
     if (VolumeDeviceObject != NtfsDiskFileSystemDeviceObject)
         NtfsBindVolumeDisk((PVolumeContextBlock)VolumeDeviceObject->DeviceExtension);
     /* Overview:
@@ -546,7 +613,22 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
     else
     {
+        BOOLEAN TimesSuppressed = FALSE;
+
         Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
+        if (NT_SUCCESS(Status) && PagingIo)
+        {
+            /* A paging write (lazy writer, CcFlushCache, mapped page
+             * writer) moves data a user write or a mapped view already
+             * changed: it leaves the write times alone, as on Windows. Only
+             * for this call: the refresh above sets the handle's own mask
+             * again before any other use of the record. */
+            Status = NtfsFileRecordSetAutomaticTimestampMask(
+                FileRec,
+                FileCB->AutomaticTimestampMask &
+                    ~(NTFS_BASIC_INFO_LAST_WRITE_TIME | NTFS_BASIC_INFO_CHANGE_TIME));
+            TimesSuppressed = NT_SUCCESS(Status);
+        }
         if (NT_SUCCESS(Status))
             Status = NtfsFileRecordWriteFileData(FileRec,
                                                  RequestedType,
@@ -554,6 +636,8 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                                  Buffer,
                                                  &Length,
                                                  &ByteOffset);
+        if (TimesSuppressed)
+            (void)NtfsFileRecordSetAutomaticTimestampMask(FileRec, FileCB->AutomaticTimestampMask);
 
         /* The library updates duplicated $FILE_NAME information through a
          * separate parent record. Invalidate parsed directory snapshots
@@ -578,17 +662,35 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
     NtfsReleaseMetadata(VolCB);
 
+#if DBG
+    /* Lab trace: one line per paging write, so a power-cut probe can read a
+     * file's write-back timeline off COM1. The top-level IRP value tells the
+     * cache manager (2) from the modified page writer (3). Off unless the
+     * NtfsTracePagingWrites registry value asks for it: at 115200 baud the
+     * line costs more than the write and throttles every paging write. */
+    if (PagingIo && gTracePagingWrites)
+    {
+        DPRINT1("NTFS: paging write at %I64u ms: record %lu, offset %I64d, length %lu, status 0x%lx, top-level %p\n",
+                KeQueryInterruptTime() / 10000, NtfsFileRecordGetNumber(FileRec), ByteOffset.QuadPart, Length,
+                Status, IoGetTopLevelIrp());
+    }
+#endif
+
     if (NT_SUCCESS(Status))
     {
         if (!PagingIo)
             NtfsRefreshFileSizes(VolCB, FileCB, FileObj);
         if (!PagingIo && Length != 0 && RequestedType == TypeData)
             NtfsPurgeStreamCache(FileCB, FileObj, &ByteOffset, Length);
-        FileObj->Flags |=
-            FO_FILE_MODIFIED |
-            FO_FILE_SIZE_CHANGED;
+        /* A paging write is not a modification by the file object's owner
+         * (it may be any handle's file object backing the cache). */
         if (!PagingIo)
+        {
+            FileObj->Flags |=
+                FO_FILE_MODIFIED |
+                FO_FILE_SIZE_CHANGED;
             FileCB->NotifyFilter |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+        }
 
         /* A cache flush must not change the application's file pointer. */
         if (!PagingIo && (IrpSp->FileObject->Flags & FO_SYNCHRONOUS_IO))
@@ -599,11 +701,40 @@ NtfsFsdWrite(_In_ PDEVICE_OBJECT VolumeDeviceObject,
 
         Irp->IoStatus.Information = Length;
 
-        /* FIXME: other uncached writes smaller than a block stay in the library block cache until a flush or its lazy writer */
-        if (!PagingIo && Length != 0 &&
-            (BooleanFlagOn(FileObj->Flags, FO_WRITE_THROUGH) || BooleanFlagOn(IrpSp->Flags, SL_WRITE_THROUGH)))
+        /*
+         * The library holds a write that fits in one block back in its block
+         * cache until its own lazy pass. That is right for metadata and wrong
+         * for every write that reaches this point: a paging write is the
+         * cache manager or the modified page writer putting data on the
+         * volume, and the modified page writer hands over exactly one page
+         * at a time; a non-cached write promises the caller the same; a
+         * write-through write says so explicitly. Commit the range so the
+         * data is on the disk when the request completes. Runs larger than
+         * a block already went direct, so this only costs what was held:
+         * a small non-cached write now pays one synchronous device write,
+         * which is what it asked for.
+         *
+         * The commit stages each held-back block through non-paged pool. If
+         * that allocation fails the data is still in the block cache and the
+         * library's lazy pass writes it a second later, so a paging or
+         * non-cached write completes anyway; only a caller that asked for
+         * write-through is told.
+         */
+        if (Length != 0 &&
+            (PagingIo ||
+             BooleanFlagOn(Irp->Flags, IRP_NOCACHE) ||
+             BooleanFlagOn(FileObj->Flags, FO_WRITE_THROUGH) ||
+             BooleanFlagOn(IrpSp->Flags, SL_WRITE_THROUGH)))
         {
-            Status = NtfsCommitFileRange(VolCB, FileCB, (ULONGLONG)ByteOffset.QuadPart, Length);
+            NTSTATUS CommitStatus = NtfsCommitFileRange(VolCB, FileCB, (ULONGLONG)ByteOffset.QuadPart, Length);
+
+            if (!NT_SUCCESS(CommitStatus) &&
+                (CommitStatus != STATUS_INSUFFICIENT_RESOURCES ||
+                 BooleanFlagOn(FileObj->Flags, FO_WRITE_THROUGH) ||
+                 BooleanFlagOn(IrpSp->Flags, SL_WRITE_THROUGH)))
+            {
+                Status = CommitStatus;
+            }
         }
     }
     else

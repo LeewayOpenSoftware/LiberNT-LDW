@@ -56,6 +56,7 @@ ServiceControlHandler(
             UpdateServiceStatus(ServiceStatusHandle, SERVICE_STOP_PENDING, 1);
             RpcMgmtStopServerListening(NULL);
             LlmnrStop();
+            HostsWatchStop();
             DnsIntCacheFree();
             UpdateServiceStatus(ServiceStatusHandle, SERVICE_STOPPED, 0);
             break;
@@ -106,7 +107,9 @@ ServiceMain(
 
     DnsIntCacheInitialize();
 
-    ReadHostsFile();
+    /* Read the hosts file, and keep watching its directory for changes */
+    HostsWatchStart();
+    ReloadHostsFile();
 
     LlmnrStart();
 

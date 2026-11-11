@@ -138,6 +138,8 @@ InitDisplayDriver(
     pGraphicsDevice = EngpRegisterGraphicsDevice(&ustrDeviceName,
                                                  &ustrDisplayDrivers,
                                                  &ustrDescription);
+    ERR("K2TRACE: W32K InitDisplayDriver(%ls) key=%ls drivers=%ls vga=%lu -> %p\n",
+        pwszDeviceName, pwszRegKey, awcBuffer, dwVga, pGraphicsDevice);
     if (pGraphicsDevice && dwVga)
     {
         pGraphicsDevice->StateFlags |= DISPLAY_DEVICE_VGA_COMPATIBLE;
@@ -192,6 +194,8 @@ InitVideo(VOID)
             KeDelayExecutionThread(KernelMode, FALSE, &Interval);
         }
     }
+    ERR("K2TRACE: W32K InitVideo status 0x%lx device %p\n",
+        Status, EngpFindGraphicsDevice(NULL, 0));
     if (!NT_SUCCESS(Status))
         return Status;
 
@@ -553,25 +557,28 @@ UserEnumDisplaySettings(
     PDEVOBJ_vRelease(ppdev);
 
     iFoundMode = 0;
-    for (i = 0; i < pGraphicsDevice->cDevModes; i++)
+    if (pGraphicsDevice->pDevModeList != NULL)
     {
-        pdmentry = &pGraphicsDevice->pDevModeList[i];
-
-        /* FIXME: Consider EDS_RAWMODE */
-#if 0
-        if ((!(dwFlags & EDS_RAWMODE) && (pdmentry->dwFlags & 1)) ||!
-            (dwFlags & EDS_RAWMODE))
-#endif
+        for (i = 0; i < pGraphicsDevice->cDevModes; i++)
         {
-            /* Is this the one we want? */
-            if (iFoundMode == iModeNum)
-            {
-                *ppdm = pdmentry->pdm;
-                return STATUS_SUCCESS;
-            }
+            pdmentry = &pGraphicsDevice->pDevModeList[i];
 
-            /* Increment number of found modes */
-            iFoundMode++;
+            /* FIXME: Consider EDS_RAWMODE */
+#if 0
+            if ((!(dwFlags & EDS_RAWMODE) && (pdmentry->dwFlags & 1)) ||!
+                (dwFlags & EDS_RAWMODE))
+#endif
+            {
+                /* Is this the one we want? */
+                if (iFoundMode == iModeNum)
+                {
+                    *ppdm = pdmentry->pdm;
+                    return STATUS_SUCCESS;
+                }
+
+                /* Increment number of found modes */
+                iFoundMode++;
+            }
         }
     }
 

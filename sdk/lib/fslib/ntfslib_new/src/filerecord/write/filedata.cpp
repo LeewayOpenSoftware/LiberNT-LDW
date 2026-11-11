@@ -920,6 +920,93 @@ WriteRunBytes(_In_ PVolume DiskVolume,
         : STATUS_FILE_CORRUPT_ERROR;
 }
 
+/*
+ * Pointer-after-pointee ordering for a record and the attribute content it is
+ * about to name. The kernel environment holds every write of one block or
+ * less back in its cache and commits dirty blocks in no dependency order, so
+ * a record saying "non-resident, N bytes initialized" or carrying a grown run
+ * list can reach the disk before the bytes it points to; after a cut the
+ * extent reads as whatever the clusters held (J36 r149: a zero $ATTRIBUTE_LIST
+ * extent made the directory unreadable, a zero INDX block made its index
+ * unreachable). Only the attributes whose missing content breaks the record
+ * or the index pay for the ordering; $DATA keeps the plain write-back path,
+ * where lost content reads as zeros, which NTFS allows after a cut.
+ */
+static BOOLEAN
+AttributeContentIsOrdered(_In_ PAttribute Attribute)
+{
+    return Attribute->AttributeType == TypeIndexAllocation ||
+           Attribute->AttributeType == TypeAttributeList ||
+           Attribute->AttributeType == TypeBitmap;
+}
+
+/*
+ * Orders PointerRecord after [Offset, Offset + Length) of Runs, run by run
+ * (Volume::OrderAfter). PointerRecord NULL, or a record whose disk offset
+ * cannot be resolved, commits the bytes synchronously instead.
+ */
+static NTSTATUS
+OrderRecordAfterRunBytes(_In_ PVolume DiskVolume,
+                         _In_opt_ PFileRecord PointerRecord,
+                         _In_ PDataRun Runs,
+                         _In_ ULONGLONG Offset,
+                         _In_ ULONGLONG Length)
+{
+    ULONGLONG PointerOffset = 0;
+    ULONG PointerLength = 0;
+    NTSTATUS Status;
+
+    if (Length == 0)
+        return STATUS_SUCCESS;
+    if (PointerRecord &&
+        PointerRecord->RecordNumber != MAXULONG &&
+        NT_SUCCESS(DiskVolume->MFT->GetFileRecordDiskOffset(
+            PointerRecord->RecordNumber,
+            &PointerOffset)))
+    {
+        PointerLength = DiskVolume->MFT->FileRecordSize;
+    }
+
+    for (PDataRun Run = Runs;
+         Run && Length != 0;
+         Run = Run->NextRun)
+    {
+        ULONGLONG BytesInRun =
+            Run->Length * BytesPerCluster(DiskVolume);
+        ULONGLONG InRun;
+
+        if (Offset >= BytesInRun)
+        {
+            Offset -= BytesInRun;
+            continue;
+        }
+        InRun = min(Length, BytesInRun - Offset);
+        if (!Run->IsSparse)
+        {
+            ULONGLONG Done = 0;
+
+            while (Done < InRun)
+            {
+                ULONG Chunk = (ULONG)min(
+                    InRun - Done,
+                    (ULONGLONG)NTFS_ZERO_CHUNK_SIZE);
+
+                Status = DiskVolume->OrderAfter(
+                    PointerOffset,
+                    PointerLength,
+                    GetOffset(Run->LCN) + Offset + Done,
+                    Chunk);
+                if (!NT_SUCCESS(Status))
+                    return Status;
+                Done += Chunk;
+            }
+        }
+        Length -= InRun;
+        Offset = 0;
+    }
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS
 ZeroRunBytes(_In_ PVolume DiskVolume,
              _In_ PDataRun Runs,
@@ -2419,6 +2506,98 @@ FileRecord::EnsureAttributeListForMappingGrowth(
 
 static const ULONG ResidentPromotionGrowth = 0x40 - 0x18 + 0x10;
 
+/*
+ * Free bytes below which a mapping growth creates the attribute list up
+ * front (the list itself needs about 0x50 in the base record). The index
+ * root keeps the same room free (Directory::RootGrowthKeepsListRoom).
+ */
+static const ULONG MappingGrowthHeadroom = NTFS_MAPPING_GROWTH_HEADROOM;
+
+NTSTATUS
+FileRecord::SettleGrowthAttributeList()
+{
+    PAttribute ListAttribute;
+    BOOLEAN Unneeded;
+    NTSTATUS Status;
+
+    if (!Header || !Data || Header->BaseFileRecord != 0 ||
+        Header->ActualSize > Header->AllocatedSize)
+    {
+        return STATUS_SUCCESS;
+    }
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_SUCCESS;
+    Status = DropUnneededAttributeList(FALSE, &Unneeded);
+    if (!NT_SUCCESS(Status) || !Unneeded)
+        return Status;
+
+    /*
+     * Collapsing hands the list's bytes to the mapping. Done after every
+     * growth, the mapping creeps into the room the list needs, until a
+     * growth can neither fit its mapping nor create a list, and every
+     * further block fails STATUS_BUFFER_TOO_SMALL (a fragmented directory
+     * index stops at about 1700 entries). So collapse only while the base
+     * record keeps that room; otherwise move part of the largest mapping to
+     * an extension record, which the list then names.
+     */
+    if (Header->AllocatedSize - Header->ActualSize + ListAttribute->Length >= MappingGrowthHeadroom)
+        return CollapseUnneededAttributeList();
+    (void)ReleaseBaseRecordSpace(MappingGrowthHeadroom);
+
+    /*
+     * Keep the list even when nothing could move out yet. Collapsing it
+     * here is what starves the record: each later growth would recreate
+     * and drop it while the mapping takes a few more bytes, until there is
+     * no room left to create a list at all (Lab03 L1-B: the mapping filled
+     * the record, free 0, no list). With the list kept, the next growth
+     * that does not fit moves mapping pairs to an extension record through
+     * the normal update path, and the list then names it, as on main.
+     */
+    return STATUS_SUCCESS;
+}
+
+/*
+ * Every mapping update ends here. A list that names only the base record is
+ * dropped, as Windows treats it as corrupt. But dropped after each growth
+ * of a mapping that fills the base record, it hands its bytes to the
+ * mapping, until a growth can neither fit the mapping nor create a list:
+ * a sparse write or a cluster move then fails STATUS_BUFFER_TOO_SMALL with
+ * the base record full and no list. So when dropping it would leave the
+ * base record without the growth headroom, part of the largest mapping
+ * moves to an extension record first, and the list, which then names it,
+ * is kept. Only when nothing can move is the list dropped anyway.
+ */
+NTSTATUS
+FileRecord::SettleUnneededAttributeList()
+{
+    PAttribute ListAttribute;
+    BOOLEAN Unneeded;
+    NTSTATUS Status;
+
+    if (!Header || !Data || Header->BaseFileRecord != 0 ||
+        Header->ActualSize > Header->AllocatedSize ||
+        ReleasingBaseRecordSpace)
+    {
+        return STATUS_SUCCESS;
+    }
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_SUCCESS;
+    Status = DropUnneededAttributeList(FALSE, &Unneeded);
+    if (!NT_SUCCESS(Status) || !Unneeded)
+        return Status;
+
+    if (Header->AllocatedSize - Header->ActualSize + ListAttribute->Length < MappingGrowthHeadroom &&
+        NT_SUCCESS(ReleaseBaseRecordSpace(MappingGrowthHeadroom)))
+    {
+        Status = DropUnneededAttributeList(FALSE, &Unneeded);
+        if (!NT_SUCCESS(Status) || !Unneeded)
+            return Status;
+    }
+    return CollapseUnneededAttributeList();
+}
+
 NTSTATUS
 FileRecord::ReleaseBaseRecordSpace(
     _In_ ULONG Required)
@@ -2500,11 +2679,14 @@ FileRecord::ReleaseBaseRecordSpace(
     MappingReserve = 0;
     if (NT_SUCCESS(Status))
     {
+        /* The commit settles the list again: not from inside this move. */
+        ReleasingBaseRecordSpace = TRUE;
         Status = MappingUpdate
             ? CommitNonResidentMappingUpdate(
                 &MappingUpdate)
             : DiskVolume->MFT->
                 WriteFileRecordToMFT(this);
+        ReleasingBaseRecordSpace = FALSE;
         if (!NT_SUCCESS(Status))
         {
             if (MappingUpdate)
@@ -2813,11 +2995,65 @@ RestoreResident:
         }
         if (SparseFile)
         {
+            /*
+             * A sparse write adds a run pair for every hole, so its mapping
+             * fills the base record as an extending write does: create the
+             * list while the record still has the headroom for it, or once
+             * the mapping no longer fits, and drop it again if the mapping
+             * stayed in the base record.
+             */
+            BOOLEAN ListCreated = FALSE;
+            BOOLEAN ListCreatedHere = FALSE;
+            ULONG SparseLength = *Length;
+
+            if (AttributeOwner == this &&
+                Header->AllocatedSize >= Header->ActualSize &&
+                Header->AllocatedSize - Header->ActualSize < MappingGrowthHeadroom)
+            {
+                Status = EnsureAttributeListForMappingGrowth(AttrType,
+                                                             StreamName,
+                                                             &TargetAttribute,
+                                                             &AttributeOwner,
+                                                             &ListCreated);
+                if (!NT_SUCCESS(Status))
+                    return Status;
+                ListCreatedHere = ListCreated;
+            }
             Status = WriteSparseData(
                 TargetAttribute,
                 Buffer,
                 Length,
                 (ULONGLONG)Offset->QuadPart);
+            if (Status == STATUS_BUFFER_TOO_SMALL)
+            {
+                TargetAttribute = GetAttribute(AttrType, StreamName);
+                AttributeOwner = TargetAttribute
+                    ? GetAttributeOwner(TargetAttribute)
+                    : NULL;
+                if (!TargetAttribute || !AttributeOwner)
+                    return STATUS_FILE_CORRUPT_ERROR;
+                Status = EnsureAttributeListForMappingGrowth(AttrType,
+                                                             StreamName,
+                                                             &TargetAttribute,
+                                                             &AttributeOwner,
+                                                             &ListCreated);
+                if (NT_SUCCESS(Status) && ListCreated)
+                {
+                    ListCreatedHere = TRUE;
+                    *Length = SparseLength;
+                    Status = WriteSparseData(
+                        TargetAttribute,
+                        Buffer,
+                        Length,
+                        (ULONGLONG)Offset->QuadPart);
+                }
+                else if (NT_SUCCESS(Status))
+                {
+                    Status = STATUS_BUFFER_TOO_SMALL;
+                }
+            }
+            if (NT_SUCCESS(Status) && ListCreatedHere)
+                (void)SettleGrowthAttributeList();
             if (NT_SUCCESS(Status))
                 *Length = RequestedLength;
             return Status;
@@ -2840,13 +3076,15 @@ RestoreResident:
              * while the record still has headroom. A reactive retry backs
              * up a first failure inside the remaining window.
              */
-            BOOLEAN ListCreated;
+            BOOLEAN ListCreated = FALSE;
+            BOOLEAN ListCreatedHere = FALSE;
+            BOOLEAN KeepHeadroom;
 
             if (AttributeOwner == this &&
                 Header->AllocatedSize >=
                     Header->ActualSize &&
                 Header->AllocatedSize -
-                    Header->ActualSize < 0x100)
+                    Header->ActualSize < MappingGrowthHeadroom)
             {
                 Status =
                     EnsureAttributeListForMappingGrowth(
@@ -2857,14 +3095,53 @@ RestoreResident:
                         &ListCreated);
                 if (!NT_SUCCESS(Status))
                     return Status;
+                ListCreatedHere = ListCreated;
             }
 
+            /*
+             * Once an earlier growth has moved part of this mapping to an
+             * extension record, the rewrite below would pack every pair
+             * back into the base record whenever they fit, free the
+             * extension and drop the list, and the next growth would have
+             * to create the list again from less room. Each round the
+             * mapping keeps a few more bytes, until no list fits and every
+             * block fails STATUS_BUFFER_TOO_SMALL (Lab03 L1-B: 1404
+             * entries, free 0, no list). So while a list from an earlier
+             * growth exists, the base record keeps the growth headroom,
+             * and the pairs beyond it stay in extension records.
+             */
+            KeepHeadroom =
+                AttributeOwner == this &&
+                !ListCreatedHere &&
+                FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+            if (KeepHeadroom)
+                MappingReserve = MappingGrowthHeadroom;
             Status = AttributeOwner->
                 ExtendNonResidentData(
                 TargetAttribute,
                 Buffer,
                 RequestedLength,
                 (ULONGLONG)Offset->QuadPart);
+            if (KeepHeadroom)
+            {
+                MappingReserve = 0;
+                /* The reserve is a preference: fall back to the full room. */
+                if (Status == STATUS_BUFFER_TOO_SMALL)
+                {
+                    TargetAttribute = GetAttribute(AttrType, StreamName);
+                    if (!TargetAttribute ||
+                        GetAttributeOwner(TargetAttribute) != this)
+                    {
+                        return STATUS_FILE_CORRUPT_ERROR;
+                    }
+                    Status = AttributeOwner->
+                        ExtendNonResidentData(
+                        TargetAttribute,
+                        Buffer,
+                        RequestedLength,
+                        (ULONGLONG)Offset->QuadPart);
+                }
+            }
             if (Status == STATUS_BUFFER_TOO_SMALL)
             {
                 Status =
@@ -2876,6 +3153,7 @@ RestoreResident:
                         &ListCreated);
                 if (NT_SUCCESS(Status) && ListCreated)
                 {
+                    ListCreatedHere = TRUE;
                     Status = AttributeOwner->
                         ExtendNonResidentData(
                         TargetAttribute,
@@ -2890,6 +3168,16 @@ RestoreResident:
                         STATUS_BUFFER_TOO_SMALL;
                 }
             }
+            /*
+             * The list made for the growth is only needed if a mapping
+             * segment actually went to an extension record. When the
+             * grown mapping still fit in the base record every entry names
+             * the base record, so remove the list again (base record
+             * first, then the list's clusters); Windows treats a record
+             * with such a list as corrupt.
+             */
+            if (NT_SUCCESS(Status) && ListCreatedHere)
+                (void)SettleGrowthAttributeList();
             if (NT_SUCCESS(Status))
             {
                 *Length = RequestedLength;
@@ -2970,6 +3258,29 @@ RestoreResident:
                 PrepareAutomaticTimestamps(
                     TimestampFields,
                     NULL);
+        }
+        /*
+         * The record is about to publish a larger DataSize or
+         * InitializedDataSize over bytes that still sit in the write-back
+         * cache; order it after them (OrderRecordAfterRunBytes). An
+         * attribute list that lands with its new length over its old bytes
+         * reads zero entries at the tail and fails to parse, which makes
+         * every attribute of the file unreachable.
+         */
+        if (NT_SUCCESS(Status) &&
+            MetadataChanged &&
+            AttributeContentIsOrdered(TargetAttribute))
+        {
+            ULONGLONG OrderedFrom =
+                min(OldInitializedSize,
+                    (ULONGLONG)Offset->QuadPart);
+
+            Status = OrderRecordAfterRunBytes(
+                DiskVolume,
+                AttributeOwner,
+                GetCachedDataRuns(TargetAttribute),
+                OrderedFrom,
+                EndOffset - OrderedFrom);
         }
         if (NT_SUCCESS(Status) &&
             (MetadataChanged || TimestampUpdate))
@@ -3354,6 +3665,12 @@ FileRecord::SetFileAllocationSize(
     AttributeOwner = GetAttributeOwner(TargetAttribute);
     if (!AttributeOwner)
         return STATUS_FILE_CORRUPT_ERROR;
+    /* An explicit allocation size is the caller's: never trim it later. */
+    if (TargetAttribute->NameLength == 0)
+    {
+        SpeculativeAllocation = FALSE;
+        AttributeOwner->SpeculativeAllocation = FALSE;
+    }
     if (AttributeOwner != this &&
          (TargetAttribute->AttributeType !=
               TypeData ||
@@ -4731,6 +5048,29 @@ FileRecord::PromoteResidentData(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
+    if (TargetAttribute->AttributeType == TypeData)
+    {
+        Status = DiskVolume->FlushVolume();
+        if (!NT_SUCCESS(Status))
+            goto Rollback;
+    }
+
+    /*
+     * The record is about to say "non-resident, NewInitializedSize bytes"
+     * over clusters whose content still sits in the write-back cache. Order
+     * the record after that content (OrderRecordAfterRunBytes).
+     */
+    if (AttributeContentIsOrdered(TargetAttribute))
+    {
+        Status = OrderRecordAfterRunBytes(DiskVolume,
+                                          this,
+                                          AllocatedRuns,
+                                          0,
+                                          NewInitializedSize);
+        if (!NT_SUCCESS(Status))
+            goto Rollback;
+    }
+
     WriteAttempted = TRUE;
     Status = DiskVolume->MFT->WriteFileRecordToMFT(this);
     if (NT_SUCCESS(Status))
@@ -4743,6 +5083,8 @@ Rollback:
     if (WriteAttempted)
     {
         NTSTATUS RestoreStatus = DiskVolume->MFT->WriteFileRecordToMFT(this);
+        if (NT_SUCCESS(RestoreStatus))
+            RestoreStatus = DiskVolume->FlushVolume();
         if (!NT_SUCCESS(RestoreStatus))
         {
             Restored = FALSE;
@@ -5163,8 +5505,12 @@ FileRecord::ResizeSparseData(
     Committed = TRUE;
     if (ReleasedRuns)
     {
-        Status = DiskVolume->ReleaseClusters(
-            ReleasedRuns);
+        Status = DiskVolume->FlushVolume();
+        if (NT_SUCCESS(Status))
+        {
+            Status = DiskVolume->ReleaseClusters(
+                ReleasedRuns);
+        }
     }
     goto Done;
 
@@ -5442,6 +5788,9 @@ FileRecord::ResizeNonResidentStream(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
+    Status = DiskVolume->FlushVolume();
+    if (!NT_SUCCESS(Status))
+        goto Rollback;
     Status = MappingUpdate
         ? CommitNonResidentMappingUpdate(
             &MappingUpdate)
@@ -5451,18 +5800,42 @@ FileRecord::ResizeNonResidentStream(
         goto Rollback;
 
     if (ReleasedRuns)
-        Status = DiskVolume->ReleaseClusters(
-            ReleasedRuns);
+    {
+        Status = DiskVolume->FlushVolume();
+        if (NT_SUCCESS(Status))
+        {
+            Status = DiskVolume->ReleaseClusters(
+                ReleasedRuns);
+        }
+    }
     goto Done;
 
 Rollback:
+    NTSTATUS RestoreStatus;
     AbortNonResidentMappingUpdate(
-        &MappingUpdate);
+        &MappingUpdate,
+        &RestoreStatus);
     RtlCopyMemory(Data, RecordBackup, RecordBufferSize);
     Header = reinterpret_cast<PFileRecordHeader>(Data);
     ClearDataRunCache();
     if (AddedRuns)
-        (void)DiskVolume->ReleaseClusters(AddedRuns);
+    {
+        if (NT_SUCCESS(RestoreStatus))
+        {
+            RestoreStatus = DiskVolume->MFT->
+                WriteFileRecordToMFT(this);
+        }
+        if (NT_SUCCESS(RestoreStatus))
+            RestoreStatus = DiskVolume->FlushVolume();
+        if (NT_SUCCESS(RestoreStatus))
+        {
+            (void)DiskVolume->ReleaseClusters(AddedRuns);
+        }
+        else
+        {
+            Status = RestoreStatus;
+        }
+    }
 
 Done:
     FreeDataRun(CollapseTail);
@@ -5473,6 +5846,57 @@ Done:
     FreeDataRun(AddedRuns);
     NtfsReleaseRecordScratch(DiskVolume, RecordBackup, RecordBufferSize);
     return Status;
+}
+
+/*
+ * An append at end of file grows the unnamed data stream by a whole growth
+ * step (ExtendNonResidentData) so that sequential writers do not fragment.
+ * When the writer is done, give back what lies beyond the data's last
+ * cluster, as NTFS does at cleanup; without this every small file written
+ * in two pieces kept 1 MB.
+ */
+NTSTATUS
+FileRecord::TrimSpeculativeAllocation()
+{
+    PAttribute TargetAttribute;
+    PFileRecord AttributeOwner;
+    ULONGLONG ClusterSize;
+    ULONGLONG Needed;
+
+    TargetAttribute = GetAttribute(TypeData, NULL);
+    if (!TargetAttribute)
+    {
+        SpeculativeAllocation = FALSE;
+        return STATUS_SUCCESS;
+    }
+    AttributeOwner = GetAttributeOwner(TargetAttribute);
+    if (!SpeculativeAllocation &&
+        !(AttributeOwner && AttributeOwner->SpeculativeAllocation))
+    {
+        return STATUS_SUCCESS;
+    }
+    SpeculativeAllocation = FALSE;
+    if (AttributeOwner)
+        AttributeOwner->SpeculativeAllocation = FALSE;
+
+    if (!DiskVolume || DiskVolume->IsReadOnly ||
+        !TargetAttribute->IsNonResident ||
+        TargetAttribute->Flags != 0)
+    {
+        return STATUS_SUCCESS;
+    }
+    ClusterSize = BytesPerCluster(DiskVolume);
+    if (ClusterSize == 0 ||
+        TargetAttribute->NonResident.DataSize >
+            ~(ULONGLONG)0 - (ClusterSize - 1))
+    {
+        return STATUS_SUCCESS;
+    }
+    Needed = (TargetAttribute->NonResident.DataSize + ClusterSize - 1) /
+             ClusterSize * ClusterSize;
+    if (TargetAttribute->NonResident.AllocatedSize <= Needed)
+        return STATUS_SUCCESS;
+    return SetFileAllocationSize(TypeData, NULL, Needed);
 }
 
 NTSTATUS
@@ -5499,6 +5923,7 @@ FileRecord::ExtendNonResidentData(
     ULONGLONG MinimumRequiredClusters;
     ULONGLONG ExistingClusters;
     ULONGLONG GrowthClusters;
+    BOOLEAN Speculative = FALSE;
     ULONG AddedClusterCount;
     ULONG MaxRuns;
     NTSTATUS Status;
@@ -5585,6 +6010,7 @@ FileRecord::ExtendNonResidentData(
         {
             RequiredClusters =
                 ExistingClusters + GrowthClusters;
+            Speculative = TRUE;
         }
     }
     AddedClusterCount =
@@ -5623,6 +6049,7 @@ FileRecord::ExtendNonResidentData(
         RequiredClusters != MinimumRequiredClusters)
     {
         RequiredClusters = MinimumRequiredClusters;
+        Speculative = FALSE;
         AddedClusterCount =
             (ULONG)(RequiredClusters - ExistingClusters);
         NewAllocatedSize = RequiredClusters * ClusterSize;
@@ -5688,22 +6115,68 @@ FileRecord::ExtendNonResidentData(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
+    Status = DiskVolume->FlushVolume();
+    if (!NT_SUCCESS(Status))
+        goto Rollback;
+    /*
+     * The record is about to publish the grown run list and sizes over the
+     * zeroes and data written above, which still sit in the write-back
+     * cache. Order it after them. With a mapping update the pointer is
+     * spread over the attribute list and the records it spans, so the bytes
+     * are committed synchronously instead (no pointer record).
+     */
+    if (AttributeContentIsOrdered(TargetAttribute))
+    {
+        ULONGLONG OrderedFrom =
+            min(OldInitializedSize, Offset);
+
+        Status = OrderRecordAfterRunBytes(DiskVolume,
+                                          MappingUpdate ? NULL : this,
+                                          CombinedRuns,
+                                          OrderedFrom,
+                                          Offset + Length - OrderedFrom);
+        if (!NT_SUCCESS(Status))
+            goto Rollback;
+    }
+
     Status = MappingUpdate
         ? CommitNonResidentMappingUpdate(
             &MappingUpdate)
         : DiskVolume->MFT->
             WriteFileRecordToMFT(this);
     if (NT_SUCCESS(Status))
+    {
+        if (Speculative)
+            SpeculativeAllocation = TRUE;
         goto Done;
+    }
 
 Rollback:
+    NTSTATUS RestoreStatus;
     AbortNonResidentMappingUpdate(
-        &MappingUpdate);
+        &MappingUpdate,
+        &RestoreStatus);
     RtlCopyMemory(Data, RecordBackup, RecordBufferSize);
     Header = reinterpret_cast<PFileRecordHeader>(Data);
     ClearDataRunCache();
     if (AddedRuns)
-        (void)DiskVolume->ReleaseClusters(AddedRuns);
+    {
+        if (NT_SUCCESS(RestoreStatus))
+        {
+            RestoreStatus = DiskVolume->MFT->
+                WriteFileRecordToMFT(this);
+        }
+        if (NT_SUCCESS(RestoreStatus))
+            RestoreStatus = DiskVolume->FlushVolume();
+        if (NT_SUCCESS(RestoreStatus))
+        {
+            (void)DiskVolume->ReleaseClusters(AddedRuns);
+        }
+        else
+        {
+            Status = RestoreStatus;
+        }
+    }
 
 Done:
     FreeDataRun(CombinedRuns);
@@ -6153,6 +6626,9 @@ FileRecord::WriteSparseData(
     if (!NT_SUCCESS(Status))
         goto Restore;
 
+    Status = DiskVolume->FlushVolume();
+    if (!NT_SUCCESS(Status))
+        goto Restore;
     if (MappingUpdate)
     {
         Status = CommitNonResidentMappingUpdate(
@@ -6188,8 +6664,10 @@ FileRecord::WriteSparseData(
 Restore:
     if (!Committed)
     {
+        NTSTATUS RestoreStatus;
         AbortNonResidentMappingUpdate(
-            &MappingUpdate);
+            &MappingUpdate,
+            &RestoreStatus);
         if (OwnerRecordBackup)
         {
             RtlCopyMemory(
@@ -6200,9 +6678,9 @@ Restore:
                 reinterpret_cast<PFileRecordHeader>(
                     AttributeOwner->Data);
             AttributeOwner->ClearDataRunCache();
-            if (OwnerWriteAttempted)
+            if (OwnerWriteAttempted && NT_SUCCESS(RestoreStatus))
             {
-                (void)DiskVolume->MFT->
+                RestoreStatus = DiskVolume->MFT->
                     WriteFileRecordToMFT(
                         AttributeOwner);
             }
@@ -6213,12 +6691,23 @@ Restore:
         Header =
             reinterpret_cast<PFileRecordHeader>(Data);
         ClearDataRunCache();
+        if (NT_SUCCESS(RestoreStatus))
+        {
+            RestoreStatus = DiskVolume->MFT->
+                WriteFileRecordToMFT(this);
+        }
+        if (NT_SUCCESS(RestoreStatus))
+            RestoreStatus = DiskVolume->FlushVolume();
+        if (AllocatedRuns && NT_SUCCESS(RestoreStatus))
+        {
+            (void)DiskVolume->ReleaseClusters(
+                AllocatedRuns);
+        }
+        if (!NT_SUCCESS(RestoreStatus))
+            Status = RestoreStatus;
     }
 
 Done:
-    if (!Committed && AllocatedRuns)
-        (void)DiskVolume->ReleaseClusters(
-            AllocatedRuns);
     FreeDataRun(CombinedRuns);
     FreeDataRun(AllocatedRuns);
     FreeDataRun(ExistingRuns);
@@ -6594,6 +7083,9 @@ FileRecord::WriteCompressedUnits(_Inout_ PAttribute* Attribute,
     if (!NT_SUCCESS(Status))
         goto Restore;
 
+    Status = DiskVolume->FlushVolume();
+    if (!NT_SUCCESS(Status))
+        goto Restore;
     Status = MappingUpdate
         ? CommitNonResidentMappingUpdate(&MappingUpdate)
         : DiskVolume->MFT->WriteFileRecordToMFT(this);
@@ -6605,21 +7097,42 @@ FileRecord::WriteCompressedUnits(_Inout_ PAttribute* Attribute,
     *Attribute = TargetAttribute;
 
     if (OldPhysicalRuns)
-        Status = DiskVolume->ReleaseClusters(OldPhysicalRuns);
+    {
+        Status = DiskVolume->FlushVolume();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(OldPhysicalRuns);
+    }
     goto Done;
 
 Restore:
     if (!Committed)
     {
-        AbortNonResidentMappingUpdate(&MappingUpdate);
+        NTSTATUS RestoreStatus;
+        AbortNonResidentMappingUpdate(&MappingUpdate, &RestoreStatus);
         RtlCopyMemory(Data, RecordBackup, RecordBufferSize);
         Header = reinterpret_cast<PFileRecordHeader>(Data);
         ClearDataRunCache();
+        if (NewPhysicalRuns)
+        {
+            if (NT_SUCCESS(RestoreStatus))
+            {
+                RestoreStatus = DiskVolume->MFT->
+                    WriteFileRecordToMFT(this);
+            }
+            if (NT_SUCCESS(RestoreStatus))
+                RestoreStatus = DiskVolume->FlushVolume();
+            if (NT_SUCCESS(RestoreStatus))
+            {
+                (void)DiskVolume->ReleaseClusters(NewPhysicalRuns);
+            }
+            else
+            {
+                Status = RestoreStatus;
+            }
+        }
     }
 
 Done:
-    if (!Committed && NewPhysicalRuns)
-        (void)DiskVolume->ReleaseClusters(NewPhysicalRuns);
     FreeDataRun(OldPhysicalRuns);
     FreeDataRun(NewPhysicalRuns);
     FreeDataRun(CompositeRuns);
@@ -6650,6 +7163,7 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
     ULONG Fill = 0;
     ULONG ChunkUnits = NTFS_COMPRESSED_WRITE_UNITS;
     BOOLEAN ListCreated;
+    BOOLEAN ListCreatedHere = FALSE;
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!TargetAttribute || !Buffer || !Length || *Length == 0)
@@ -6721,7 +7235,7 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
         {
             ULONG Free = Header->AllocatedSize - Header->ActualSize;
 
-            if (Free < 0x110)
+            if (Free < MappingGrowthHeadroom)
             {
                 Status = EnsureAttributeListForMappingGrowth(TypeData,
                                                              StreamName,
@@ -6780,6 +7294,8 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
         }
         if (!NT_SUCCESS(Status))
             break;
+        if (ListCreated)
+            ListCreatedHere = TRUE;
         if (AttributeOwner != this || ListCreated)
             ChunkUnits = NTFS_COMPRESSED_WRITE_UNITS;
 
@@ -6795,6 +7311,9 @@ FileRecord::WriteCompressedData(_In_ PAttribute TargetAttribute,
         }
     }
 
+    /* As in WriteFileData: drop a list the growth turned out not to need. */
+    if (NT_SUCCESS(Status) && ListCreatedHere)
+        (void)SettleGrowthAttributeList();
     delete[] Zeroes;
     return Status;
 }
@@ -6937,6 +7456,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
     ULONGLONG OldSize;
     ULONG Fill;
     BOOLEAN ListCreated;
+    BOOLEAN ListCreatedHere = FALSE;
     NTSTATUS Status;
 
     TargetAttribute = GetAttribute(TypeData, StreamName);
@@ -6991,7 +7511,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
     if (AttributeOwner == this &&
         !GetAttribute(TypeAttributeList, NULL) &&
         Header->AllocatedSize >= Header->ActualSize &&
-        Header->AllocatedSize - Header->ActualSize < 0x110)
+        Header->AllocatedSize - Header->ActualSize < MappingGrowthHeadroom)
     {
         Status = EnsureAttributeListForMappingGrowth(TypeData,
                                                      StreamName,
@@ -7000,6 +7520,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
                                                      &ListCreated);
         if (!NT_SUCCESS(Status))
             return Status;
+        ListCreatedHere = ListCreated;
     }
     Status = AttributeOwner->WriteCompressedUnits(&TargetAttribute,
                                                   NULL,
@@ -7020,6 +7541,7 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
                                                      &ListCreated);
         if (NT_SUCCESS(Status) && ListCreated)
         {
+            ListCreatedHere = TRUE;
             Status = AttributeOwner->WriteCompressedUnits(&TargetAttribute,
                                                           NULL,
                                                           0,
@@ -7030,6 +7552,9 @@ FileRecord::ResizeCompressedData(_In_opt_ PWSTR StreamName,
             Status = STATUS_BUFFER_TOO_SMALL;
         }
     }
+    /* As in WriteFileData: drop a list the growth turned out not to need. */
+    if (NT_SUCCESS(Status) && ListCreatedHere)
+        (void)SettleGrowthAttributeList();
     return Status;
 }
 
@@ -7196,6 +7721,9 @@ FileRecord::PromoteResidentCompressedData(
         NULL);
     if (!NT_SUCCESS(Status))
         goto Rollback;
+    Status = DiskVolume->FlushVolume();
+    if (!NT_SUCCESS(Status))
+        goto Rollback;
     WriteAttempted = TRUE;
     Status = DiskVolume->MFT->WriteFileRecordToMFT(this);
     if (!NT_SUCCESS(Status))
@@ -7228,6 +7756,8 @@ Rollback:
     if (WriteAttempted)
     {
         NTSTATUS RestoreStatus = DiskVolume->MFT->WriteFileRecordToMFT(this);
+        if (NT_SUCCESS(RestoreStatus))
+            RestoreStatus = DiskVolume->FlushVolume();
 
         if (!NT_SUCCESS(RestoreStatus))
         {

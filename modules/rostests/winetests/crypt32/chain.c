@@ -3538,6 +3538,11 @@ static SYSTEMTIME oct2016 = { 2016, 10, 6, 1, 0, 0, 0, 0 };
 static SYSTEMTIME nov2016 = { 2016, 11, 3, 17, 0, 0, 0, 0 };
 /* Thursday, May 14, 2020 */
 static SYSTEMTIME may2020 = { 2020, 5, 4, 14, 0, 0, 0, 0 };
+/* chain0_1 (Cert2) is only valid 1601-11-22..1628-08-26 (its issuer Cert1,
+ * chain0_0, is valid only in 2007), so a check time inside Cert2's window
+ * lets the partial-chain SSL tests distinguish accept from reject without a
+ * date error masking the result. */
+static SYSTEMTIME cert2_valid = { 1610, 6, 0, 15, 0, 0, 0, 0 };
 
 typedef struct _ChainCheck
 {
@@ -4596,14 +4601,21 @@ static void testGetCertChain(void)
     }
 
     ok(simple_chain->rgpElement[0]->pCertContext == cert, "simple_chain->rgpElement[0]->pCertContext != cert\n");
-    test_name_blob(&simple_chain->rgpElement[1]->pCertContext->pCertInfo->Issuer,
-                   "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
-    test_name_blob(&simple_chain->rgpElement[1]->pCertContext->pCertInfo->Subject,
-                   "US, VA, Herndon, Network Solutions L.L.C., Network Solutions OV Server CA 2");
-    test_name_blob(&simple_chain->rgpElement[2]->pCertContext->pCertInfo->Issuer,
-                   "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
-    test_name_blob(&simple_chain->rgpElement[2]->pCertContext->pCertInfo->Subject,
-                   "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
+    /* rgpElement has cElement entries; with a shorter chain (e.g. offline, no
+     * intermediate) the reads below would run past the array and end the test. */
+    ok(simple_chain->cElement >= 3, "simple_chain->cElement = %lu, element 1/2 name checks not run\n",
+       simple_chain->cElement);
+    if (simple_chain->cElement >= 3)
+    {
+        test_name_blob(&simple_chain->rgpElement[1]->pCertContext->pCertInfo->Issuer,
+                       "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
+        test_name_blob(&simple_chain->rgpElement[1]->pCertContext->pCertInfo->Subject,
+                       "US, VA, Herndon, Network Solutions L.L.C., Network Solutions OV Server CA 2");
+        test_name_blob(&simple_chain->rgpElement[2]->pCertContext->pCertInfo->Issuer,
+                       "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
+        test_name_blob(&simple_chain->rgpElement[2]->pCertContext->pCertInfo->Subject,
+                       "US, New Jersey, Jersey City, The USERTRUST Network, USERTrust RSA Certification Authority");
+    }
 
     CertFreeCertificateChain(chain);
 
@@ -5137,6 +5149,25 @@ static void check_authenticode_policy(void)
      ignoredInvalidDateBasePolicyCheck, &oct2007, &policyPara);
 }
 
+/* Regression test for the SSL chain policy over an incomplete (partial)
+ * chain.  chain0_1 is the end-entity certificate of chain0 and chain0_0 is
+ * its issuer; supplying the leaf alone (no issuer available) yields a chain
+ * flagged CERT_TRUST_IS_PARTIAL_CHAIN.  Windows (and the crypt32 base policy)
+ * reject such a chain under the SSL policy with CERT_E_CHAINING; it is only
+ * accepted when the caller explicitly opts out via
+ * SECURITY_FLAG_IGNORE_UNKNOWN_CA or CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG. */
+static CONST_DATA_BLOB sslPartialChain[] = {
+ { sizeof(chain0_1), chain0_1 },
+};
+static const ChainPolicyCheck sslPartialChainPolicyCheck = {
+ { ARRAY_SIZE(sslPartialChain), sslPartialChain },
+ { 0, CERT_E_CHAINING, -1, -1, NULL }, NULL, 0
+};
+static const ChainPolicyCheck sslPartialChainIgnoredPolicyCheck = {
+ { ARRAY_SIZE(sslPartialChain), sslPartialChain },
+ { 0, 0, -1, -1, NULL }, NULL, 0
+};
+
 static void check_ssl_policy(void)
 {
     CERT_CHAIN_POLICY_PARA policyPara = { 0 };
@@ -5219,6 +5250,28 @@ static void check_ssl_policy(void)
     CHECK_CHAIN_POLICY_STATUS(CERT_CHAIN_POLICY_SSL, NULL,
      googlePolicyCheckWithMatchingName, &nov2016, &policyPara);
     sslPolicyPara.fdwChecks = 0;
+
+    /* A partial chain (issuer unavailable) is rejected under the SSL policy
+     * with CERT_E_CHAINING, matching the base policy.  Verified at cert2_valid
+     * so the leaf is time-valid: unpatched crypt32 wrongly ACCEPTS it (dwError
+     * 0), the fix REJECTS it (CERT_E_CHAINING), with no date error in play. */
+    sslPolicyPara.cbSize = sizeof(sslPolicyPara);
+    sslPolicyPara.dwAuthType = AUTHTYPE_SERVER;
+    sslPolicyPara.pwszServerName = NULL;
+    sslPolicyPara.fdwChecks = 0;
+    policyPara.dwFlags = 0;
+    CHECK_CHAIN_POLICY_STATUS(CERT_CHAIN_POLICY_SSL, NULL,
+     sslPartialChainPolicyCheck, &cert2_valid, &policyPara);
+    /* ...unless SECURITY_FLAG_IGNORE_UNKNOWN_CA is set... */
+    sslPolicyPara.fdwChecks = SECURITY_FLAG_IGNORE_UNKNOWN_CA;
+    CHECK_CHAIN_POLICY_STATUS(CERT_CHAIN_POLICY_SSL, NULL,
+     sslPartialChainIgnoredPolicyCheck, &cert2_valid, &policyPara);
+    sslPolicyPara.fdwChecks = 0;
+    /* ...or CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG is set in dwFlags. */
+    policyPara.dwFlags = CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG;
+    CHECK_CHAIN_POLICY_STATUS(CERT_CHAIN_POLICY_SSL, NULL,
+     sslPartialChainIgnoredPolicyCheck, &cert2_valid, &policyPara);
+    policyPara.dwFlags = 0;
 
     /* Check again with the openssl cert, which has a wildcard in its name,
      * with various combinations of matching and non-matching names.
@@ -5582,9 +5635,112 @@ static void test_chain_engine_cache_update(void)
     CertFreeCertificateContext(cert);
 }
 
+/* Deterministic CERT_CHAIN_ENGINE_CONFIG layouts for the hExclusiveRoot
+ * regression test, independent of the SDK's NTDDI level.  hExclusiveRoot and
+ * hExclusiveTrustedPeople date from Windows 7; dwExclusiveFlags from Windows 8.
+ * Windows honors hExclusiveRoot whenever the field lies within cbSize, so a
+ * Windows 7-sized config (without dwExclusiveFlags) must be honored too. */
+typedef struct {
+    DWORD       cbSize;
+    HCERTSTORE  hRestrictedRoot;
+    HCERTSTORE  hRestrictedTrust;
+    HCERTSTORE  hRestrictedOther;
+    DWORD       cAdditionalStore;
+    HCERTSTORE *rghAdditionalStore;
+    DWORD       dwFlags;
+    DWORD       dwUrlRetrievalTimeout;
+    DWORD       MaximumCachedCertificates;
+    DWORD       CycleDetectionModulus;
+    HCERTSTORE  hExclusiveRoot;
+    HCERTSTORE  hExclusiveTrustedPeople;
+} ENGINE_CONFIG_WIN7;
+
+typedef struct {
+    DWORD       cbSize;
+    HCERTSTORE  hRestrictedRoot;
+    HCERTSTORE  hRestrictedTrust;
+    HCERTSTORE  hRestrictedOther;
+    DWORD       cAdditionalStore;
+    HCERTSTORE *rghAdditionalStore;
+    DWORD       dwFlags;
+    DWORD       dwUrlRetrievalTimeout;
+    DWORD       MaximumCachedCertificates;
+    DWORD       CycleDetectionModulus;
+    HCERTSTORE  hExclusiveRoot;
+    HCERTSTORE  hExclusiveTrustedPeople;
+    DWORD       dwExclusiveFlags;
+} ENGINE_CONFIG_WIN8;
+
+static void test_hExclusiveRoot_cbSize(void)
+{
+    static CONST_DATA_BLOB leafOnly[] = {
+        { sizeof(chain0_1), chain0_1 },   /* chain0 leaf; chain0_0 is its issuer */
+    };
+    CONST_BLOB_ARRAY certs = { ARRAY_SIZE(leafOnly), leafOnly };
+    HCERTSTORE exclusiveRoot;
+    ENGINE_CONFIG_WIN7 cfg7;
+    ENGINE_CONFIG_WIN8 cfg8;
+    HCERTCHAINENGINE engine;
+    PCCERT_CHAIN_CONTEXT chain;
+    BOOL ret;
+
+    ok(sizeof(cfg7) < sizeof(cfg8), "unexpected engine config sizes %u/%u\n",
+       (unsigned)sizeof(cfg7), (unsigned)sizeof(cfg8));
+    exclusiveRoot = CertOpenStore(CERT_STORE_PROV_MEMORY, X509_ASN_ENCODING, 0,
+     CERT_STORE_CREATE_NEW_FLAG, NULL);
+    ok(exclusiveRoot != NULL, "CertOpenStore failed: %08lx\n", GetLastError());
+    ret = CertAddEncodedCertificateToStore(exclusiveRoot, X509_ASN_ENCODING,
+     chain0_0, sizeof(chain0_0), CERT_STORE_ADD_ALWAYS, NULL);
+    ok(ret, "adding exclusive root failed: %08lx\n", GetLastError());
+
+    /* Windows 7-sized config (no dwExclusiveFlags) carrying hExclusiveRoot:
+     * chain0's leaf must build to a trusted root: neither PARTIAL_CHAIN nor
+     * UNTRUSTED_ROOT.  chain0_0 (root, valid 2007) and chain0_1 (leaf, valid
+     * 1601-1628) have disjoint validity windows, so NOT_TIME_VALID is always
+     * set and is orthogonal to this fix; assert the trust bits, not == 0. */
+    memset(&cfg7, 0, sizeof(cfg7));
+    cfg7.cbSize = sizeof(cfg7);
+    cfg7.hExclusiveRoot = exclusiveRoot;
+    ret = CertCreateCertificateChainEngine((CERT_CHAIN_ENGINE_CONFIG *)&cfg7, &engine);
+    ok(ret, "CertCreateCertificateChainEngine (win7-sized) failed: %08lx\n", GetLastError());
+    if (ret) {
+        chain = getChain(engine, &certs, 0, TRUE, &oct2007, 0, 700);
+        ok(chain != NULL, "getChain (win7-sized) returned NULL\n");
+        if (chain) {
+            ok((chain->TrustStatus.dwErrorStatus &
+                (CERT_TRUST_IS_PARTIAL_CHAIN | CERT_TRUST_IS_UNTRUSTED_ROOT)) == 0,
+               "win7-sized hExclusiveRoot: leaf not trusted via exclusive root, got %08lx\n",
+               chain->TrustStatus.dwErrorStatus);
+            CertFreeCertificateChain(chain);
+        }
+        CertFreeCertificateChainEngine(engine);
+    }
+
+    /* A full Windows 8-sized config must behave identically. */
+    memset(&cfg8, 0, sizeof(cfg8));
+    cfg8.cbSize = sizeof(cfg8);
+    cfg8.hExclusiveRoot = exclusiveRoot;
+    ret = CertCreateCertificateChainEngine((CERT_CHAIN_ENGINE_CONFIG *)&cfg8, &engine);
+    ok(ret, "CertCreateCertificateChainEngine (full-sized) failed: %08lx\n", GetLastError());
+    if (ret) {
+        chain = getChain(engine, &certs, 0, TRUE, &oct2007, 0, 701);
+        ok(chain != NULL, "getChain (full-sized) returned NULL\n");
+        if (chain) {
+            ok((chain->TrustStatus.dwErrorStatus &
+                (CERT_TRUST_IS_PARTIAL_CHAIN | CERT_TRUST_IS_UNTRUSTED_ROOT)) == 0,
+               "full-sized hExclusiveRoot: leaf not trusted via exclusive root, got %08lx\n",
+               chain->TrustStatus.dwErrorStatus);
+            CertFreeCertificateChain(chain);
+        }
+        CertFreeCertificateChainEngine(engine);
+    }
+    CertCloseStore(exclusiveRoot, 0);
+}
+
 START_TEST(chain)
 {
     testCreateCertChainEngine();
+    test_hExclusiveRoot_cbSize();
     testVerifyCertChainPolicy();
     testGetCertChain();
     test_CERT_CHAIN_PARA_cbSize();

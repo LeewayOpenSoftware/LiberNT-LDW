@@ -28,11 +28,15 @@ BOOL TaskbarSettings::Save()
     SHSetValueW(hkExplorer, L"Advanced", L"PreferDateOverWeekday", REG_DWORD, &bPreferDate, sizeof(bPreferDate));
     SHSetValueW(hkExplorer, L"Advanced", L"ShowSeconds", REG_DWORD, &bShowSeconds, sizeof(bShowSeconds));
     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarGlomming", REG_DWORD, &bGroupButtons, sizeof(bGroupButtons));
+    SHSetValueW(hkExplorer, L"Advanced", L"TaskbarGlomLevel", REG_DWORD, &dwTaskbarGlomLevel, sizeof(dwTaskbarGlomLevel));
     BOOL bAllowSizeMove = !bLock;
     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarSizeMove", REG_DWORD, &bAllowSizeMove, sizeof(bAllowSizeMove));
     sr.cbSize = sizeof(sr);
     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarSmallIcons", REG_DWORD, &bSmallIcons, sizeof(bSmallIcons));
     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarSd", REG_DWORD, &bShowDesktopButton, sizeof(bShowDesktopButton));
+    SHSetValueW(hkExplorer, L"Advanced", L"MMTaskbarEnabled", REG_DWORD, &bMMTaskbarEnabled, sizeof(bMMTaskbarEnabled));
+    DWORD dwMMMode = uMMTaskbarMode;
+    SHSetValueW(hkExplorer, L"Advanced", L"MMTaskbarMode", REG_DWORD, &dwMMMode, sizeof(dwMMMode));
     SHSetValueW(hkExplorer, L"StuckRects2", L"Settings", REG_BINARY, &sr, sizeof(sr));
 
     /* TODO: AutoHide writes something to HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Desktop\Components\0 figure out what and why */
@@ -53,9 +57,22 @@ BOOL TaskbarSettings::Load()
     dwRet = SHGetValueW(hkExplorer, L"Advanced", L"ShowSeconds", NULL, &dwValue, &cbSize);
     bShowSeconds = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : FALSE;
 
-    dwRet = SHGetValueW(hkExplorer, L"Advanced", L"TaskbarGlomming", NULL, &dwValue, &cbSize);
-    bGroupButtons = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : FALSE;
+    cbSize = sizeof(dwValue);
+    dwRet = SHGetValueW(hkExplorer, L"Advanced", L"TaskbarGlomLevel", NULL, &dwValue, &cbSize);
+    if (dwRet == ERROR_SUCCESS && dwValue <= TASKBAR_GLOM_NEVER)
+    {
+        dwTaskbarGlomLevel = dwValue;
+        bGroupButtons = (dwTaskbarGlomLevel != TASKBAR_GLOM_NEVER);
+    }
+    else
+    {
+        cbSize = sizeof(dwValue);
+        dwRet = SHGetValueW(hkExplorer, L"Advanced", L"TaskbarGlomming", NULL, &dwValue, &cbSize);
+        bGroupButtons = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : TRUE;
+        dwTaskbarGlomLevel = bGroupButtons ? TASKBAR_GLOM_ALWAYS : TASKBAR_GLOM_NEVER;
+    }
 
+    cbSize = sizeof(dwValue);
     dwRet = SHGetValueW(hkExplorer, NULL, L"EnableAutotray", NULL, &dwValue, &cbSize);
     bHideInactiveIcons = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : TRUE;
 
@@ -71,6 +88,15 @@ BOOL TaskbarSettings::Load()
     dwRet = SHGetValueW(hkExplorer, L"Advanced", L"TaskbarSd", NULL, &dwValue, &cbSize);
     bShowDesktopButton = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : TRUE;
 
+    BOOL bRepaired = FALSE;
+    cbSize = sizeof(dwValue);
+    dwRet = SHGetValueW(hkExplorer, L"Advanced", L"MMTaskbarEnabled", NULL, &dwValue, &cbSize);
+    bMMTaskbarEnabled = (dwRet == ERROR_SUCCESS) ? (dwValue != 0) : FALSE;
+
+    cbSize = sizeof(dwValue);
+    dwRet = SHGetValueW(hkExplorer, L"Advanced", L"MMTaskbarMode", NULL, &dwValue, &cbSize);
+    uMMTaskbarMode = (dwRet == ERROR_SUCCESS && dwValue <= 2) ? dwValue : 0;
+
     cbSize = sizeof(sr);
     dwRet = SHGetValueW(hkExplorer, L"StuckRects2", L"Settings", NULL, &sr, &cbSize);
 
@@ -85,12 +111,21 @@ BOOL TaskbarSettings::Load()
         sr.Rect.left = sr.Rect.top = 0;
         sr.Rect.bottom = sr.Rect.right = 1;
         sr.Size.cx = sr.Size.cy = 0;
+        bRepaired = TRUE;
     }
     else
     {
         if (sr.Position > ABE_BOTTOM)
+        {
             sr.Position = ABE_BOTTOM;
+            bRepaired = TRUE;
+        }
     }
+
+    sr.cbSize = sizeof(sr);
+
+    if (bRepaired)
+        Save();
 
     return TRUE;
 }

@@ -146,7 +146,14 @@ CcUninitializeCacheMap(
         else if (UninitializeEvent != NULL)
             KeSetEvent(&UninitializeEvent->Event, IO_NO_INCREMENT, FALSE);
 
-        InterlockedDecrement(&NtMap->Map.OpenCount);
+        /* The last handle is gone: the lazy writer writes the map back
+         * completely on its next pass, so wake it instead of waiting for
+         * the tick. */
+        if (InterlockedDecrement(&NtMap->Map.OpenCount) == 0 &&
+            CC_ATOMIC_READ64(&NtMap->Map.DirtyPages) != 0)
+        {
+            CcNtKickLazyWriter();
+        }
     }
     else if (UninitializeEvent != NULL)
     {

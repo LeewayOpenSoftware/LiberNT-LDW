@@ -110,6 +110,34 @@ Volume::WriteBarrierEnabled()
 }
 
 NTSTATUS
+Volume::OrderAfter(_In_ ULONGLONG PointerOffset, _In_ ULONG PointerLength,
+                   _In_ ULONGLONG PointeeOffset, _In_ ULONG PointeeLength)
+{
+    NTSTATUS Status;
+
+    if (PointeeLength == 0)
+        return STATUS_SUCCESS;
+
+    if (PointerLength != 0 && WriteBarrierEnabled())
+    {
+        Status = BarrierAfter(PointerOffset, PointerLength,
+                              PointeeOffset, PointeeLength);
+        if (NT_SUCCESS(Status))
+            return Status;
+        /*
+         * No ordering was installed (BarrierAfter sets its constraint only
+         * on success), so there is nothing to cancel: make the pointee
+         * durable instead, as the barrier call sites do on refusal.
+         */
+    }
+
+    Status = CommitRange(PointeeOffset, PointeeLength);
+    if (Status == STATUS_NOT_IMPLEMENTED)
+        Status = FlushVolume();
+    return Status;
+}
+
+NTSTATUS
 Volume::WriteVolumeThrough(_In_    ULONGLONG Offset,
                            _In_    ULONG Length,
                            _Inout_ PUCHAR Buffer)

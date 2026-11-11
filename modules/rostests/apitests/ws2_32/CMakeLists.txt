@@ -5,9 +5,12 @@ list(APPEND SOURCE
     CloseCompletion.c
     MulticastInterface.c
     ReuseDelivery.c
+    accept_backlog.c
     addresslistsort.c
+    afunix.c
     bind.c
     broadcast.c
+    cancel.c
     close.c
     connect_select.c
     dualstack.c
@@ -20,10 +23,14 @@ list(APPEND SOURCE
     ioctlsocket.c
     nonblocking.c
     nostartup.c
+    oob.c
     open_osfhandle.c
     pollable_event.c
     recv.c
+    select_edge.c
     send.c
+    shutdown_linger.c
+    sockopt.c
     udp_quic.c
     WSAAsync.c
     WSAIoctl.c

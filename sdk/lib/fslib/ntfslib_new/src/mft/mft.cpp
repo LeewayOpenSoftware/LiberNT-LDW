@@ -10,7 +10,7 @@
 #include "ntfslib_new_internal.h"
 
 #define MFT_ALLOCATION_BITMAP_CHUNK_SIZE 0x10000
-#define MFT_FIRST_ORDINARY_FILE_RECORD (NTFS_LAST_RESERVED_FILE_RECORD + 1)
+#define MFT_FIRST_ORDINARY_FILE_RECORD NTFS_FIRST_USER_FILE_RECORD
 
 /*
  * Reserve $MFT data in coarse chunks so its records stay in long runs

@@ -28,6 +28,9 @@
 #define NDEBUG
 #include <debug.h>
 
+/* How long the display reset callback waits for the adapter lock. */
+#define VIDEOPRT_RESET_LOCK_WAIT_US 100000
+
 /* GLOBAL VARIABLES ***********************************************************/
 
 static PVIDEO_WIN32K_CALLOUT Win32kCallout = NULL;
@@ -577,13 +580,34 @@ IntVideoPortResetDisplayParametersEx(
 
     /* Check if we are at dispatch level or lower, and acquire the lock */
     OldIrql = KeGetCurrentIrql();
+    DPRINT1("VIDEOPRT: reset display: IRQL %u, called by INBV %u, %ux%u\n",
+            OldIrql, CalledByInbv, Columns, Rows);
     if (OldIrql <= DISPATCH_LEVEL)
-    {
-        /* Loop until the lock is free, then raise IRQL to dispatch level */
-        while (!KeTestSpinLock(&HwResetAdaptersLock));
         KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
+
+    /*
+     * This callback can run with interrupts disabled and other processors
+     * running, for a reboot or a bugcheck. If another processor holds the
+     * adapter lock, the caller would spin forever. Wait a bounded time
+     * (about 100 ms), then give up and let the caller do a full reset.
+     */
+    {
+        ULONG Waited;
+
+        for (Waited = 0; !KeTryToAcquireSpinLockAtDpcLevel(&HwResetAdaptersLock); Waited++)
+        {
+            if (Waited >= VIDEOPRT_RESET_LOCK_WAIT_US)
+            {
+                DPRINT1("VIDEOPRT: reset display: adapter lock still held after %lu us, skipping the reset\n",
+                        Waited);
+                if (OldIrql <= DISPATCH_LEVEL)
+                    KeLowerIrql(OldIrql);
+                return FALSE;
+            }
+            KeStallExecutionProcessor(1);
+        }
     }
-    KeAcquireSpinLockAtDpcLevel(&HwResetAdaptersLock);
+    DPRINT1("VIDEOPRT: reset display: adapter lock taken\n");
 
     /* Bail out early if we don't have any resettable adapter */
     if (IsListEmpty(&HwResetAdaptersList))
@@ -637,9 +661,14 @@ IntVideoPortResetDisplayParametersEx(
             if ((DeviceExtension->DeviceOpened >= 1) &&
                 (DriverExtension->InitializationData.HwResetHw != NULL))
             {
+                DPRINT1("VIDEOPRT: reset display: HwResetHw %p of driver %p (image %p)\n",
+                        DriverExtension->InitializationData.HwResetHw,
+                        DeviceExtension->DriverObject,
+                        DeviceExtension->DriverObject ? DeviceExtension->DriverObject->DriverStart : NULL);
                 Success &= DriverExtension->InitializationData.HwResetHw(
                                 &DeviceExtension->MiniPortDeviceExtension,
                                 Columns, Rows);
+                DPRINT1("VIDEOPRT: reset display: HwResetHw returned, success %u\n", Success);
             }
         }
         _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)

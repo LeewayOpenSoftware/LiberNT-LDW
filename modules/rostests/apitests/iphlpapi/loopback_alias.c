@@ -1,7 +1,8 @@
 /*
  * PROJECT:     LiberNT API tests
  * LICENSE:     GPL-3.0-or-later (https://spdx.org/licenses/GPL-3.0-or-later)
- * PURPOSE:     Loopback traffic survives adding and deleting a second 127.x address
+ * PURPOSE:     Loopback traffic survives adding and deleting a second 127.x address;
+ *              an interface's own address is never published as its neighbour
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  */
 
@@ -113,12 +114,12 @@ CheckLoopbackNeighbour(
     MIB_IPNET_TABLE2 *Table = NULL;
     ULONG i;
     BOOL Found = FALSE;
+    DWORD Error;
 
-    if (GetIpNetTable2(AF_INET, &Table) != NO_ERROR)
-    {
-        skip("%s: GetIpNetTable2 failed\n", Stage);
+    Error = GetIpNetTable2(AF_INET, &Table);
+    ok(Error == NO_ERROR, "%s: GetIpNetTable2 returned %lu\n", Stage, Error);
+    if (Error != NO_ERROR)
         return;
-    }
     for (i = 0; i < Table->NumEntries; i++)
     {
         if (Table->Table[i].InterfaceIndex == Index &&
@@ -126,7 +127,7 @@ CheckLoopbackNeighbour(
             Found = TRUE;
     }
     FreeMibTable(Table);
-    ok(Found, "%s: 127.0.0.1 is missing from the loopback interface's neighbour table\n", Stage);
+    ok(!Found, "%s: 127.0.0.1, the loopback interface's own address, is listed as its neighbour\n", Stage);
 }
 
 START_TEST(loopback_alias)

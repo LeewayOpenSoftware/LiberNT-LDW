@@ -121,6 +121,71 @@ RestoreShutdownPrivilege(
     ok_eq_bool(Ret, ExpectedRet);                                       \
 } while (0)
 
+typedef struct _HARD_ERROR_COMPLETION_CONTEXT
+{
+    volatile LONG Count;
+    NTSTATUS Status;
+    ULONG_PTR Information;
+} HARD_ERROR_COMPLETION_CONTEXT, *PHARD_ERROR_COMPLETION_CONTEXT;
+
+static HARD_ERROR_COMPLETION_CONTEXT PagingErrorContext;
+
+static
+NTSTATUS
+NTAPI
+PagingErrorCompletion(
+    IN PDEVICE_OBJECT DeviceObject,
+    IN PIRP Irp,
+    IN PVOID Context)
+{
+    PHARD_ERROR_COMPLETION_CONTEXT CompletionContext = Context;
+
+    UNREFERENCED_PARAMETER(DeviceObject);
+
+    CompletionContext->Status = Irp->IoStatus.Status;
+    CompletionContext->Information = Irp->IoStatus.Information;
+    InterlockedIncrement(&CompletionContext->Count);
+    IoFreeIrp(Irp);
+    return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
+static
+VOID
+TestRaiseHardErrorInline(
+    IN ULONG IrpFlags)
+{
+    PIRP Irp;
+
+    if (skip(KmtDriverObject != NULL && KmtDriverObject->DeviceObject != NULL,
+             "no kmtest device object\n"))
+        return;
+
+    Irp = IoAllocateIrp(1, FALSE);
+    ok(Irp != NULL, "IoAllocateIrp failed\n");
+    if (Irp == NULL)
+        return;
+
+    RtlZeroMemory(&PagingErrorContext, sizeof(PagingErrorContext));
+    Irp->Tail.Overlay.Thread = PsGetCurrentThread();
+    Irp->Flags |= IrpFlags;
+    Irp->IoStatus.Status = STATUS_WRONG_VOLUME;
+    Irp->IoStatus.Information = 123;
+    IoSetCompletionRoutine(Irp,
+                           PagingErrorCompletion,
+                           &PagingErrorContext,
+                           TRUE,
+                           TRUE,
+                           TRUE);
+    IoSetNextIrpStackLocation(Irp);
+
+    KeEnterCriticalRegion();
+    IoRaiseHardError(Irp, NULL, KmtDriverObject->DeviceObject);
+    ok_eq_long(PagingErrorContext.Count, 1);
+    ok_eq_hex(PagingErrorContext.Status, STATUS_WRONG_VOLUME);
+    ok_eq_ulongptr(PagingErrorContext.Information, 0);
+    KeLeaveCriticalRegion();
+}
+
 static
 VOID
 TestHardError(
@@ -313,6 +378,8 @@ TestHardError(
 START_TEST(ExHardError)
 {
     TestHardError(FALSE, FALSE, FALSE, FALSE);
+    TestRaiseHardErrorInline(IRP_PAGING_IO);
+    TestRaiseHardErrorInline(0);
 }
 
 /* Here's how to do the interactive test:

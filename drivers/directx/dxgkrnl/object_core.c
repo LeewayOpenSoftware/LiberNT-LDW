@@ -161,6 +161,7 @@ DxgkCapsCoreInterfaceVersionToLevel(
         case 0x1052:
         case 0x1053:
             return DXGK_CAPS_CORE_LEVEL_WDDM_1_0;
+        case 0x2004: /* Intel Win7 igdkmd64 8.14.10.1930 */
         case 0x2005:
             return DXGK_CAPS_CORE_LEVEL_WDDM_1_1;
         case 0x300E:

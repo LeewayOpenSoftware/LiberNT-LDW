@@ -1117,6 +1117,7 @@ RtlpCoalesceFreeBlocks (PHEAP Heap,
 {
     PHEAP_FREE_ENTRY CurrentEntry, NextEntry;
     UCHAR SegmentOffset;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(SegmentOffset);
 
     /* Get the previous entry */
     CurrentEntry = (PHEAP_FREE_ENTRY)((PHEAP_ENTRY)FreeEntry - FreeEntry->PreviousSize);
@@ -1874,6 +1875,7 @@ RtlpSplitEntry(PHEAP Heap,
     PHEAP_ENTRY InUseEntry;
     SIZE_T FreeSize;
     UCHAR SegmentOffset;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(SegmentOffset);
 
     /* Add extra flags in case of settable user value feature is requested,
        or there is a tag (small or normal) or there is a request to
@@ -2636,6 +2638,7 @@ RtlpGrowBlockInPlace (IN PHEAP Heap,
     SIZE_T FreeSize, PrevSize, TailPart, AddedSize = 0;
     PHEAP_ENTRY_EXTRA OldExtra, NewExtra;
     UCHAR SegmentOffset;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(SegmentOffset);
 
     /* We can't grow beyond specified threshold */
     if (Index > Heap->VirtualMemoryThreshold)
@@ -2921,6 +2924,7 @@ RtlReAllocateHeap(HANDLE HeapPtr,
     EXCEPTION_RECORD ExceptionRecord;
     UCHAR SegmentOffset;
     PHEAP LfhHeap;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(SegmentOffset);
 
     /* Return success in case of a null pointer */
     if (!Ptr)

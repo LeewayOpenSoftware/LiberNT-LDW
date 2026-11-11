@@ -813,7 +813,7 @@ BuildAbout(PageBuilder &page)
         std::wstring build = BuildNumber();
         system.push_back(std::make_pair(Str(IDS_EDITION), ProductName()));
         system.push_back(std::make_pair(Str(IDS_RELEASE), Str(IDS_DEVELOPMENT_PREVIEW)));
-        system.push_back(std::make_pair(Str(IDS_TARGET), Format(IDS_TARGET_FORMAT, version.c_str(), build.c_str())));
+        system.push_back(std::make_pair(Str(IDS_TARGET), Str(IDS_TARGET_FORMAT)));
         system.push_back(std::make_pair(Str(IDS_VERSION), version));
         system.push_back(std::make_pair(Str(IDS_INSTALLED_ON), InstallDate()));
         system.push_back(std::make_pair(Str(IDS_OS_BUILD), build));

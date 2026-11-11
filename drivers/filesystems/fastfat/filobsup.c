@@ -544,7 +544,29 @@ Return Value:
 
             if (DataSectionExists) {
 
+                //
+                //  On a surprise-removed (bad) volume a failed paging write may
+                //  still be in flight, pinning the dirty pages so the purge cannot
+                //  discard them. Drain it by taking PagingIo exclusive first. This
+                //  cannot deadlock: usbstor fails the gone-device transfer with
+                //  SRB_STATUS_NO_DEVICE, so the write completes and releases PagingIo
+                //  (the paging writer holds PagingIo shared, never the main resource
+                //  we hold here, so there is no lock inversion). The purge can then
+                //  discard the unrecoverable data. Gated on VcbBad so only the
+                //  device-gone path is affected.
+                //
+                BOOLEAN DrainPaging = (BOOLEAN)(Fcb->Vcb->VcbCondition == VcbBad &&
+                                                Fcb->Header.PagingIoResource != NULL);
+
+                if (DrainPaging) {
+                    (VOID)ExAcquireResourceExclusiveLite( Fcb->Header.PagingIoResource, TRUE );
+                }
+
                 CcPurgeCacheSection( Section, NULL, 0, FALSE );
+
+                if (DrainPaging) {
+                    ExReleaseResourceLite( Fcb->Header.PagingIoResource );
+                }
             }
         }
 

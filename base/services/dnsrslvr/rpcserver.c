@@ -65,7 +65,9 @@ R_ResolverFlushCache(
     DPRINT("R_ResolverFlushCache(%S)\n",
            pszServerName);
 
-    return DnsIntCacheFlush(CACHE_FLUSH_NON_HOSTS_FILE_ENTRIES);
+    /* As on Windows, flushing the cache also reloads the hosts file */
+    ReloadHostsFile();
+    return ERROR_SUCCESS;
 }
 
 
@@ -109,6 +111,10 @@ R_ResolverQuery(
 
     if ((dwFlags & DNS_QUERY_WIRE_ONLY) != 0 && (dwFlags & DNS_QUERY_NO_WIRE_QUERY) != 0)
         return ERROR_INVALID_PARAMETER;
+
+    /* A hosts line edited a moment ago must win over what the cache learned from DNS */
+    if (!(dwFlags & DNS_QUERY_WIRE_ONLY))
+        HostsRefreshIfChanged();
 
     if (dwFlags & DNS_QUERY_WIRE_ONLY)
     {

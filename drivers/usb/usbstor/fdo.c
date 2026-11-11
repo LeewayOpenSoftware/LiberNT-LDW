@@ -311,6 +311,14 @@ USBSTOR_FdoHandlePnp(
         case IRP_MN_SURPRISE_REMOVAL:
         {
             DPRINT("IRP_MN_SURPRISE_REMOVAL %p\n", DeviceObject);
+
+            /* The device is physically gone. Abort the in-flight data phase and
+             * latch the gone state so BOT recovery never waits on the absent
+             * device; otherwise the active request never completes, its file
+             * object reference never drops, and the PnP manager never follows
+             * with IRP_MN_REMOVE_DEVICE (no Safe removal, re-plug wedged). */
+            USBSTOR_SurpriseRemoveDevice(DeviceObject);
+
             Irp->IoStatus.Status = STATUS_SUCCESS;
 
             // forward irp to next device object

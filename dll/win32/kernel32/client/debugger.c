@@ -446,6 +446,7 @@ DebugActiveProcess(IN DWORD dwProcessId)
 {
     NTSTATUS Status, Status1;
     HANDLE Handle;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(Status1);
 
     /* Connect to the debugger */
     Status = DbgUiConnectToDbg();
@@ -487,6 +488,7 @@ DebugActiveProcessStop(IN DWORD dwProcessId)
 {
     NTSTATUS Status, Status1;
     HANDLE Handle;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(Status1);
 
     /* Get the process handle */
     Handle = ProcessIdToHandle(dwProcessId);

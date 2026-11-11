@@ -56,7 +56,7 @@ private:
     {
         BOOL bLock = IsDlgButtonChecked(IDC_TASKBARPROP_LOCK);
         BOOL bHide = IsDlgButtonChecked(IDC_TASKBARPROP_HIDE);
-        BOOL bGroup = IsDlgButtonChecked(IDC_TASKBARPROP_GROUP);
+        BOOL bGroup = SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_GETCURSEL) != TASKBAR_GLOM_NEVER;
         BOOL bShowQL = IsDlgButtonChecked(IDC_TASKBARPROP_SHOWQL);
         UINT uImageId = IDB_TASKBARPROP_NOLOCK_NOGROUP_NOQL;
 
@@ -110,9 +110,35 @@ public:
         CheckDlgButton(IDC_TASKBARPROP_LOCK, g_TaskbarSettings.bLock ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(IDC_TASKBARPROP_HIDE, g_TaskbarSettings.sr.AutoHide ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(IDC_TASKBARPROP_ONTOP, g_TaskbarSettings.sr.AlwaysOnTop ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(IDC_TASKBARPROP_GROUP, g_TaskbarSettings.bGroupButtons ? BST_CHECKED : BST_UNCHECKED);
+        SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_ADDSTRING, 0, (LPARAM)L"Always combine, hide labels");
+        SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_ADDSTRING, 0, (LPARAM)L"Combine when taskbar is full");
+        SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_ADDSTRING, 0, (LPARAM)L"Never combine");
+        SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_SETCURSEL, g_TaskbarSettings.dwTaskbarGlomLevel);
         //CheckDlgButton(IDC_TASKBARPROP_SHOWQL, g_TaskbarSettings.bShowQuickLaunch ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(IDC_TASKBARPROP_SMALLICONS, g_TaskbarSettings.bSmallIcons ? BST_CHECKED : BST_UNCHECKED);
+
+        /* Multiple displays (P1.9d). The controls exist only where the dialog
+           template carries them, so guard every access. */
+        HWND hMMEnable = GetDlgItem(IDC_TASKBARPROP_MMENABLE);
+        if (hMMEnable)
+            CheckDlgButton(IDC_TASKBARPROP_MMENABLE, g_TaskbarSettings.bMMTaskbarEnabled ? BST_CHECKED : BST_UNCHECKED);
+
+        HWND hMMButtons = GetDlgItem(IDC_TASKBARPROP_MMBUTTONS);
+        if (hMMButtons)
+        {
+            /* Item order is the stored value: the combo index is written to
+               the registry as MMTaskbarMode, which Windows defines as
+               0 = all taskbars, 1 = main + where open, 2 = where open. */
+            SendMessageW(hMMButtons, CB_RESETCONTENT, 0, 0);
+            SendMessageW(hMMButtons, CB_ADDSTRING, 0, (LPARAM)L"All taskbars");
+            SendMessageW(hMMButtons, CB_ADDSTRING, 0, (LPARAM)L"Main taskbar and taskbar where window is open");
+            SendMessageW(hMMButtons, CB_ADDSTRING, 0, (LPARAM)L"Taskbar where window is open");
+            UINT uMode = g_TaskbarSettings.uMMTaskbarMode;
+            if (uMode > 2)
+                uMode = 0;
+            SendMessageW(hMMButtons, CB_SETCURSEL, uMode, 0);
+            ::EnableWindow(hMMButtons, g_TaskbarSettings.bMMTaskbarEnabled);
+        }
 
         _UpdateDialog();
         return TRUE;
@@ -120,6 +146,12 @@ public:
 
     LRESULT OnCtrlCommand(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL &bHandled)
     {
+        if (wID == IDC_TASKBARPROP_MMENABLE)
+        {
+            HWND hMMButtons = GetDlgItem(IDC_TASKBARPROP_MMBUTTONS);
+            if (hMMButtons)
+                ::EnableWindow(hMMButtons, IsDlgButtonChecked(IDC_TASKBARPROP_MMENABLE));
+        }
         _UpdateDialog();
         SetModified(TRUE);
         return 0;
@@ -132,11 +164,43 @@ public:
         newSettings.bLock = IsDlgButtonChecked(IDC_TASKBARPROP_LOCK);
         newSettings.sr.AutoHide = IsDlgButtonChecked(IDC_TASKBARPROP_HIDE);
         newSettings.sr.AlwaysOnTop = IsDlgButtonChecked(IDC_TASKBARPROP_ONTOP);
-        newSettings.bGroupButtons = IsDlgButtonChecked(IDC_TASKBARPROP_GROUP);
+        LRESULT GlomLevel = SendDlgItemMessage(IDC_TASKBARPROP_GROUP, CB_GETCURSEL);
+        if (GlomLevel != CB_ERR)
+        {
+            newSettings.dwTaskbarGlomLevel = (DWORD)GlomLevel;
+            newSettings.bGroupButtons = (GlomLevel != TASKBAR_GLOM_NEVER);
+        }
         //newSettings.bShowQuickLaunch = IsDlgButtonChecked(IDC_TASKBARPROP_SHOWQL);
         newSettings.bSmallIcons = IsDlgButtonChecked(IDC_TASKBARPROP_SMALLICONS);
 
+        /* Multiple displays (P1.9d), where the controls are present. */
+        HWND hMMEnable = GetDlgItem(IDC_TASKBARPROP_MMENABLE);
+        if (hMMEnable)
+        {
+            newSettings.bMMTaskbarEnabled = (IsDlgButtonChecked(IDC_TASKBARPROP_MMENABLE) != 0);
+            HWND hMMButtons = GetDlgItem(IDC_TASKBARPROP_MMBUTTONS);
+            if (hMMButtons)
+            {
+                LRESULT iSel = SendMessageW(hMMButtons, CB_GETCURSEL, 0, 0);
+                if (iSel >= 0)
+                    newSettings.uMMTaskbarMode = (UINT)iSel;
+            }
+        }
+
         SendMessage(m_hwndTaskbar, TWM_SETTINGSCHANGED, 0, (LPARAM)&newSettings);
+
+        /* The settings-changed handler applies the existing fields; the
+           multi-monitor fields have no live setter there, so apply them here
+           and reconcile the secondary trays without a restart. */
+        BOOL bMMChanged = (g_TaskbarSettings.bMMTaskbarEnabled != newSettings.bMMTaskbarEnabled) ||
+                          (g_TaskbarSettings.uMMTaskbarMode != newSettings.uMMTaskbarMode);
+        g_TaskbarSettings.bMMTaskbarEnabled = newSettings.bMMTaskbarEnabled;
+        g_TaskbarSettings.uMMTaskbarMode = newSettings.uMMTaskbarMode;
+        if (bMMChanged)
+        {
+            g_TaskbarSettings.Save();
+            TrayManager_OnSettingsChanged();
+        }
 
         return PSNRET_NOERROR;
     }

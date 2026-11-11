@@ -31,10 +31,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(schannel);
 
 #include <mbedtls/ssl.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/x509_crt.h>
 
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
 #include <psa/crypto.h>
+
+#include <wincrypt.h>
 
 typedef struct
 {
@@ -51,6 +54,9 @@ typedef struct
     struct schan_transport  *transport;
     char                   **alpn_protocols;
     MBEDTLS_CREDENTIALS     *credentials;
+    mbedtls_x509_crt         empty_ca;
+    DWORD                    verify_chain_error;
+    DWORD                    verify_policy_error;
 } MBEDTLS_SESSION, *PMBEDTLS_SESSION;
 
 typedef MBEDTLS_SESSION *schan_imp_session;
@@ -63,6 +69,105 @@ static const uint16_t small_key_sig_algs[] =
     MBEDTLS_TLS1_3_SIG_RSA_PKCS1_SHA1,
     MBEDTLS_TLS1_3_SIG_NONE
 };
+
+/* Verify a DER leaf through crypt32 only: chain building, trust, validity,
+ * EKU and hostname policy all live in crypt32 (TLS-POC-P2 owner rule); the
+ * TLS layer records the errors and applies policy. Returns 0 when the chain
+ * builds and the SSL policy (including hostname) passes. */
+static int schan_verify_cert_der(const unsigned char *der, size_t der_len,
+                                 const char *hostname, DWORD *chain_error, DWORD *policy_error)
+{
+    PCCERT_CONTEXT leaf = NULL;
+    HCERTSTORE collection = NULL;
+    CERT_CHAIN_PARA para;
+    PCCERT_CHAIN_CONTEXT chain = NULL;
+    CERT_CHAIN_POLICY_PARA pol;
+    SSL_EXTRA_CERT_CHAIN_POLICY_PARA para2;
+    CERT_CHAIN_POLICY_STATUS polst;
+    WCHAR wname[128];
+    int ok = -1;
+
+    *chain_error = 0;
+    *policy_error = 0;
+    leaf = CertCreateCertificateContext(X509_ASN_ENCODING, der, (DWORD)der_len);
+    if (!leaf)
+    {
+        *chain_error = (DWORD)-1;
+        return -1;
+    }
+    collection = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
+                               CERT_STORE_CREATE_NEW_FLAG, NULL);
+    if (!collection)
+    {
+        CertFreeCertificateContext(leaf);
+        *chain_error = (DWORD)-2;
+        return -1;
+    }
+    CertAddStoreToCollection(collection, CertOpenSystemStoreA(0, "ROOT"), 0, 0);
+
+    memset(&para, 0, sizeof(para));
+    para.cbSize = sizeof(para);
+    if (!CertGetCertificateChain(NULL, leaf, NULL, collection, &para, 0, NULL, &chain))
+    {
+        *chain_error = (DWORD)-3;
+        goto out;
+    }
+    *chain_error = chain->TrustStatus.dwErrorStatus;
+    if (*chain_error)
+        goto out;
+
+    memset(&pol, 0, sizeof(pol));
+    memset(&para2, 0, sizeof(para2));
+    memset(&polst, 0, sizeof(polst));
+    pol.cbSize = sizeof(pol);
+    pol.pvExtraPolicyPara = &para2;
+    para2.cbSize = sizeof(para2);
+    para2.dwAuthType = AUTHTYPE_SERVER;
+    if (hostname)
+    {
+        MultiByteToWideChar(CP_ACP, 0, hostname, -1, wname, 128);
+        para2.pwszServerName = wname;
+    }
+    if (!CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL, chain, &pol, &polst))
+    {
+        *policy_error = (DWORD)-4;
+        goto out;
+    }
+    *policy_error = polst.dwError;
+    ok = (*policy_error == 0) ? 0 : 1;
+out:
+    if (chain)
+        CertFreeCertificateChain(chain);
+    CertFreeCertificateContext(leaf);
+    CertCloseStore(collection, 0);
+    return ok;
+}
+
+/* mbedtls verify callback. Called per depth; the leaf verdict comes from
+ * crypt32, and mbedtls's own findings are cleared because its CA list is
+ * empty by design (crypt32 owns trust). A failed crypt32 check sets a fatal
+ * badcert flag so the handshake aborts. */
+static int schan_verify_crypt32_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    MBEDTLS_SESSION *s = ctx;
+
+    if (depth != 0)
+    {
+        *flags = 0;
+        return 0;
+    }
+
+    if (schan_verify_cert_der(crt->raw.p, crt->raw.len, s->ssl.hostname,
+                              &s->verify_chain_error, &s->verify_policy_error))
+    {
+        ERR("schan_verify_crypt32_cb: crypt32 verification failed (chain %#lx, policy %#lx)\n",
+            s->verify_chain_error, s->verify_policy_error);
+        *flags |= MBEDTLS_X509_BADCERT_OTHER;
+    }
+    else
+        *flags = 0;
+    return 0;
+}
 
 struct schan_buffers
 {
@@ -299,7 +404,27 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
         mbedtls_ssl_conf_renegotiation(&s->conf, MBEDTLS_SSL_RENEGOTIATION_ENABLED);
 
     TRACE("MBEDTLS set authmode\n");
-    mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    if ((cred->credential_use & SECPKG_CRED_INBOUND) ||
+        (cred->flags & SCH_CRED_MANUAL_CRED_VALIDATION))
+    {
+        /* Server client-certificate policy stays off until the ISC_REQ flags
+         * ask for it; SCH_CRED_MANUAL_CRED_VALIDATION is the documented opt
+         * out that makes the application validate the certificate itself. */
+        mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    }
+    else
+    {
+        /* Client: crypt32 is the certificate policy engine; verification is
+         * mandatory and hard-fails (no silent acceptance). An empty CA chain
+         * is configured because mbedtls rejects VERIFY_REQUIRED sessions
+         * without one (MBEDTLS_ERR_SSL_CA_CHAIN_REQUIRED) even when the
+         * verify callback owns the decision; the callback clears mbedtls's
+         * per-depth findings and the crypt32 verdict is the only policy. */
+        mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_x509_crt_init(&s->empty_ca);
+        mbedtls_ssl_conf_ca_chain(&s->conf, &s->empty_ca, NULL);
+        mbedtls_ssl_conf_verify(&s->conf, schan_verify_crypt32_cb, s);
+    }
 
     TRACE("MBEDTLS set rng\n");
     mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &s->ctr_drbg);
@@ -348,6 +473,7 @@ void schan_imp_dispose_session(schan_imp_session session)
     mbedtls_ssl_free(&s->ssl);
     mbedtls_ctr_drbg_free(&s->ctr_drbg);
     mbedtls_entropy_free(&s->entropy);
+    mbedtls_x509_crt_free(&s->empty_ca);
     mbedtls_ssl_config_free(&s->conf);
 
     if (s->alpn_protocols)
@@ -401,6 +527,19 @@ SECURITY_STATUS schan_imp_handshake(schan_imp_session session)
     {
         ERR("schan_imp_handshake: SSL Feature unavailable...\n");
         return SEC_E_UNSUPPORTED_FUNCTION;
+    }
+    else if (err == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED)
+    {
+        ERR("schan_imp_handshake: certificate verification failed (chain %#lx, policy %#lx)\n",
+            s->verify_chain_error, s->verify_policy_error);
+        if (s->verify_policy_error == CERT_E_CN_NO_MATCH)
+            return SEC_E_WRONG_PRINCIPAL;
+        if (s->verify_policy_error == CERT_E_EXPIRED ||
+            (s->verify_chain_error & CERT_TRUST_IS_NOT_TIME_VALID))
+            return SEC_E_CERT_EXPIRED;
+        if (s->verify_chain_error == CERT_E_UNTRUSTEDROOT)
+            return SEC_E_UNTRUSTED_ROOT;
+        return SEC_E_CERT_UNKNOWN;
     }
     else if (err != 0)
     {
@@ -726,11 +865,17 @@ SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
 
         *length = ret;
     }
-    else if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+    else if (ret == MBEDTLS_ERR_SSL_WANT_READ)
     {
         *length = 0;
-        TRACE("MBEDTLS schan_imp_send: operation would block\n");
+        TRACE("MBEDTLS schan_imp_send: renegotiation needs input\n");
         return SEC_I_CONTINUE_NEEDED;
+    }
+    else if (ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+    {
+        *length = 0;
+        TRACE("MBEDTLS schan_imp_send: output buffers are full\n");
+        return SEC_E_BUFFER_TOO_SMALL;
     }
     else
     {
@@ -1144,13 +1289,44 @@ static NTSTATUS backend_send(void *args)
     const struct send_params *params = args;
     MBEDTLS_SESSION *session = session_from_handle(params->session);
     struct schan_transport transport;
-    SIZE_T length = params->length;
-    SECURITY_STATUS status;
+    SIZE_T total = params->length, sent = 0;
+    SECURITY_STATUS status = SEC_E_OK;
 
     init_schan_buffers(&transport.in, NULL);
     init_schan_buffers(&transport.out, params->output);
     session->transport = &transport;
-    status = schan_imp_send(session, params->buffer, &length);
+
+    if (params->control_token == CONTROL_TOKEN_SHUTDOWN || params->control_token == CONTROL_TOKEN_ALERT)
+    {
+        /* ApplyControlToken(SCHANNEL_SHUTDOWN) followed by an empty
+         * EncryptMessage produces the close_notify record here. */
+        int ret = mbedtls_ssl_send_alert_message(&session->ssl, (unsigned char)params->alert_type,
+                                                 (unsigned char)params->alert_number);
+        session->transport = NULL;
+        *params->output_buffer_idx = transport.out.current_buffer_idx;
+        *params->output_offset = transport.out.offset;
+        return !ret || ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE
+               ? SEC_E_OK : SEC_E_INTERNAL_ERROR;
+    }
+
+    /* One mbedtls_ssl_write carries at most one TLS record (16383-byte
+     * payload cap), so drive it in a loop and concatenate the records for
+     * a single EncryptMessage. */
+    while (sent < total)
+    {
+        SIZE_T length = total - sent;
+
+        status = schan_imp_send(session, (const char *)params->buffer + sent, &length);
+        if (status != SEC_E_OK)
+            break;
+        if (!length)
+        {
+            status = SEC_E_INTERNAL_ERROR;
+            break;
+        }
+        sent += length;
+    }
+
     session->transport = NULL;
     *params->output_buffer_idx = transport.out.current_buffer_idx;
     *params->output_offset = transport.out.offset;

@@ -180,9 +180,19 @@ TestDirty(void)
         LONG64 Before = Map.DirtyPages;
 
         ULONG Part = (ULONG)(Before / 3);
+        ULONG64 FirstPage = ((ULONG64)MB - 100) >> PAGE_SHIFT;
+        ULONG64 Boundary = (FirstPage + Part) << PAGE_SHIFT;
 
         CHECK(CcDirtyFlush(&Map, 0, (ULONG64)-1, Part, &Flushed) == STATUS_SUCCESS);
         CHECK(Flushed == Part && Map.DirtyPages == Before - Part);
+
+        /* A budgeted pass writes the lowest dirty pages: the disk holds the
+         * data up to the budget boundary and nothing of the data above it. */
+        CHECK(memcmp(File.Disk + MB - 100, Data, (size_t)(Boundary - (MB - 100))) == 0);
+        CHECK(File.Disk[Boundary] == FilePattern(Boundary));
+        CHECK(File.Disk[3 * MB - 101] == FilePattern(3 * MB - 101));
+        CHECK(!CcDirtyQuery(&Map, MB - 100, (ULONG)(Boundary - (MB - 100))));
+        CHECK(CcDirtyQuery(&Map, Boundary, PAGE_SIZE));
 
         File.FlushFailuresLeft = 1;
         Before = Map.DirtyPages;

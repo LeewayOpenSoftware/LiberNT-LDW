@@ -45,6 +45,7 @@ typedef struct tagNOTIFY_CONTEXT
     DWORD EndNowResult;
     BOOL ShowUI;
     HANDLE UIThread;
+    HANDLE StopEvent;
     HWND WndClient;
     PSHUTDOWN_SETTINGS ShutdownSettings;
 } NOTIFY_CONTEXT, *PNOTIFY_CONTEXT;
@@ -64,6 +65,8 @@ typedef struct tagMESSAGE_CONTEXT
     WPARAM wParam;
     LPARAM lParam;
     DWORD Timeout;
+    volatile LONG SendState;
+    LONG RefCount;
 } MESSAGE_CONTEXT, *PMESSAGE_CONTEXT;
 
 
@@ -71,7 +74,7 @@ typedef struct tagMESSAGE_CONTEXT
 
 static HMODULE hComCtl32Lib = NULL;
 
-static VOID
+VOID
 CallInitCommonControls(VOID)
 {
     static BOOL Initialized = FALSE;
@@ -190,6 +193,7 @@ EndNowThreadProc(LPVOID Parameter)
 {
     PNOTIFY_CONTEXT NotifyContext = (PNOTIFY_CONTEXT)Parameter;
     MSG Msg;
+    DWORD Result, WaitStatus;
 
 #if 0
     SetThreadDesktop(NotifyContext->Desktop);
@@ -202,17 +206,47 @@ EndNowThreadProc(LPVOID Parameter)
                                0);
 #endif
 
+    PeekMessageW(&Msg, NULL, 0, 0, PM_NOREMOVE);
     CallInitCommonControls();
     NotifyContext->Dlg = CreateDialogParam(UserServerDllInstance,
                                            MAKEINTRESOURCE(IDD_END_NOW), NULL,
                                            EndNowDlgProc, (LPARAM)NotifyContext);
     if (NotifyContext->Dlg == NULL)
-        return 0;
+    {
+        Result = QUERY_RESULT_ERROR;
+        goto Cleanup;
+    }
+    if (WaitForSingleObject(NotifyContext->StopEvent, 0) == WAIT_OBJECT_0)
+    {
+        DestroyWindow(NotifyContext->Dlg);
+        Result = QUERY_RESULT_ERROR;
+        goto Cleanup;
+    }
 
     ShowWindow(NotifyContext->Dlg, SW_SHOWNORMAL);
 
-    while (GetMessageW(&Msg, NULL, 0, 0))
+    for (;;)
     {
+        WaitStatus = MsgWaitForMultipleObjectsEx(1, &NotifyContext->StopEvent,
+                                                 INFINITE, QS_ALLINPUT,
+                                                 MWMO_INPUTAVAILABLE);
+        if (WaitStatus == WAIT_OBJECT_0)
+        {
+            Result = QUERY_RESULT_ERROR;
+            break;
+        }
+        if (WaitStatus != WAIT_OBJECT_0 + 1)
+        {
+            Result = QUERY_RESULT_ERROR;
+            break;
+        }
+        if (!PeekMessageW(&Msg, NULL, 0, 0, PM_REMOVE))
+            continue;
+        if (Msg.message == WM_QUIT)
+        {
+            Result = Msg.wParam;
+            break;
+        }
         if (!IsDialogMessage(NotifyContext->Dlg, &Msg))
         {
             TranslateMessage(&Msg);
@@ -220,7 +254,10 @@ EndNowThreadProc(LPVOID Parameter)
         }
     }
 
-    return Msg.wParam;
+Cleanup:
+    CloseHandle(NotifyContext->StopEvent);
+    HeapFree(UserServerHeap, 0, NotifyContext);
+    return Result;
 }
 
 static DWORD WINAPI
@@ -228,6 +265,13 @@ SendClientShutdown(LPVOID Parameter)
 {
     PMESSAGE_CONTEXT Context = (PMESSAGE_CONTEXT)Parameter;
     DWORD_PTR Result;
+    DWORD QueryResult;
+
+    if (InterlockedCompareExchange(&Context->SendState, 1, 0) != 0)
+    {
+        QueryResult = QUERY_RESULT_TIMEOUT;
+        goto Cleanup;
+    }
 
     /* If the shutdown is aborted, just notify the process, there is no need to wait */
     if ((Context->wParam & (MCS_QUERYENDSESSION | MCS_ENDSESSION)) == 0)
@@ -235,53 +279,59 @@ SendClientShutdown(LPVOID Parameter)
         DPRINT("Called WM_CLIENTSHUTDOWN with wParam == 0 ...\n");
         SendNotifyMessageW(Context->Wnd, WM_CLIENTSHUTDOWN,
                            Context->wParam, Context->lParam);
-        return QUERY_RESULT_CONTINUE;
+        QueryResult = QUERY_RESULT_CONTINUE;
+        goto Cleanup;
     }
 
     if (SendMessageTimeoutW(Context->Wnd, WM_CLIENTSHUTDOWN,
                             Context->wParam, Context->lParam,
                             SMTO_NORMAL, Context->Timeout, &Result))
     {
-        DWORD Ret;
-
         if (Context->wParam & MCS_QUERYENDSESSION)
         {
             /* WM_QUERYENDSESSION case */
             switch (Result)
             {
                 case MCSR_DONOTSHUTDOWN:
-                    Ret = QUERY_RESULT_ABORT;
+                    QueryResult = QUERY_RESULT_ABORT;
                     break;
 
                 case MCSR_GOODFORSHUTDOWN:
                 case MCSR_SHUTDOWNFINISHED:
                 default:
-                    Ret = QUERY_RESULT_CONTINUE;
+                    QueryResult = QUERY_RESULT_CONTINUE;
             }
         }
         else
         {
             /* WM_ENDSESSION case */
-            Ret = QUERY_RESULT_CONTINUE;
+            QueryResult = QUERY_RESULT_CONTINUE;
         }
 
         DPRINT("SendClientShutdown -- Return == %s\n",
-                  Ret == QUERY_RESULT_CONTINUE ? "Continue" : "Abort");
-        return Ret;
+                  QueryResult == QUERY_RESULT_CONTINUE ? "Continue" : "Abort");
+        goto Cleanup;
     }
 
     DPRINT1("SendClientShutdown -- Error == %s\n",
               GetLastError() == 0 ? "Timeout" : "error");
 
-    return (GetLastError() == 0 ? QUERY_RESULT_TIMEOUT : QUERY_RESULT_ERROR);
+    QueryResult = (GetLastError() == 0 ? QUERY_RESULT_TIMEOUT : QUERY_RESULT_ERROR);
+
+Cleanup:
+    if (InterlockedDecrement(&Context->RefCount) == 0)
+        HeapFree(UserServerHeap, 0, Context);
+    return QueryResult;
 }
 
 static BOOL
 NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
 {
     MESSAGE_CONTEXT MessageContext;
+    PMESSAGE_CONTEXT ThreadContext;
+    PNOTIFY_CONTEXT UIContext;
     DWORD Now, Passed;
-    DWORD Timeout, WaitStatus;
+    DWORD Timeout, InitialTimeout = 0, WaitStatus;
     HANDLE MessageThread;
     HANDLE Threads[2];
 
@@ -300,6 +350,8 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
     MessageContext.Msg = NotifyContext->Msg;
     MessageContext.wParam = NotifyContext->wParam;
     MessageContext.lParam = NotifyContext->lParam;
+    MessageContext.SendState = 0;
+    MessageContext.RefCount = 2;
     MessageContext.Timeout = NotifyContext->ShutdownSettings->HungAppTimeout;
     if (!NotifyContext->ShutdownSettings->AutoEndTasks)
     {
@@ -308,10 +360,18 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
     if (Passed < MessageContext.Timeout)
     {
         MessageContext.Timeout -= Passed;
+        ThreadContext = HeapAlloc(UserServerHeap, 0, sizeof(*ThreadContext));
+        if (ThreadContext == NULL)
+        {
+            NotifyContext->QueryResult = QUERY_RESULT_ERROR;
+            return FALSE;
+        }
+        *ThreadContext = MessageContext;
         MessageThread = CreateThread(NULL, 0, SendClientShutdown,
-                                     (LPVOID)&MessageContext, 0, NULL);
+                                     ThreadContext, 0, NULL);
         if (MessageThread == NULL)
         {
+            HeapFree(UserServerHeap, 0, ThreadContext);
             NotifyContext->QueryResult = QUERY_RESULT_ERROR;
             return FALSE;
         }
@@ -319,6 +379,7 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
         if (Passed < Timeout)
         {
             Timeout -= Passed;
+            InitialTimeout = Timeout;
             WaitStatus = WaitForSingleObjectEx(MessageThread, Timeout, FALSE);
         }
         else
@@ -330,16 +391,51 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
             NotifyContext->WndClient = Wnd;
             if (NotifyContext->UIThread == NULL && NotifyContext->ShowUI)
             {
-                NotifyContext->UIThread = CreateThread(NULL, 0,
-                                                       EndNowThreadProc,
-                                                       (LPVOID)NotifyContext,
-                                                       0, NULL);
+                UIContext = HeapAlloc(UserServerHeap, 0,
+                                      sizeof(*UIContext) + sizeof(*UIContext->ShutdownSettings));
+                if (UIContext != NULL)
+                {
+                    *UIContext = *NotifyContext;
+                    UIContext->ShutdownSettings = (PSHUTDOWN_SETTINGS)(UIContext + 1);
+                    *UIContext->ShutdownSettings = *NotifyContext->ShutdownSettings;
+                    UIContext->Dlg = NULL;
+                    UIContext->EndNowResult = QUERY_RESULT_ERROR;
+                    NotifyContext->StopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+                    if (NotifyContext->StopEvent == NULL ||
+                        !DuplicateHandle(GetCurrentProcess(), NotifyContext->StopEvent,
+                                         GetCurrentProcess(), &UIContext->StopEvent,
+                                         0, FALSE, DUPLICATE_SAME_ACCESS))
+                    {
+                        if (NotifyContext->StopEvent != NULL)
+                        {
+                            CloseHandle(NotifyContext->StopEvent);
+                            NotifyContext->StopEvent = NULL;
+                        }
+                        HeapFree(UserServerHeap, 0, UIContext);
+                    }
+                    else
+                    {
+                        NotifyContext->UIThread = CreateThread(NULL, 0,
+                                                               EndNowThreadProc,
+                                                               UIContext, 0,
+                                                               NULL);
+                        if (NotifyContext->UIThread == NULL)
+                        {
+                            CloseHandle(NotifyContext->StopEvent);
+                            NotifyContext->StopEvent = NULL;
+                            CloseHandle(UIContext->StopEvent);
+                            HeapFree(UserServerHeap, 0, UIContext);
+                        }
+                    }
+                }
             }
             Threads[0] = MessageThread;
             Threads[1] = NotifyContext->UIThread;
+            Timeout = NotifyContext->ShutdownSettings->AutoEndTasks ?
+                      0 : MessageContext.Timeout - InitialTimeout;
             WaitStatus = WaitForMultipleObjectsEx(NotifyContext->UIThread == NULL ?
                                                   1 : 2,
-                                                  Threads, FALSE, INFINITE,
+                                                  Threads, FALSE, Timeout,
                                                   FALSE);
             if (WaitStatus == WAIT_OBJECT_0)
             {
@@ -360,10 +456,6 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
             {
                 NotifyContext->QueryResult = QUERY_RESULT_ERROR;
             }
-            if (WaitStatus != WAIT_OBJECT_0)
-            {
-                TerminateThread(MessageThread, QUERY_RESULT_TIMEOUT);
-            }
         }
         else if (WaitStatus == WAIT_OBJECT_0)
         {
@@ -377,6 +469,10 @@ NotifyTopLevelWindow(HWND Wnd, PNOTIFY_CONTEXT NotifyContext)
         {
             NotifyContext->QueryResult = QUERY_RESULT_ERROR;
         }
+        if (InterlockedExchange(&ThreadContext->SendState, 2) == 1)
+            WaitForSingleObjectEx(MessageThread, INFINITE, FALSE);
+        if (InterlockedDecrement(&ThreadContext->RefCount) == 0)
+            HeapFree(UserServerHeap, 0, ThreadContext);
         CloseHandle(MessageThread);
     }
     else
@@ -433,6 +529,7 @@ ThreadShutdownNotify(IN PCSR_THREAD CsrThread,
 
     Context->StartTime = 0;
     Context->UIThread = NULL;
+    Context->StopEvent = NULL;
     Context->ShowUI = !IsConsoleMode() && (Flags2 & (MCS_QUERYENDSESSION | MCS_ENDSESSION));
     Context->Dlg = NULL;
 
@@ -452,27 +549,19 @@ ThreadShutdownNotify(IN PCSR_THREAD CsrThread,
 
     NotifyTopLevelWindow(TopWnd, Context);
 
-/******************************************************************************/
-#if 1
     if (Context->UIThread)
     {
-        MY_DPRINT("Context->UIThread != NULL\n");
-        if (Context->Dlg)
-        {
-            MY_DPRINT("Sending WM_CLOSE because Dlg is != NULL\n");
-            SendMessageW(Context->Dlg, WM_CLOSE, 0, 0);
-        }
-        else
-        {
-            MY_DPRINT("Terminating UIThread thread with QUERY_RESULT_ERROR\n");
-            TerminateThread(Context->UIThread, QUERY_RESULT_ERROR);
-        }
+        MY_DPRINT("Stopping UIThread\n");
+        SetEvent(Context->StopEvent);
+        WaitForSingleObjectEx(Context->UIThread,
+                              Context->ShutdownSettings->WaitToKillAppTimeout,
+                              FALSE);
         CloseHandle(Context->UIThread);
-        /**/Context->UIThread = NULL;/**/
-        /**/Context->Dlg = NULL;/**/
+        CloseHandle(Context->StopEvent);
+        Context->UIThread = NULL;
+        Context->StopEvent = NULL;
+        Context->Dlg = NULL;
     }
-#endif
-/******************************************************************************/
 
 #if 0
     MY_DPRINT("Switch back to old desktop 0x%x\n", Context->OldDesktop);
@@ -578,21 +667,6 @@ NotifyUserProcessForShutdown(PCSR_PROCESS CsrProcess,
                              (QUERY_RESULT_ABORT != QueryResult) ? MCS_ENDSESSION : 0,
                              &Context);
     }
-
-#if 0
-    if (Context.UIThread)
-    {
-        if (Context.Dlg)
-        {
-            SendMessageW(Context.Dlg, WM_CLOSE, 0, 0);
-        }
-        else
-        {
-            TerminateThread(Context.UIThread, QUERY_RESULT_ERROR);
-        }
-        CloseHandle(Context.UIThread);
-    }
-#endif
 
     /* Kill the process unless we abort shutdown */
     Result = (QueryResult == QUERY_RESULT_ABORT) ? CsrShutdownCancelled : CsrShutdownCsrProcess;

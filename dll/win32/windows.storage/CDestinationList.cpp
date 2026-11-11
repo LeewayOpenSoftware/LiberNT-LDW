@@ -7,6 +7,12 @@
 
 #include "precomp.h"
 
+/*
+ * File: DWORD magic, DWORD version, DWORD section count, then per section
+ * DWORD type (1 custom, 2 known, 3 tasks); custom: DWORD name length + WCHARs;
+ * known: DWORD KNOWNDESTCATEGORY; then (all types) DWORD item count and per
+ * item DWORD kind (1 ID list via ILSaveToStream, 2 IShellLink via IPersistStream).
+ */
 #define DESTLIST_MAGIC          0x4C4A4443
 #define DESTLIST_VERSION        1
 #define DESTLIST_SECTION_CUSTOM 1
@@ -132,6 +138,173 @@ CDestinationList::WriteSection(DWORD Type, LPCWSTR Name, DWORD Category, IObject
     }
 
     m_Sections++;
+    return S_OK;
+}
+
+/* Reader for the taskbar. Bounded, so a damaged file cannot make it read
+   forever or allocate without limit; a damaged tail is dropped. */
+#define DESTLIST_MAX_SECTIONS 64
+#define DESTLIST_MAX_ITEMS    100
+
+static HRESULT
+DestListRead(IStream *Stream, void *Data, ULONG Size)
+{
+    ULONG Read = 0;
+    HRESULT hr = Stream->Read(Data, Size, &Read);
+
+    if (SUCCEEDED(hr) && Read != Size)
+        hr = STG_E_READFAULT;
+    return hr;
+}
+
+EXTERN_C VOID
+SHELL_FreeCustomDestinations(PJUMPLIST_SECTION pSections, UINT cSections)
+{
+    if (!pSections)
+        return;
+    for (UINT i = 0; i < cSections; i++)
+    {
+        CoTaskMemFree(pSections[i].pszName);
+        if (pSections[i].Items)
+            pSections[i].Items->Release();
+    }
+    CoTaskMemFree(pSections);
+}
+
+EXTERN_C HRESULT
+SHELL_LoadCustomDestinations(LPCWSTR pszAppID, PJUMPLIST_SECTION *ppSections, UINT *pcSections)
+{
+    CComPtr<IStream> File;
+    PJUMPLIST_SECTION Sections;
+    CStringW Path;
+    DWORD Magic, Version, Count, i;
+    UINT Loaded = 0;
+    HRESULT hr;
+
+    if (!ppSections || !pcSections)
+        return E_POINTER;
+    *ppSections = NULL;
+    *pcSections = 0;
+    if (!pszAppID || !*pszAppID)
+        return E_INVALIDARG;
+
+    hr = JumpListPath(pszAppID, L"CustomDestinations", L"customDestinations-ms", FALSE, Path);
+    if (SUCCEEDED(hr))
+        hr = SHCreateStreamOnFileEx(Path, STGM_READ | STGM_SHARE_DENY_WRITE, FILE_ATTRIBUTE_NORMAL, FALSE, NULL, &File);
+    if (FAILED(hr))
+        return (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND)) ? S_FALSE : hr;
+
+    if (FAILED(DestListRead(File, &Magic, sizeof(Magic))) || Magic != DESTLIST_MAGIC ||
+        FAILED(DestListRead(File, &Version, sizeof(Version))) || Version != DESTLIST_VERSION ||
+        FAILED(DestListRead(File, &Count, sizeof(Count))))
+    {
+        return HRESULT_FROM_WIN32(ERROR_FILE_CORRUPT);
+    }
+    if (Count > DESTLIST_MAX_SECTIONS)
+        Count = DESTLIST_MAX_SECTIONS;
+    Sections = (PJUMPLIST_SECTION)CoTaskMemAlloc((Count ? Count : 1) * sizeof(*Sections));
+    if (!Sections)
+        return E_OUTOFMEMORY;
+    ZeroMemory(Sections, (Count ? Count : 1) * sizeof(*Sections));
+
+    for (i = 0; i < Count; i++)
+    {
+        PJUMPLIST_SECTION Section = &Sections[Loaded];
+        CComPtr<IObjectCollection> Items;
+        DWORD Type, Value, ItemCount, j;
+
+        if (FAILED(DestListRead(File, &Type, sizeof(Type))))
+            break;
+        Section->Type = Type;
+        if (Type == DESTLIST_SECTION_CUSTOM)
+        {
+            if (FAILED(DestListRead(File, &Value, sizeof(Value))) || Value == 0 || Value >= MAX_PATH)
+                break;
+            Section->pszName = (LPWSTR)CoTaskMemAlloc((Value + 1) * sizeof(WCHAR));
+            if (!Section->pszName || FAILED(DestListRead(File, Section->pszName, Value * sizeof(WCHAR))))
+                break;
+            Section->pszName[Value] = UNICODE_NULL;
+        }
+        else if (Type == DESTLIST_SECTION_KNOWN)
+        {
+            if (FAILED(DestListRead(File, &Section->Category, sizeof(Section->Category))))
+                break;
+        }
+        else if (Type != DESTLIST_SECTION_TASKS)
+        {
+            break;
+        }
+
+        if (FAILED(DestListRead(File, &ItemCount, sizeof(ItemCount))) || ItemCount > DESTLIST_MAX_ITEMS)
+            break;
+        if (ItemCount && FAILED(ShellObjectCreator<CEnumerableObjectCollection>(IID_PPV_ARG(IObjectCollection, &Items))))
+            break;
+        for (j = 0; j < ItemCount; j++)
+        {
+            CComPtr<IUnknown> Object;
+            DWORD Kind;
+
+            if (FAILED(DestListRead(File, &Kind, sizeof(Kind))))
+                break;
+            if (Kind == DESTLIST_ITEM_LINK)
+            {
+                CComPtr<IPersistStream> Persist;
+                if (FAILED(CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                                            IID_PPV_ARG(IPersistStream, &Persist))) ||
+                    FAILED(Persist->Load(File)))
+                {
+                    break;
+                }
+                Object = Persist;
+            }
+            else if (Kind == DESTLIST_ITEM_IDLIST)
+            {
+                LPITEMIDLIST Pidl = NULL;
+                CComPtr<IShellItem> Item;
+                hr = ILLoadFromStream(File, &Pidl);
+                if (FAILED(hr) || !Pidl)
+                {
+                    ILFree(Pidl);
+                    break;
+                }
+                hr = SHCreateItemFromIDList((PCIDLIST_ABSOLUTE)Pidl, IID_PPV_ARG(IShellItem, &Item));
+                ILFree(Pidl);
+                if (FAILED(hr))
+                    continue; /* the stream is still in step */
+                Object = Item;
+            }
+            else
+            {
+                break;
+            }
+            if (FAILED(Items->AddObject(Object)))
+                break;
+        }
+        if (j < ItemCount)
+        {
+            /* A damaged item: keep what came before this section. */
+            CoTaskMemFree(Section->pszName);
+            Section->pszName = NULL;
+            break;
+        }
+        if (Items)
+            Items->QueryInterface(IID_PPV_ARG(IObjectArray, &Section->Items));
+        Loaded++;
+    }
+    /* A section that failed part-way may hold a name. */
+    if (Loaded < Count)
+    {
+        CoTaskMemFree(Sections[Loaded].pszName);
+        Sections[Loaded].pszName = NULL;
+    }
+
+    if (!Loaded)
+    {
+        SHELL_FreeCustomDestinations(Sections, 0);
+        return S_FALSE;
+    }
+    *ppSections = Sections;
+    *pcSections = Loaded;
     return S_OK;
 }
 

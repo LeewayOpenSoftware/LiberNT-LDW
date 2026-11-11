@@ -25,9 +25,8 @@
  * As implemented, an interface represents a UNIX network interface, virtual
  * or real, and thus can have 0 or 1 IP addresses associated with it.  (This
  * only supports IPv4.)
- * The indexes returned are not guaranteed to be contiguous, so don't call
- * getNumInterfaces() and assume the values [0,getNumInterfaces() - 1] will be
- * valid indexes; use getInterfaceIndexTable() instead.  Non-loopback
+ * The indexes returned are not guaranteed to be contiguous; use
+ * getInterfaceIndexTable() to learn them.  Non-loopback
  * interfaces have lower index values than loopback interfaces, in order to
  * make the indexes somewhat reusable as Netbios LANA numbers.  See ifenum.c
  * for more detail on this.
@@ -47,14 +46,6 @@
 #define MAX_INTERFACE_PHYSADDR    8
 #define MAX_INTERFACE_DESCRIPTION 256
 
-/* Call before using the functions in this module */
-void interfaceMapInit(void);
-/* Call to free resources allocated in interfaceMapInit() */
-void interfaceMapFree(void);
-
-DWORD getNumInterfaces(void);
-DWORD getNumNonLoopbackInterfaces(void);
-
 /* A table of interface indexes, see get*InterfaceTable().  Ignore numAllocated,
  * it's used during the creation of the table.
  */
@@ -69,9 +60,6 @@ typedef struct _InterfaceIndexTable {
  */
 InterfaceIndexTable *getInterfaceIndexTable(void);
 
-/* Like getInterfaceIndexTable, but filters out loopback interfaces. */
-InterfaceIndexTable *getNonLoopbackInterfaceIndexTable(void);
-
 /* ByName/ByIndex versions of various getter functions. */
 
 /* can be used as quick check to see if you've got a valid index, returns NULL
@@ -84,22 +72,10 @@ const char *getInterfaceNameByIndex(DWORD index);
 
 void consumeInterfaceName( const char *ifname );
 
-/* Fills index with the index of name, if found.  Returns
- * ERROR_INVALID_PARAMETER if name or index is NULL, ERROR_INVALID_DATA if name
- * is not found, and NO_ERROR on success.
- */
-DWORD getInterfaceIndexByName(const char *name, PDWORD index);
-
 /* This bunch returns IP addresses, and INADDR_ANY or INADDR_NONE if not found,
  * appropriately depending on the f/n.
  */
-DWORD getInterfaceIPAddrByName(const char *name);
-DWORD getInterfaceIPAddrByIndex(DWORD index);
 DWORD getInterfaceIPAddrsByIndex(DWORD index, DWORD *addrs, DWORD *masks, DWORD count);
-DWORD getInterfaceMaskByName(const char *name);
-DWORD getInterfaceMaskByIndex(DWORD index);
-DWORD getInterfaceBCastAddrByName(const char *name);
-DWORD getInterfaceBCastAddrByIndex(DWORD index);
 
 /* Gets a few physical charactersistics of a device:  MAC addr len, MAC addr,
  * and type as one of the MIB_IF_TYPEs.
@@ -114,17 +90,13 @@ DWORD getInterfaceBCastAddrByIndex(DWORD index);
  * if internal errors occur.
  * Returns NO_ERROR on success.
  */
-DWORD getInterfacePhysicalByName(const char *name, PDWORD len, PBYTE addr,
- PDWORD type);
 DWORD getInterfacePhysicalByIndex(DWORD index, PDWORD len, PBYTE addr,
  PDWORD type);
 
 /* Get the operational status as a (MIB_)IF_OPER_STATUS type.
  */
-DWORD getInterfaceStatusByName(const char *name, PDWORD status);
 DWORD getInterfaceStatusByIndex(DWORD index, PDWORD status);
 
-DWORD getInterfaceMtuByName(const char *name, PDWORD mtu);
 DWORD getInterfaceMtuByIndex(DWORD index, PDWORD mtu);
 
 /* Fills in the MIB_IFROW by name/index.  Doesn't fill in interface statistics,
@@ -132,7 +104,6 @@ DWORD getInterfaceMtuByIndex(DWORD index, PDWORD mtu);
  * Returns ERROR_INVALID_PARAMETER if name or entry is NULL, ERROR_INVALID_DATA
  * if name/index isn't valid, and NO_ERROR otherwise.
  */
-DWORD getInterfaceEntryByName(const char *name, PMIB_IFROW entry);
 DWORD getInterfaceEntryByIndex(DWORD index, PMIB_IFROW entry);
 
 /* add and delete IP addresses */

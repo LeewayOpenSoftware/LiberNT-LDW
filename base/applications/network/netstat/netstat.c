@@ -462,7 +462,10 @@ BOOL ShowTcpTable(VOID)
 
             if (tcpTable->table[i].dwState ==  MIB_TCP_STATE_LISTEN)
             {
-                sprintf(Remote, "%s:0", HostIp);
+                /* A listener has no peer: Windows prints 0.0.0.0:0 (with -n)
+                 * or <hostname>:0, whatever address the socket is bound to. */
+                GetIpHostName(TRUE, 0, RemoteIp, sizeof(RemoteIp));
+                sprintf(Remote, "%s:0", RemoteIp);
             }
             else
             {

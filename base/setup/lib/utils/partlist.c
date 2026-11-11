@@ -995,6 +995,7 @@ InitPartitionDeviceName(
     _Inout_ PPARTENTRY PartEntry)
 {
     NTSTATUS Status;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(Status);
 
     /* Ignore if this is a container partition */
     if (IsContainerPartition(PartEntry->PartitionType))

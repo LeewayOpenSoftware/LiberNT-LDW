@@ -104,6 +104,7 @@ list(APPEND SOURCE
     PseudoConsoleCtrlC.c
     PssSnapshot.c
     PrivMoveFileIdentityW.c
+    QueryPerformanceCounter.c
     QueueUserAPC.c
     QueryProcessCycleTime.c
     ReadFile.c

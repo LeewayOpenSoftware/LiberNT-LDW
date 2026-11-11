@@ -571,8 +571,23 @@ BuildTaskbar(PageBuilder &page)
     AddTaskbarToggle(page, IDS_LOCK_TASKBAR, IDS_LOCK_TASKBAR_DESC, L"lock_closed_20_regular", ADVANCED_KEY,
                      L"TaskbarSizeMove", 0, true);
     AddTaskbarToggle(page, IDS_SMALL_BUTTONS, 0, L"apps_20_regular", ADVANCED_KEY, L"TaskbarSmallIcons", 1, false);
-    AddTaskbarToggle(page, IDS_COMBINE_BUTTONS, IDS_COMBINE_BUTTONS_DESC, L"window_multiple_20_regular", ADVANCED_KEY,
-                     L"TaskbarGlomming", 0, false);
+    {
+        DWORD glomLevel = ReadDword(HKEY_CURRENT_USER, ADVANCED_KEY, L"TaskbarGlomLevel", 0);
+        std::vector<std::wstring> modes;
+
+        if (glomLevel > 2)
+            glomLevel = ReadDword(HKEY_CURRENT_USER, ADVANCED_KEY, L"TaskbarGlomming", 1) ? 0 : 2;
+        modes.push_back(Str(IDS_COMBINE_ALWAYS));
+        modes.push_back(Str(IDS_COMBINE_WHEN_FULL));
+        modes.push_back(Str(IDS_COMBINE_NEVER));
+        page.Choice(Str(IDS_COMBINE_BUTTONS), Str(IDS_COMBINE_BUTTONS_DESC), L"window_multiple_20_regular", modes,
+                    glomLevel, [](int index)
+                    {
+                        WriteDword(HKEY_CURRENT_USER, ADVANCED_KEY, L"TaskbarGlomLevel", index);
+                        WriteDword(HKEY_CURRENT_USER, ADVANCED_KEY, L"TaskbarGlomming", index != 2);
+                        BroadcastSetting(L"TraySettings");
+                    });
+    }
     AddTaskbarToggle(page, IDS_SHOW_DESKTOP_CORNER, IDS_SHOW_DESKTOP_CORNER_DESC, L"desktop_20_regular", ADVANCED_KEY,
                      L"TaskbarSd", 1, false);
 

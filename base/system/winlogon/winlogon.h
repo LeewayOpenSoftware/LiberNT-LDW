@@ -472,4 +472,9 @@ BOOL WINAPI WlxQueryTsLogonCredentials(PWLX_CLIENT_CREDENTIALS_INFO_V2_0 pCred);
 BOOL WINAPI WlxDisconnect(VOID);
 DWORD WINAPI WlxQueryTerminalServicesData(HANDLE hWlx, PWLX_TERMINAL_SERVICES_DATA pTSData, WCHAR* UserName, WCHAR* Domain);
 
+/* winlogon.c */
+VOID
+LogonStage(
+    _In_ PCSTR Stage);
+
 #endif /* __WINLOGON_MAIN_H__ */

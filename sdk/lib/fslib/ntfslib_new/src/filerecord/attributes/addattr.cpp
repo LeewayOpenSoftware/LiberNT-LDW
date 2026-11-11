@@ -1484,6 +1484,302 @@ FileRecord::FilterAttributeList(
     return Status;
 }
 
+/*
+ * A file needs an attribute list only while some of its attributes live in
+ * extension records. A list whose entries all name the base record is
+ * vestigial, and Windows treats a record carrying one as corrupt. With Commit
+ * set, the list attribute is removed and the base record written. The
+ * clusters of a non-resident list stay allocated until the caller releases
+ * them after that write; the volume check frees them as lost clusters.
+ */
+NTSTATUS
+FileRecord::DropUnneededAttributeList(
+    _In_ BOOLEAN Commit,
+    _Out_ PBOOLEAN Unneeded)
+{
+    PAttribute ListAttribute;
+    ULONG Offset = 0;
+    NTSTATUS Status;
+
+    *Unneeded = FALSE;
+
+    if (!FindAttributeInRecord(TypeAttributeList, NULL, NULL))
+        return STATUS_SUCCESS;
+
+    Status = LoadAttributeList();
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    while (AttributeListData && Offset < AttributeListLength)
+    {
+        PAttributeListEx Entry = reinterpret_cast<PAttributeListEx>(AttributeListData + Offset);
+
+        if (!IsWritableAttributeListEntryValid(Entry, AttributeListLength - Offset))
+            return STATUS_FILE_CORRUPT_ERROR;
+        if (GetFRNFromFileRef(Entry->BaseFileRef) != RecordNumber)
+            return STATUS_SUCCESS;
+        Offset += Entry->RecordLength;
+    }
+
+    *Unneeded = TRUE;
+    if (!Commit)
+        return STATUS_SUCCESS;
+
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_FILE_CORRUPT_ERROR;
+    /* Cached extension records stay valid without the list, and callers may
+     * still hold them, so only the list data is dropped here. */
+    Status = RemoveAttributeRecord(ListAttribute);
+    delete[] AttributeListData;
+    AttributeListData = NULL;
+    AttributeListLength = 0;
+    if (!NT_SUCCESS(Status))
+        return Status;
+    return DiskVolume->MFT->WriteFileRecordToMFT(this);
+}
+
+/*
+ * Called where an operation has just emptied and freed an extension record,
+ * so the attribute list may now name only the base record. Nothing journals
+ * this, so the order is what keeps it safe: the base record is written
+ * without the list first, and only then are the clusters of a non-resident
+ * list released. A crash in between leaves lost clusters, which the volume
+ * check reclaims, never a list whose clusters were freed.
+ */
+NTSTATUS
+FileRecord::CollapseUnneededAttributeList()
+{
+    PAttribute ListAttribute;
+    PDataRun ListRuns = NULL;
+    BOOLEAN Unneeded;
+    NTSTATUS Status;
+
+    Status = DropUnneededAttributeList(FALSE, &Unneeded);
+    if (!NT_SUCCESS(Status) || !Unneeded)
+        return Status;
+
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_FILE_CORRUPT_ERROR;
+    if (ListAttribute->IsNonResident)
+    {
+        ListRuns = FindNonResidentData(ListAttribute);
+        if (!ListRuns)
+            return STATUS_FILE_CORRUPT_ERROR;
+    }
+
+    Status = DropUnneededAttributeList(TRUE, &Unneeded);
+    if (NT_SUCCESS(Status) && ListRuns)
+        Status = DiskVolume->ReleaseClusters(ListRuns);
+    FreeDataRun(ListRuns);
+    return Status;
+}
+
+NTSTATUS
+FileRecord::RemoveAttributeList()
+{
+    PAttribute ListAttribute;
+    NTSTATUS Status;
+
+    if (!DiskVolume || DiskVolume->IsReadOnly || !Data || !Header || Header->BaseFileRecord != 0)
+        return STATUS_INVALID_PARAMETER;
+
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_NOT_FOUND;
+
+    Status = RemoveAttributeRecord(ListAttribute);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    delete[] AttributeListData;
+    AttributeListData = NULL;
+    AttributeListLength = 0;
+    ClearExtentCache();
+    ClearDataRunCache();
+    return DiskVolume->MFT->WriteFileRecordToMFT(this);
+}
+
+NTSTATUS
+FileRecord::RebuildAttributeList(
+    _In_reads_(ExtensionCount) FileRecord* const* Extensions,
+    _In_ ULONG ExtensionCount)
+{
+    PAttribute ListAttribute;
+    PUCHAR NewList = NULL;
+    PULONG Order = NULL;
+    ULONG EntryCount = 0;
+    ULONG NewLength = 0;
+    ULONG Capacity = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!DiskVolume || DiskVolume->IsReadOnly || !Data || !Header || Header->BaseFileRecord != 0 ||
+        (ExtensionCount && !Extensions))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
+    if (!ListAttribute)
+        return STATUS_NOT_FOUND;
+
+    /* Two passes over the records: count the room the entries need, then
+     * write them. Pass 0 also checks that every extension belongs here. */
+    for (ULONG Pass = 0; Pass < 2 && NT_SUCCESS(Status); Pass++)
+    {
+        if (Pass == 1)
+        {
+            if (!EntryCount)
+                return STATUS_FILE_CORRUPT_ERROR;
+            NewList = new(PagedPool, TAG_FILE_RECORD) UCHAR[Capacity];
+            Order = new(PagedPool, TAG_FILE_RECORD) ULONG[EntryCount];
+            if (!NewList || !Order)
+            {
+                Status = STATUS_INSUFFICIENT_RESOURCES;
+                break;
+            }
+            RtlZeroMemory(NewList, Capacity);
+            EntryCount = 0;
+        }
+        for (ULONG Index = 0; Index <= ExtensionCount && NT_SUCCESS(Status); Index++)
+        {
+            FileRecord* Owner = Index == 0 ? this : Extensions[Index - 1];
+            PFileRecordHeader OwnerHeader = Owner ? Owner->Header : NULL;
+            ULONG Offset;
+
+            if (!OwnerHeader || !Owner->Data ||
+                (Owner != this &&
+                 (GetFRNFromFileRef(OwnerHeader->BaseFileRecord) != RecordNumber ||
+                  (USHORT)(OwnerHeader->BaseFileRecord >> 48) != Header->SequenceNumber ||
+                  OwnerHeader->SequenceNumber == 0)) ||
+                OwnerHeader->ActualSize > OwnerHeader->AllocatedSize)
+            {
+                Status = STATUS_FILE_CORRUPT_ERROR;
+                break;
+            }
+            for (Offset = OwnerHeader->AttributeOffset;
+                 Offset + FIELD_OFFSET(Attribute, Resident) + 8 <= OwnerHeader->ActualSize;)
+            {
+                PAttribute Attr = reinterpret_cast<PAttribute>(Owner->Data + Offset);
+                ULONG EntryLength;
+
+                if (Attr->AttributeType == TypeAttributeEndMarker)
+                    break;
+                if (Attr->Length == 0 || Attr->Length > OwnerHeader->ActualSize - Offset ||
+                    (Attr->NameLength &&
+                     (Attr->NameOffset > Attr->Length ||
+                      Attr->NameLength * sizeof(WCHAR) > Attr->Length - Attr->NameOffset)))
+                {
+                    Status = STATUS_FILE_CORRUPT_ERROR;
+                    break;
+                }
+                Offset += Attr->Length;
+                if (Attr->AttributeType == TypeAttributeList)
+                    continue;
+
+                EntryLength = ALIGN_UP_BY(0x1a + Attr->NameLength * sizeof(WCHAR), sizeof(ULONGLONG));
+                if (Pass == 0)
+                {
+                    if (Capacity > MAXUSHORT * 64)
+                    {
+                        Status = STATUS_FILE_TOO_LARGE;
+                        break;
+                    }
+                    Capacity += EntryLength;
+                    EntryCount++;
+                    continue;
+                }
+
+                PAttributeListEx Entry = reinterpret_cast<PAttributeListEx>(NewList + NewLength);
+
+                Entry->Type = Attr->AttributeType;
+                Entry->RecordLength = (UINT16)EntryLength;
+                Entry->NameLength = Attr->NameLength;
+                Entry->NameOffset = 0x1a;
+                Entry->FirstVCN = Attr->IsNonResident ? Attr->NonResident.FirstVCN : 0;
+                Entry->BaseFileRef = ((ULONGLONG)OwnerHeader->SequenceNumber << 48) | Owner->RecordNumber;
+                Entry->AttributeId = Attr->AttributeID;
+                RtlCopyMemory(NewList + NewLength + 0x1a,
+                              reinterpret_cast<PUCHAR>(Attr) + Attr->NameOffset,
+                              Attr->NameLength * sizeof(WCHAR));
+                Order[EntryCount++] = NewLength;
+                NewLength += EntryLength;
+            }
+        }
+    }
+
+    /* Sort the entries the way every list is kept: type, name, first VCN.
+     * Insertion sort on offsets; lists are short. */
+    for (ULONG Index = 1; NT_SUCCESS(Status) && Index < EntryCount; Index++)
+    {
+        ULONG Moving = Order[Index];
+        PAttributeListEx Right = reinterpret_cast<PAttributeListEx>(NewList + Moving);
+        ULONG Slot = Index;
+
+        while (Slot > 0)
+        {
+            PAttributeListEx Left = reinterpret_cast<PAttributeListEx>(NewList + Order[Slot - 1]);
+            LONG Comparison;
+
+            Status = CompareAttributeListKeys(DiskVolume,
+                                              Left->Type,
+                                              reinterpret_cast<PWSTR>(reinterpret_cast<PUCHAR>(Left) + 0x1a),
+                                              Left->NameLength,
+                                              Left->FirstVCN,
+                                              Right->Type,
+                                              reinterpret_cast<PWSTR>(reinterpret_cast<PUCHAR>(Right) + 0x1a),
+                                              Right->NameLength,
+                                              Right->FirstVCN,
+                                              &Comparison);
+            if (!NT_SUCCESS(Status) || Comparison <= 0)
+                break;
+            Order[Slot] = Order[Slot - 1];
+            Slot--;
+        }
+        Order[Slot] = Moving;
+    }
+
+    if (NT_SUCCESS(Status))
+    {
+        PUCHAR Sorted = new(PagedPool, TAG_FILE_RECORD) UCHAR[NewLength];
+
+        if (!Sorted)
+        {
+            Status = STATUS_INSUFFICIENT_RESOURCES;
+        }
+        else
+        {
+            ULONG Length = 0;
+
+            for (ULONG Index = 0; Index < EntryCount; Index++)
+            {
+                PAttributeListEx Entry = reinterpret_cast<PAttributeListEx>(NewList + Order[Index]);
+
+                RtlCopyMemory(Sorted + Length, Entry, Entry->RecordLength);
+                Length += Entry->RecordLength;
+            }
+            delete[] NewList;
+            NewList = Sorted;
+        }
+    }
+
+    /* Writing more than the list holds would allocate clusters through the
+     * mapping of a list that cannot be read: refuse that. */
+    if (NT_SUCCESS(Status) &&
+        ((ListAttribute->IsNonResident && NewLength > ListAttribute->NonResident.AllocatedSize) ||
+         (!ListAttribute->IsNonResident && NewLength > ListAttribute->Resident.DataLength)))
+    {
+        Status = STATUS_DISK_FULL;
+    }
+    if (NT_SUCCESS(Status))
+        Status = ReplaceAttributeList(NewList, NewLength);
+    delete[] NewList;
+    delete[] Order;
+    if (!NT_SUCCESS(Status))
+        return Status;
+    return DiskVolume->MFT->WriteFileRecordToMFT(this);
+}
+
 NTSTATUS
 FileRecord::ReplaceAttributeList(
     _In_reads_bytes_(NewLength) PUCHAR NewList,
@@ -1600,6 +1896,8 @@ FileRecord::RemoveListedAttribute(
     if (NT_SUCCESS(Status))
         Status = ReplaceAttributeList(NewList, NewLength);
     delete[] NewList;
+    if (NT_SUCCESS(Status) && Owner != this)
+        (void)CollapseUnneededAttributeList();
     return Status;
 }
 
@@ -3800,6 +4098,51 @@ FileRecord::CommitNonResidentMappingUpdate(
             return Status;
     }
 
+    /*
+     * The write-back cache commits blocks in no dependency order, so the
+     * "owner first" above holds in memory only. Order the list's block after
+     * the owner record (Volume::OrderAfter): a list naming an attribute
+     * instance in a record whose content never landed would leave that
+     * attribute unreachable. A list spanning several blocks cannot be
+     * constrained as one block; the owner record is then committed
+     * synchronously, as it is when the pointer cannot be placed.
+     */
+    if (AttributeOwner != BaseRecord)
+    {
+        PVolume TargetVolume = BaseRecord->DiskVolume;
+        ULONGLONG OwnerDiskOffset = 0;
+        ULONGLONG ListDiskOffset = 0;
+        ULONG ListLength = 0;
+
+        if (AttributeOwner->RecordNumber == MAXULONG ||
+            !NT_SUCCESS(TargetVolume->MFT->GetFileRecordDiskOffset(
+                AttributeOwner->RecordNumber,
+                &OwnerDiskOffset)))
+        {
+            Status = TargetVolume->FlushVolume();
+        }
+        else
+        {
+            if (!NT_SUCCESS(TargetVolume->MFT->GetAttributeRangeDiskOffset(
+                    BaseRecord,
+                    ListAttribute,
+                    0,
+                    Update->NewListLength,
+                    &ListDiskOffset,
+                    &ListLength)))
+            {
+                ListLength = 0;
+            }
+            Status = TargetVolume->OrderAfter(
+                ListDiskOffset,
+                ListLength,
+                OwnerDiskOffset,
+                TargetVolume->MFT->FileRecordSize);
+        }
+        if (!NT_SUCCESS(Status))
+            return Status;
+    }
+
     WrittenLength = Update->NewListLength;
     Update->ListWriteAttempted = TRUE;
     Status = BaseRecord->WriteFileData(
@@ -3831,6 +4174,50 @@ FileRecord::CommitNonResidentMappingUpdate(
         Update->NewListLength;
     ListAttribute->NonResident.InitalizedDataSize =
         Update->NewListLength;
+
+    /*
+     * The base record is about to publish the new list length. Order it
+     * after the list bytes written above, so the record can never describe
+     * a longer list than the disk holds: the tail would read as zero entries
+     * and the list would fail to parse, which makes every attribute of the
+     * file unreachable (J36 r149, the same symptom from the promotion path).
+     */
+    {
+        PVolume TargetVolume = BaseRecord->DiskVolume;
+        ULONGLONG BaseDiskOffset = 0;
+        ULONGLONG ListDiskOffset = 0;
+        ULONG BaseLength = 0;
+        ULONG ListLength = 0;
+
+        if (!NT_SUCCESS(TargetVolume->MFT->GetAttributeRangeDiskOffset(
+                BaseRecord,
+                ListAttribute,
+                0,
+                Update->NewListLength,
+                &ListDiskOffset,
+                &ListLength)))
+        {
+            Status = TargetVolume->FlushVolume();
+        }
+        else
+        {
+            if (BaseRecord->RecordNumber != MAXULONG &&
+                NT_SUCCESS(TargetVolume->MFT->GetFileRecordDiskOffset(
+                    BaseRecord->RecordNumber,
+                    &BaseDiskOffset)))
+            {
+                BaseLength = TargetVolume->MFT->FileRecordSize;
+            }
+            Status = TargetVolume->OrderAfter(
+                BaseDiskOffset,
+                BaseLength,
+                ListDiskOffset,
+                ListLength);
+        }
+        if (!NT_SUCCESS(Status))
+            return Status;
+    }
+
     Status = BaseRecord->DiskVolume->MFT->
         WriteFileRecordToMFT(BaseRecord);
     if (!NT_SUCCESS(Status))
@@ -3972,6 +4359,11 @@ FileRecord::CommitNonResidentMappingUpdate(
            : NULL);
     BaseRecord->ClearExtentCacheExcept(
         CacheRecordToKeep);
+
+    /* A mapping that shrank back into the base record can leave a list that
+     * names only the base record once its extension records are freed. It
+     * is dropped only while the base record keeps the growth headroom. */
+    (void)BaseRecord->SettleUnneededAttributeList();
 
     while (Update->NewExtents)
     {
@@ -4176,6 +4568,18 @@ FileRecord::AbortNonResidentMappingUpdate(
             Update->OldExtents->Next;
         delete Update->OldExtents;
         Update->OldExtents = Next;
+    }
+    if (MetadataRestored &&
+        Update->AddedListRuns &&
+        BaseRecord)
+    {
+        NTSTATUS RestoreStatus = BaseRecord->DiskVolume->FlushVolume();
+        if (!NT_SUCCESS(RestoreStatus))
+        {
+            MetadataRestored = FALSE;
+            if (NT_SUCCESS(FirstFailure))
+                FirstFailure = RestoreStatus;
+        }
     }
     if (MetadataRestored &&
         Update->AddedListRuns &&

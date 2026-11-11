@@ -217,8 +217,12 @@ StartUserShell(
     BOOLEAN Old;
     BOOL ret;
 
+    /* A logon without a user token must never get a shell running as SYSTEM */
     if (!Session->UserToken)
-        return StartSystemShell();
+    {
+        WARN("WL: No user token, the user shell is not started\n");
+        return FALSE;
+    }
 
     /* Create environment block for the user */
     if (!CreateEnvironmentBlock(&lpEnvironment, Session->UserToken, TRUE))
@@ -319,8 +323,27 @@ RestartUserShell(
     if (!IsAutoRestartShellEnabled())
         return FALSE;
 
+    /*
+     * Without a user token the only shell that may run is the setup-time one,
+     * which runs as SYSTEM like setup itself. Anywhere else a missing token
+     * means the user has logged off (the restart timer can still fire after
+     * HandleLogoff), and restarting the shell then would start it as SYSTEM.
+     */
     if (!Session->UserToken)
-        return StartSystemShell();
+    {
+        if (Session->LogonState == STATE_INIT && GetSetupType() != 0)
+            return StartSystemShell();
+        WARN("WL: No user token, the shell is not restarted\n");
+        return FALSE;
+    }
+
+    if (Session->LogonState != STATE_LOGGED_ON &&
+        Session->LogonState != STATE_LOGGED_ON_SAS &&
+        Session->LogonState != STATE_LOCKED &&
+        Session->LogonState != STATE_LOCKED_SAS)
+    {
+        return FALSE;
+    }
 
     if (ImpersonateLoggedOnUser(Session->UserToken))
     {
@@ -856,6 +879,8 @@ HandleLogon(
     BOOL ret = FALSE;
     ULONG SessionId = NtCurrentPeb()->SessionId;
 
+    LogonStage("authenticated");
+
     if (!SetTokenInformation(Session->UserToken, TokenSessionId, &SessionId, sizeof(SessionId)))
         ERR("WL: SetTokenInformation(TokenSessionId) failed (error %lu)\n", GetLastError());
 
@@ -916,6 +941,7 @@ HandleLogon(
         }
         Session->hProfileInfo = ProfileInfo.hProfile;
     }
+    LogonStage("profile-loaded");
 
     /* Cache the username and domain */
     Session->UserName = WlStrDup(Session->MprNotifyInfo.pszUserName);
@@ -953,6 +979,7 @@ HandleLogon(
 
     /* Start the user shell */
     CallNotificationDlls(Session, StartShellHandler);
+    LogonStage("shell-start");
     if (!StartUserShell(Session))
     {
         //WCHAR StatusMsg[256];
@@ -986,6 +1013,7 @@ cleanup:
 
     if (!ret)
     {
+        LogonStage("logon-failed");
         RemoveStatusMessage(Session);
         RtlFreeHeap(RtlGetProcessHeap(), 0, Session->UserName);
         RtlFreeHeap(RtlGetProcessHeap(), 0, Session->Domain);
@@ -1014,6 +1042,7 @@ cleanup:
         SwitchDesktop(Session->ApplicationDesktop);
         RemoveStatusMessage(Session);
         Session->LogonState = STATE_LOGGED_ON;
+        LogonStage("logged-on");
     }
     return ret;
 }
@@ -1309,6 +1338,8 @@ HandleLogoff(
     HANDLE hThread;
     NTSTATUS Status;
 
+    LogonStage("logoff-start");
+
     Status = CreateLogoffSecurityAttributes(&psa);
     if (!NT_SUCCESS(Status))
     {
@@ -1377,12 +1408,16 @@ HandleLogoff(
     // (revert what security.c!AllowAccessOnSession() does).
     UpdateNamedObjectAccess(Session->UserToken, FALSE);
 
+    /* A shell restart armed before the logoff must not run for the next state */
+    KillTimer(Session->SASWindow, 1);
+
     /* Switch back to default SYSTEM user */
     CloseHandle(Session->UserToken);
     Session->UserToken = NULL;
     Session->LogonId = LuidNone;
 
     Session->LogonState = STATE_LOGGED_OFF;
+    LogonStage("logged-off");
 
     return STATUS_SUCCESS;
 }
@@ -1467,6 +1502,8 @@ HandleShutdown(
     NTSTATUS Status;
     UINT uMsgId;
     BOOLEAN Old;
+
+    LogonStage("shutdown-start");
 
     /* Display the appropriate shutdown or reboot message */
     if (wlxAction == WLX_SAS_ACTION_SHUTDOWN_REBOOT)
@@ -1710,6 +1747,7 @@ DispatchSAS(
 
                 case STATE_LOGGED_OFF:
                     Session->LogonState = STATE_LOGGED_OFF_SAS;
+                    LogonStage("logged-out-sas");
 
                     CloseAllDialogWindows();
 

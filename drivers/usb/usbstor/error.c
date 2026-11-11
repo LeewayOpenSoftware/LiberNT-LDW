@@ -68,6 +68,64 @@ USBSTOR_ResetPipeWithHandle(
     return Status;
 }
 
+NTSTATUS
+USBSTOR_AbortPipeWithHandle(
+    IN PDEVICE_OBJECT DeviceObject,
+    IN USBD_PIPE_HANDLE PipeHandle)
+{
+    PURB Urb;
+    NTSTATUS Status;
+
+    Urb = (PURB)AllocateItem(NonPagedPool, sizeof(struct _URB_PIPE_REQUEST));
+    if (!Urb)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    Urb->UrbPipeRequest.Hdr.Length = sizeof(struct _URB_PIPE_REQUEST);
+    Urb->UrbPipeRequest.Hdr.Function = URB_FUNCTION_ABORT_PIPE;
+    Urb->UrbPipeRequest.PipeHandle = PipeHandle;
+
+    // the host controller driver completes outstanding transfers locally;
+    // this does not require the (now absent) device to respond
+    Status = USBSTOR_SyncUrbRequest(DeviceObject, Urb);
+
+    FreeItem(Urb);
+    return Status;
+}
+
+VOID
+USBSTOR_SurpriseRemoveDevice(
+    IN PDEVICE_OBJECT FdoDevice)
+{
+    PFDO_DEVICE_EXTENSION FDODeviceExtension = FdoDevice->DeviceExtension;
+    PUSBD_INTERFACE_INFORMATION Iface;
+    KIRQL OldLevel;
+
+    ASSERT(FDODeviceExtension->Common.IsFDO);
+
+    /* Latch the gone state: the device is physically absent, so no request may
+     * touch the hardware again. New and retried requests fail fast with
+     * SRB_STATUS_NO_DEVICE (queue.c), and the BOT reset workers short-circuit
+     * instead of issuing control transfers or a port reset to a device that will
+     * never answer (error.c) - that unanswered recovery is what otherwise pins
+     * the in-flight request forever, so its file-object reference never drops
+     * and the PnP manager never sends IRP_MN_REMOVE_DEVICE. */
+    KeAcquireSpinLock(&FDODeviceExtension->IrpListLock, &OldLevel);
+    FDODeviceExtension->Flags |= USBSTOR_FDO_FLAGS_DEVICE_GONE;
+    KeReleaseSpinLock(&FDODeviceExtension->IrpListLock, OldLevel);
+
+    /* Retire the data phase in flight on the bulk pipes right now, so the
+     * active request completes promptly and runs the gone-gated recovery
+     * instead of waiting out its SCSI timeout. */
+    Iface = FDODeviceExtension->InterfaceInformation;
+    if (Iface != NULL)
+    {
+        USBSTOR_AbortPipeWithHandle(FDODeviceExtension->LowerDeviceObject,
+                                    Iface->Pipes[FDODeviceExtension->BulkInPipeIndex].PipeHandle);
+        USBSTOR_AbortPipeWithHandle(FDODeviceExtension->LowerDeviceObject,
+                                    Iface->Pipes[FDODeviceExtension->BulkOutPipeIndex].PipeHandle);
+    }
+}
+
 VOID
 NTAPI
 USBSTOR_ResetPipeWorkItemRoutine(
@@ -79,7 +137,11 @@ USBSTOR_ResetPipeWorkItemRoutine(
     NTSTATUS Status;
 
     // clear stall on the corresponding pipe
-    Status = USBSTOR_ResetPipeWithHandle(FDODeviceExtension->LowerDeviceObject, Context->Urb.UrbBulkOrInterruptTransfer.PipeHandle);
+    KeMemoryBarrier();
+    if (FDODeviceExtension->Flags & USBSTOR_FDO_FLAGS_DEVICE_GONE)
+        Status = STATUS_DEVICE_DOES_NOT_EXIST;   /* gone: do not touch the pipe, take the failure path */
+    else
+        Status = USBSTOR_ResetPipeWithHandle(FDODeviceExtension->LowerDeviceObject, Context->Urb.UrbBulkOrInterruptTransfer.PipeHandle);
     if (!NT_SUCCESS(Status))
     {
         PIRP Irp = Context->Irp;
@@ -125,6 +187,16 @@ USBSTOR_ResetDeviceWorkItemRoutine(
     DPRINT("USBSTOR_ResetDeviceWorkItemRoutine\n");
 
     FDODeviceExtension = FdoDevice->DeviceExtension;
+
+    KeMemoryBarrier();
+    if (FDODeviceExtension->Flags & USBSTOR_FDO_FLAGS_DEVICE_GONE)
+    {
+        /* The device is gone; a BOT reset or port reset would block on a device
+         * that cannot answer. Fail every pending request instead. */
+        USBSTOR_QueueEndReset(FdoDevice, STATUS_DEVICE_DOES_NOT_EXIST);
+        return;
+    }
+
     SingleInterface = (FDODeviceExtension->ConfigurationDescriptor &&
                        FDODeviceExtension->ConfigurationDescriptor->bNumInterfaces == 1);
 

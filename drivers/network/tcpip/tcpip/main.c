@@ -903,11 +903,24 @@ TiDispatch(
         switch (IrpSp->Parameters.DeviceIoControl.IoControlCode)
         {
             case IOCTL_IP6_SET_ADDRESS:
+                TiSignalChange();
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_PARAMETER);
+                break;
             case IOCTL_IP6_SET_ROUTE:
+                TiSignalChange();
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_PARAMETER);
+                break;
             case IOCTL_IP6_SET_INTERFACE:
+                TiSignalChange();
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_INTERFACE, TI_NSI_CHANGE_PARAMETER);
+                break;
             case IOCTL_IP6_SET_NEIGHBOR:
+                TiSignalChange();
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_PARAMETER);
+                break;
             case IOCTL_IP_SET_INTERFACE:
                 TiSignalChange();
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_INTERFACE, TI_NSI_CHANGE_PARAMETER);
                 break;
         }
     }
@@ -1158,6 +1171,8 @@ VOID NTAPI TiUnload(
     }
     TcpipReleaseSpinLock(&AddressFileListLock, OldIrql);
 #endif
+    TiNsiDeregister();
+
     /* Cancel timer */
     KeCancelTimer(&IPTimer);
     KeCancelTimer(&NeighborTimer);
@@ -1374,6 +1389,8 @@ DriverEntry(
     KeInitializeSpinLock(&InterfaceListLock);
 
     /* Initialize network level protocol subsystem */
+    TiNsiRegister();
+
     IPStartup(RegistryPath);
 
     /* Initialize transport level protocol subsystems */

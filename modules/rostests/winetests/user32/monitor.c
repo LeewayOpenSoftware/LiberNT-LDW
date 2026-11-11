@@ -3912,12 +3912,83 @@ static void test_monitor_dpi(void)
     ChangeDisplaySettingsExW( NULL, NULL, 0, 0, NULL );
 }
 
+static UINT d0_display_change_count, d0_dpi_change_count, d0_setting_change_count;
+static DWORD d0_display_bpp;
+static WORD d0_display_width, d0_display_height;
+
+static LRESULT CALLBACK d0_message_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == WM_DISPLAYCHANGE)
+    {
+        d0_display_change_count++;
+        d0_display_bpp = (DWORD)wparam;
+        d0_display_width = LOWORD(lparam);
+        d0_display_height = HIWORD(lparam);
+    }
+    else if (message == WM_DPICHANGED)
+        d0_dpi_change_count++;
+    else if (message == WM_SETTINGCHANGE)
+        d0_setting_change_count++;
+    return DefWindowProcA(hwnd, message, wparam, lparam);
+}
+
+static void test_display_change_messages(void)
+{
+    WNDCLASSA wc;
+    DEVMODEW mode;
+    HWND hwnd;
+    LONG result;
+
+    ZeroMemory(&mode, sizeof(mode));
+    mode.dmSize = sizeof(mode);
+    if (!EnumDisplaySettingsExW(NULL, ENUM_CURRENT_SETTINGS, &mode, 0))
+    {
+        skip("No mode-setting display is present\n");
+        return;
+    }
+
+    ZeroMemory(&wc, sizeof(wc));
+    wc.lpfnWndProc = d0_message_proc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.lpszClassName = "D0DisplayMessageTest";
+    if (!RegisterClassA(&wc))
+        ok(GetLastError() == ERROR_CLASS_ALREADY_EXISTS, "RegisterClass failed, error %lu\n", GetLastError());
+    hwnd = CreateWindowExA(0, wc.lpszClassName, "D0 display messages", WS_OVERLAPPEDWINDOW,
+                           0, 0, 100, 100, NULL, NULL, wc.hInstance, NULL);
+    if (!hwnd)
+    {
+        skip("No interactive display window can be created\n");
+        return;
+    }
+
+    d0_display_change_count = 0;
+    d0_dpi_change_count = 0;
+    d0_setting_change_count = 0;
+    /* Deliberate regression probe: same-mode CDS_RESET must broadcast WM_DISPLAYCHANGE. */
+    todo_wine
+    {
+        result = ChangeDisplaySettingsExW(NULL, &mode, NULL, CDS_RESET, NULL);
+        ok(result == DISP_CHANGE_SUCCESSFUL, "CDS_RESET for the current mode returned %ld\n", result);
+        flush_events();
+        ok(d0_display_change_count > 0, "WM_DISPLAYCHANGE was not delivered\n");
+        ok(d0_display_bpp == mode.dmBitsPerPel, "WM_DISPLAYCHANGE bpp %lu, expected %lu\n",
+           d0_display_bpp, mode.dmBitsPerPel);
+        ok(d0_display_width == mode.dmPelsWidth && d0_display_height == mode.dmPelsHeight,
+           "WM_DISPLAYCHANGE mode %ux%u, expected %lux%lu\n",
+           d0_display_width, d0_display_height, mode.dmPelsWidth, mode.dmPelsHeight);
+    }
+    trace("D0 messages: display=%u dpi=%u setting=%u\n",
+          d0_display_change_count, d0_dpi_change_count, d0_setting_change_count);
+    DestroyWindow(hwnd);
+}
+
 START_TEST(monitor)
 {
     char** myARGV;
     int myARGC = winetest_get_mainargs(&myARGV);
 
     init_function_pointers();
+    test_display_change_messages();
 
     if (myARGC >= 3)
     {

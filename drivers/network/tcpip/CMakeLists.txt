@@ -32,6 +32,7 @@ list(APPEND SOURCE
     tcpip/lock.c
     tcpip/main.c
     tcpip/ninfo.c
+    tcpip/nsisnap.c
     tcpip/proto.c
     tcpip/tinfo.c
     tcpip/wait.c
@@ -55,7 +56,9 @@ else()
     target_sources(tcpip PRIVATE tcpip/chksum.c)
 endif()
 
-target_link_libraries(tcpip ip ${PSEH_LIB})
+target_sources(tcpip PRIVATE tcpip/nsiprov.c)
+
+target_link_libraries(tcpip ip uuid ${PSEH_LIB})
 set_module_type(tcpip kernelmodedriver)
 add_importlibs(tcpip ndis netio ntoskrnl hal cng)
 add_pch(tcpip include/lwip/precomp.h SOURCE)

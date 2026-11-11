@@ -445,6 +445,10 @@ CcShutdownSystem(VOID);
 
 VOID
 NTAPI
+CcStopLazyWriterTimer(VOID);
+
+VOID
+NTAPI
 CcWorkerThread(PVOID Parameter);
 
 VOID

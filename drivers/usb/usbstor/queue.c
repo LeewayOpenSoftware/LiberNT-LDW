@@ -216,7 +216,8 @@ USBSTOR_QueueEndReset(
         Entry = RemoveHeadList(&FailedIrps);
         Irp = CONTAINING_RECORD(Entry, IRP, Tail.Overlay.ListEntry);
         Request = IoGetCurrentIrpStackLocation(Irp)->Parameters.Scsi.Srb;
-        Request->SrbStatus = SRB_STATUS_INTERNAL_ERROR;
+        Request->SrbStatus = (FDODeviceExtension->Flags & USBSTOR_FDO_FLAGS_DEVICE_GONE)
+                             ? SRB_STATUS_NO_DEVICE : SRB_STATUS_INTERNAL_ERROR;
         Request->InternalStatus = Status;
         Request->DataTransferLength = 0;
         Irp->IoStatus.Status = Status;
@@ -325,7 +326,8 @@ USBSTOR_StartIo(
     IoReleaseCancelSpinLock(OldLevel);
 
     KeAcquireSpinLock(&FDODeviceExtension->IrpListLock, &OldLevel);
-    ResetInProgress = BooleanFlagOn(FDODeviceExtension->Flags, USBSTOR_FDO_FLAGS_DEVICE_RESETTING);
+    ResetInProgress = BooleanFlagOn(FDODeviceExtension->Flags, USBSTOR_FDO_FLAGS_DEVICE_RESETTING) ||
+                      BooleanFlagOn(FDODeviceExtension->Flags, USBSTOR_FDO_FLAGS_DEVICE_GONE);
     KeReleaseSpinLock(&FDODeviceExtension->IrpListLock, OldLevel);
 
     IoStack = IoGetCurrentIrpStackLocation(Irp);

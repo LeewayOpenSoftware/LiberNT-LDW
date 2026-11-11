@@ -45,7 +45,8 @@ add_library(ntfslib_host STATIC
     ${NTFSLIB_ROOT}/src/volume/metadata/volume.cpp
     ${NTFSLIB_ROOT}/src/volume/disk.cpp
     ${NTFSLIB_ROOT}/src/volume/volume.cpp
-    ${NTFSLIB_ROOT}/src/util.cpp)
+    ${NTFSLIB_ROOT}/src/util.cpp
+    ${NTFSLIB_ROOT}/src/verify/shape.cpp)
 
 target_compile_features(ntfslib_host PUBLIC cxx_std_17)
 target_compile_definitions(ntfslib_host PUBLIC

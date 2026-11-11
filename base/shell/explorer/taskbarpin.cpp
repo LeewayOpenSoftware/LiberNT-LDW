@@ -51,6 +51,24 @@ GetTaskbarPinAppId(PCWSTR pszShortcut, CStringW &AppId)
     return SUCCEEDED(hr) && ReadTaskbarPinString(Store, TaskbarPinPkeyAppUserModelId, AppId);
 }
 
+BOOL
+TaskbarPin_IsAppIdCopied(PCWSTR pszShortcut)
+{
+    CComPtr<IShellLinkW> Link;
+    CComPtr<IPersistFile> Persist;
+    CComPtr<IPropertyStore> Store;
+    CStringW AppId, Command;
+    HRESULT hr = Link.CoCreateInstance(CLSID_ShellLink, IID_IShellLinkW, NULL, CLSCTX_INPROC_SERVER);
+    if (SUCCEEDED(hr))
+        hr = Link->QueryInterface(IID_PPV_ARG(IPersistFile, &Persist));
+    if (SUCCEEDED(hr))
+        hr = Persist->Load(pszShortcut, STGM_READ);
+    if (SUCCEEDED(hr))
+        hr = Link->QueryInterface(IID_PPV_ARG(IPropertyStore, &Store));
+    return SUCCEEDED(hr) && ReadTaskbarPinString(Store, TaskbarPinPkeyAppUserModelId, AppId) &&
+           !ReadTaskbarPinString(Store, TaskbarPinPkeyRelaunchCommand, Command);
+}
+
 static BOOL
 SplitTaskbarPinCommand(PCWSTR pszCommand, CStringW &Target, CStringW &Arguments)
 {
@@ -310,6 +328,10 @@ GetTaskbarPinFolder(BOOL bCreate, CStringW &Folder)
     if (FAILED(hr) || !PathAppendW(szFolder, L"TaskBar"))
         return FAILED(hr) ? hr : HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
 
+    DWORD Attributes = GetFileAttributesW(szFolder);
+    if (Attributes != INVALID_FILE_ATTRIBUTES && !(Attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
+
     if (bCreate)
     {
         INT error = SHCreateDirectoryExW(NULL, szFolder, NULL);
@@ -361,14 +383,29 @@ NtQueryDirectoryFile(HANDLE FileHandle,
                      PVOID FileName,
                      BOOLEAN RestartScan);
 
+typedef BOOL (CALLBACK *TASKBAR_PIN_DIR_PROC)(PCWSTR pszFolder,
+                                              const TASKBAR_PIN_DIR_ENTRY *pEntry,
+                                              PCWSTR pszName,
+                                              LPARAM lParam);
+
 // FindFirstFile cannot open these directories for enumeration on this build,
 // so the pin folder is read through a directory handle instead.
 static HRESULT
-EnumTaskbarPinFolder(PCWSTR pszFolder, TASKBAR_PIN_ENUM_PROC pfnCallback, LPARAM lParam)
+ForEachTaskbarPinDirEntry(PCWSTR pszFolder, TASKBAR_PIN_DIR_PROC pfnCallback, LPARAM lParam)
 {
     BYTE Buffer[8192];
-    HRESULT hrRead = S_OK;
     BOOLEAN bRestart = TRUE;
+
+    DWORD Attributes = GetFileAttributesW(pszFolder);
+    if (Attributes == INVALID_FILE_ATTRIBUTES)
+    {
+        DWORD error = GetLastError();
+        return (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                   ? S_OK
+                   : HRESULT_FROM_WIN32(error);
+    }
+    if (!(Attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
 
     HANDLE hFolder = CreateFileW(pszFolder, FILE_LIST_DIRECTORY,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
@@ -396,37 +433,17 @@ EnumTaskbarPinFolder(PCWSTR pszFolder, TASKBAR_PIN_ENUM_PROC pfnCallback, LPARAM
         for (ULONG Offset = 0;;)
         {
             const TASKBAR_PIN_DIR_ENTRY *pEntry = (const TASKBAR_PIN_DIR_ENTRY *)&Buffer[Offset];
-            WCHAR szName[MAX_PATH], szShortcut[MAX_PATH];
-            CStringW Target;
+            WCHAR szName[MAX_PATH];
             ULONG cchName = pEntry->FileNameLength / sizeof(WCHAR);
 
-            if (cchName && cchName < _countof(szName) &&
-                !(pEntry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            if (cchName && cchName < _countof(szName))
             {
                 CopyMemory(szName, pEntry->FileName, pEntry->FileNameLength);
                 szName[cchName] = UNICODE_NULL;
-                if (!lstrcmpiW(PathFindExtensionW(szName), L".lnk") &&
-                    SUCCEEDED(StringCchPrintfW(szShortcut, _countof(szShortcut), L"%s\\%s",
-                                               pszFolder, szName)))
+                if (!pfnCallback(pszFolder, pEntry, szName, lParam))
                 {
-                    if (!TaskbarPin_ResolveTarget(szShortcut, Target))
-                    {
-                        hrRead = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-                    }
-                    else
-                    {
-                        FILETIME CreationTime;
-                        CStringW AppId;
-
-                        GetTaskbarPinAppId(szShortcut, AppId);
-                        CreationTime.dwLowDateTime = pEntry->CreationTime.LowPart;
-                        CreationTime.dwHighDateTime = (DWORD)pEntry->CreationTime.HighPart;
-                        if (!pfnCallback(szShortcut, Target, AppId, &CreationTime, lParam))
-                        {
-                            CloseHandle(hFolder);
-                            return S_OK;
-                        }
-                    }
+                    CloseHandle(hFolder);
+                    return S_OK;
                 }
             }
 
@@ -439,7 +456,115 @@ EnumTaskbarPinFolder(PCWSTR pszFolder, TASKBAR_PIN_ENUM_PROC pfnCallback, LPARAM
     }
 
     CloseHandle(hFolder);
-    return hrRead;
+    return S_OK;
+}
+
+typedef struct _TASKBAR_PIN_ENTRY
+{
+    WCHAR szShortcut[MAX_PATH];
+    WCHAR szTarget[MAX_PATH];
+    WCHAR szAppId[128];
+    FILETIME CreationTime;
+} TASKBAR_PIN_ENTRY;
+
+typedef struct _TASKBAR_PIN_SCAN
+{
+    CAtlArray<TASKBAR_PIN_ENTRY> *pEntries;
+    CAtlArray<CStringW> *pIcons;
+    BOOL bSkipped;
+} TASKBAR_PIN_SCAN;
+
+#define TASKBAR_PIN_ICON_SUFFIX     L".lnk.taskbar.ico"
+#define TASKBAR_PIN_ICON_SUFFIX_CCH 16
+
+static BOOL CALLBACK
+ScanTaskbarPinEntry(PCWSTR pszFolder, const TASKBAR_PIN_DIR_ENTRY *pEntry, PCWSTR pszName, LPARAM lParam)
+{
+    TASKBAR_PIN_SCAN *pScan = (TASKBAR_PIN_SCAN *)lParam;
+    TASKBAR_PIN_ENTRY Entry;
+    CStringW Target, AppId;
+    INT cchName = lstrlenW(pszName);
+
+    if (pEntry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        return TRUE;
+    if (FAILED(StringCchPrintfW(Entry.szShortcut, _countof(Entry.szShortcut), L"%s\\%s", pszFolder, pszName)))
+        return TRUE;
+    if (cchName > TASKBAR_PIN_ICON_SUFFIX_CCH &&
+        !lstrcmpiW(pszName + cchName - TASKBAR_PIN_ICON_SUFFIX_CCH, TASKBAR_PIN_ICON_SUFFIX))
+    {
+        pScan->pIcons->Add(Entry.szShortcut);
+        return TRUE;
+    }
+    if (lstrcmpiW(PathFindExtensionW(pszName), L".lnk"))
+        return TRUE;
+    if (!TaskbarPin_ResolveTarget(Entry.szShortcut, Target) ||
+        lstrcmpiW(PathFindExtensionW(Target), L".exe") ||
+        FAILED(StringCchCopyW(Entry.szTarget, _countof(Entry.szTarget), Target)))
+    {
+        pScan->bSkipped = TRUE;
+        return TRUE;
+    }
+    GetTaskbarPinAppId(Entry.szShortcut, AppId);
+    if (AppId.GetLength() >= (INT)_countof(Entry.szAppId))
+        AppId.Empty();
+    StringCchCopyW(Entry.szAppId, _countof(Entry.szAppId), AppId);
+    Entry.CreationTime.dwLowDateTime = pEntry->CreationTime.LowPart;
+    Entry.CreationTime.dwHighDateTime = (DWORD)pEntry->CreationTime.HighPart;
+    pScan->pEntries->Add(Entry);
+    return TRUE;
+}
+
+static PCWSTR
+TaskbarPinEntryKey(const TASKBAR_PIN_ENTRY *pEntry)
+{
+    return pEntry->szAppId[0] ? pEntry->szAppId : pEntry->szTarget;
+}
+
+static int __cdecl
+CompareTaskbarPinEntries(const void *pLeft, const void *pRight)
+{
+    const TASKBAR_PIN_ENTRY *pA = (const TASKBAR_PIN_ENTRY *)pLeft;
+    const TASKBAR_PIN_ENTRY *pB = (const TASKBAR_PIN_ENTRY *)pRight;
+    LONG result = CompareFileTime(&pA->CreationTime, &pB->CreationTime);
+    return result ? result : lstrcmpiW(pA->szShortcut, pB->szShortcut);
+}
+
+static HRESULT
+EnumTaskbarPinFolder(PCWSTR pszFolder, TASKBAR_PIN_ENUM_PROC pfnCallback, LPARAM lParam)
+{
+    CAtlArray<TASKBAR_PIN_ENTRY> Entries;
+    CAtlArray<CStringW> Icons;
+    TASKBAR_PIN_SCAN Scan = { &Entries, &Icons, FALSE };
+    SIZE_T i, j;
+
+    HRESULT hr = ForEachTaskbarPinDirEntry(pszFolder, ScanTaskbarPinEntry, (LPARAM)&Scan);
+    if (FAILED(hr))
+        return hr;
+
+    for (i = 0; i < Icons.GetCount(); ++i)
+    {
+        CStringW Shortcut = Icons[i].Left(Icons[i].GetLength() - (TASKBAR_PIN_ICON_SUFFIX_CCH - 4));
+        if (GetFileAttributesW(Shortcut) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND)
+            DeleteFileW(Icons[i]);
+    }
+
+    if (Entries.GetCount() > 1)
+        qsort(Entries.GetData(), Entries.GetCount(), sizeof(TASKBAR_PIN_ENTRY), CompareTaskbarPinEntries);
+
+    for (i = 0; i < Entries.GetCount(); ++i)
+    {
+        BOOL bDuplicate = FALSE;
+        for (j = 0; j < i && !bDuplicate; ++j)
+            bDuplicate = !lstrcmpiW(TaskbarPinEntryKey(&Entries[i]), TaskbarPinEntryKey(&Entries[j]));
+        if (bDuplicate)
+            continue;
+        if (!pfnCallback(Entries[i].szShortcut, Entries[i].szTarget, Entries[i].szAppId,
+                         &Entries[i].CreationTime, lParam))
+        {
+            return S_OK;
+        }
+    }
+    return Scan.bSkipped ? S_FALSE : S_OK;
 }
 
 HRESULT
@@ -532,13 +657,13 @@ ChooseTaskbarPinDestination(PCWSTR pszSource, PCWSTR pszTarget, CStringW &Destin
             hr = StringCchPrintfW(szPath, _countof(szPath), L"%s\\%s (%u).lnk", Folder.GetString(), szName, i);
         if (FAILED(hr))
             return hr;
-        if (GetFileAttributesW(szPath) == INVALID_FILE_ATTRIBUTES)
+        if (GetFileAttributesW(szPath) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND)
         {
             CStringW IconPath;
             hr = TaskbarPin_GetIconPath(szPath, IconPath);
             if (FAILED(hr))
                 return hr;
-            if (GetFileAttributesW(IconPath) != INVALID_FILE_ATTRIBUTES)
+            if (GetFileAttributesW(IconPath) != INVALID_FILE_ATTRIBUTES || GetLastError() != ERROR_FILE_NOT_FOUND)
                 continue;
             Destination = szPath;
             return S_OK;
@@ -622,8 +747,8 @@ SaveTaskbarPinIcon(PCWSTR pszShortcut, HICON hIcon, CStringW &IconPath)
     return hr;
 }
 
-HRESULT
-TaskbarPin_Create(PCWSTR pszSource, CStringW *pShortcut, HICON hIcon)
+static HRESULT
+TaskbarPin_CreateImpl(PCWSTR pszSource, CStringW *pShortcut, HICON hIcon)
 {
     CStringW Target, Existing, Destination, Folder, SourceAppId;
     if (!TaskbarPin_IsPinnable(pszSource, &Target))
@@ -700,6 +825,17 @@ TaskbarPin_Create(PCWSTR pszSource, CStringW *pShortcut, HICON hIcon)
     if (pShortcut)
         *pShortcut = Destination;
     return S_OK;
+}
+
+HRESULT
+TaskbarPin_Create(PCWSTR pszSource, CStringW *pShortcut, HICON hIcon)
+{
+    CStringW Folder;
+    HRESULT hrFolder = GetTaskbarPinFolder(FALSE, Folder);
+    HRESULT hr = TaskbarPin_CreateImpl(pszSource, pShortcut, hIcon);
+
+    ERR("[T3] TaskbarPin_Create(%S): result %08lx, pin folder (%08lx) %S\n", pszSource, hr, hrFolder, Folder.GetString());
+    return hr;
 }
 
 HRESULT
@@ -931,13 +1067,30 @@ TaskbarPin_LoadOrder(CAtlArray<TASKBAR_PIN_ORDER> &Order)
     for (PCWSTR pszEntry = Buffer.GetData(); *pszEntry; pszEntry += lstrlenW(pszEntry) + 1)
     {
         TASKBAR_PIN_ORDER Entry;
-        if (SUCCEEDED(StringCchCopyW(Entry.szTarget, _countof(Entry.szTarget), pszEntry)) &&
-            Order.Add(Entry) == (SIZE_T)-1)
-        {
+        BOOL bDuplicate = FALSE;
+        if (FAILED(StringCchCopyW(Entry.szTarget, _countof(Entry.szTarget), pszEntry)))
+            continue;
+        for (SIZE_T i = 0; i < Order.GetCount() && !bDuplicate; ++i)
+            bDuplicate = !lstrcmpiW(Order[i].szTarget, Entry.szTarget);
+        if (!bDuplicate && Order.Add(Entry) == (SIZE_T)-1)
             return E_OUTOFMEMORY;
-        }
     }
     return S_OK;
+}
+
+static BOOL
+IsTaskbarPinOrderSaved(const CAtlArray<TASKBAR_PIN_ORDER> &Order)
+{
+    CAtlArray<TASKBAR_PIN_ORDER> Saved;
+
+    if (TaskbarPin_LoadOrder(Saved) != S_OK || Saved.GetCount() != Order.GetCount())
+        return FALSE;
+    for (SIZE_T i = 0; i < Order.GetCount(); ++i)
+    {
+        if (lstrcmpW(Saved[i].szTarget, Order[i].szTarget))
+            return FALSE;
+    }
+    return TRUE;
 }
 
 HRESULT
@@ -945,6 +1098,9 @@ TaskbarPin_SaveOrder(const CAtlArray<TASKBAR_PIN_ORDER> &Order)
 {
     CAtlArray<WCHAR> Buffer;
     SIZE_T i, cch = Order.GetCount() ? 1 : 2;
+
+    if (IsTaskbarPinOrderSaved(Order))
+        return S_FALSE;
 
     for (i = 0; i < Order.GetCount(); ++i)
         cch += lstrlenW(Order[i].szTarget) + 1;
@@ -969,4 +1125,206 @@ TaskbarPin_SaveOrder(const CAtlArray<TASKBAR_PIN_ORDER> &Order)
                            (const BYTE *)Buffer.GetData(), (DWORD)(cch * sizeof(WCHAR)));
     RegCloseKey(hKey);
     return error == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(error);
+}
+
+static HANDLE g_hTaskbarPinWatchThread = NULL;
+static HANDLE g_hTaskbarPinWatchStop = NULL;
+
+static BOOL CALLBACK
+NotifyTaskbarPinChild(HWND hWnd, LPARAM lParam)
+{
+    WCHAR szClass[32];
+
+    if (GetClassNameW(hWnd, szClass, _countof(szClass)) &&
+        !lstrcmpW(szClass, L"MSTaskSwWClass"))
+    {
+        PostMessageW(hWnd, (UINT)lParam, 0, 0);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static VOID
+NotifyTaskbarPinWatchers()
+{
+    UINT uMessage = RegisterWindowMessageW(TASKBAR_PIN_CHANGED_MESSAGE);
+    HWND hwndTray = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (uMessage && hwndTray)
+        EnumChildWindows(hwndTray, NotifyTaskbarPinChild, (LPARAM)uMessage);
+}
+
+static BOOL CALLBACK
+HashTaskbarPinEntry(PCWSTR pszFolder, const TASKBAR_PIN_DIR_ENTRY *pEntry, PCWSTR pszName, LPARAM lParam)
+{
+    ULONGLONG *pHash = (ULONGLONG *)lParam;
+    ULONGLONG hash = *pHash;
+
+    for (PCWSTR p = pszName; *p; ++p)
+        hash = (hash ^ (ULONGLONG)(USHORT)*p) * 1099511628211ull;
+    hash = (hash ^ (ULONGLONG)pEntry->LastWriteTime.QuadPart) * 1099511628211ull;
+    hash = (hash ^ (ULONGLONG)pEntry->EndOfFile.QuadPart) * 1099511628211ull;
+    hash = (hash ^ (ULONGLONG)pEntry->FileAttributes) * 1099511628211ull;
+    *pHash = hash;
+    return TRUE;
+}
+
+static ULONGLONG
+TaskbarPinFolderSignature(PCWSTR pszFolder)
+{
+    ULONGLONG hash = 14695981039346656037ull;
+    if (FAILED(ForEachTaskbarPinDirEntry(pszFolder, HashTaskbarPinEntry, (LPARAM)&hash)))
+        return 0;
+    return hash;
+}
+
+static BOOL
+WaitTaskbarPinWatchStop(DWORD dwMilliseconds)
+{
+    return WaitForSingleObject(g_hTaskbarPinWatchStop, dwMilliseconds) == WAIT_OBJECT_0;
+}
+
+static BOOL
+WatchTaskbarPinFolder(PCWSTR pszFolder, BOOL bResync)
+{
+    const DWORD Filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                         FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SIZE;
+    DWORD Buffer[1024];
+    OVERLAPPED Overlapped = {};
+    HANDLE Handles[2];
+    BOOL bPending = FALSE, bDirty = FALSE, bNotify = TRUE, bStop = FALSE;
+    ULONGLONG Signature;
+
+    HANDLE hFolder = CreateFileW(pszFolder, FILE_LIST_DIRECTORY,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                                 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
+    if (hFolder == INVALID_HANDLE_VALUE)
+        return FALSE;
+    Overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!Overlapped.hEvent)
+    {
+        CloseHandle(hFolder);
+        return FALSE;
+    }
+    Handles[0] = g_hTaskbarPinWatchStop;
+    Handles[1] = Overlapped.hEvent;
+    Signature = TaskbarPinFolderSignature(pszFolder);
+    if (bResync)
+        NotifyTaskbarPinWatchers();
+
+    for (;;)
+    {
+        if (bNotify && !bPending)
+        {
+            ResetEvent(Overlapped.hEvent);
+            if (ReadDirectoryChangesW(hFolder, Buffer, sizeof(Buffer), FALSE, Filter, NULL, &Overlapped, NULL))
+                bPending = TRUE;
+            else if (GetLastError() == ERROR_INVALID_FUNCTION || GetLastError() == ERROR_NOT_SUPPORTED ||
+                     GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)
+                bNotify = FALSE;
+            else
+                break;
+        }
+
+        DWORD Timeout = bDirty ? 500 : (bNotify ? INFINITE : 3000);
+        DWORD Wait = WaitForMultipleObjects(bPending ? 2 : 1, Handles, FALSE, Timeout);
+        if (Wait == WAIT_OBJECT_0)
+        {
+            bStop = TRUE;
+            break;
+        }
+        if (Wait == WAIT_OBJECT_0 + 1)
+        {
+            DWORD cbReturned = 0;
+            BOOL bCompleted = GetOverlappedResult(hFolder, &Overlapped, &cbReturned, FALSE);
+            bPending = FALSE;
+            if (!bCompleted && GetLastError() != ERROR_NOTIFY_ENUM_DIR)
+                break;
+            bDirty = TRUE;
+            continue;
+        }
+        if (Wait != WAIT_TIMEOUT)
+            break;
+        if (bNotify)
+        {
+            bDirty = FALSE;
+            NotifyTaskbarPinWatchers();
+        }
+        else
+        {
+            ULONGLONG Current = TaskbarPinFolderSignature(pszFolder);
+            if (Current != Signature)
+            {
+                Signature = Current;
+                NotifyTaskbarPinWatchers();
+            }
+        }
+    }
+
+    if (bPending)
+    {
+        DWORD cbReturned = 0;
+        CancelIo(hFolder);
+        GetOverlappedResult(hFolder, &Overlapped, &cbReturned, TRUE);
+    }
+    CloseHandle(Overlapped.hEvent);
+    CloseHandle(hFolder);
+    if (!bStop)
+        NotifyTaskbarPinWatchers();
+    return bStop;
+}
+
+static DWORD WINAPI
+TaskbarPinWatchThread(PVOID)
+{
+    BOOL bResync = FALSE;
+
+    for (;;)
+    {
+        CStringW Folder;
+
+        if (WaitTaskbarPinWatchStop(0))
+            return 0;
+        if (FAILED(GetTaskbarPinFolder(TRUE, Folder)))
+        {
+            bResync = TRUE;
+            if (WaitTaskbarPinWatchStop(5000))
+                return 0;
+            continue;
+        }
+        if (WatchTaskbarPinFolder(Folder, bResync) || WaitTaskbarPinWatchStop(2000))
+            return 0;
+        bResync = TRUE;
+    }
+}
+
+HRESULT
+TaskbarPin_StartWatch()
+{
+    if (g_hTaskbarPinWatchThread)
+        return S_FALSE;
+    g_hTaskbarPinWatchStop = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_hTaskbarPinWatchStop)
+        return HRESULT_FROM_WIN32(GetLastError());
+    g_hTaskbarPinWatchThread = CreateThread(NULL, 0, TaskbarPinWatchThread, NULL, 0, NULL);
+    if (!g_hTaskbarPinWatchThread)
+    {
+        DWORD error = GetLastError();
+        CloseHandle(g_hTaskbarPinWatchStop);
+        g_hTaskbarPinWatchStop = NULL;
+        return HRESULT_FROM_WIN32(error);
+    }
+    return S_OK;
+}
+
+VOID
+TaskbarPin_StopWatch()
+{
+    if (!g_hTaskbarPinWatchThread)
+        return;
+    SetEvent(g_hTaskbarPinWatchStop);
+    WaitForSingleObject(g_hTaskbarPinWatchThread, 5000);
+    CloseHandle(g_hTaskbarPinWatchThread);
+    CloseHandle(g_hTaskbarPinWatchStop);
+    g_hTaskbarPinWatchThread = NULL;
+    g_hTaskbarPinWatchStop = NULL;
 }

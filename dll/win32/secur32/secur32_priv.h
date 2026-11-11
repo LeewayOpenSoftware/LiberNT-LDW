@@ -88,6 +88,7 @@ typedef struct schan_credentials
     ULONG credential_use;
     DWORD enabled_protocols;
     UINT64 credentials;
+    ULONG flags;
 } schan_credentials;
 
 struct session_params
@@ -187,6 +188,9 @@ struct send_params
     ULONG length;
     int *output_buffer_idx;
     ULONG *output_offset;
+    enum control_token control_token;
+    unsigned int alert_type;
+    unsigned int alert_number;
 };
 
 struct set_application_protocols_params

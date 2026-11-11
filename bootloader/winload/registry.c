@@ -96,9 +96,36 @@ OslRecoverSystemHive(
 
 static
 BOOLEAN
-OslInitializeSystemHive(
+OslClampSystemHive(
     _In_ PVOID Hive,
     _In_ ULONG Size)
+{
+    PHBASE_BLOCK Header = (PHBASE_BLOCK)Hive;
+    ULONG Clamped;
+
+    if (Size <= HBLOCK_SIZE)
+        return FALSE;
+
+    /* A growth write the volume refused (or a log that cannot cover it)
+       leaves the header claiming bins the file does not hold. Clamp to the
+       valid contiguous prefix - the kernel self-heal persists the
+       consistent image - and present a normalised transaction state. */
+    Clamped = HvpClampHiveToValidBins(Header, Size - HBLOCK_SIZE);
+    if (Clamped == 0)
+        return FALSE;
+
+    Header->Sequence2 = Header->Sequence1;
+    Header->CheckSum = HvpHiveHeaderChecksum(Header);
+    Header->BootType |= HBOOT_TYPE_SELF_HEAL;
+    return TRUE;
+}
+
+static
+BOOLEAN
+OslInitializeSystemHive(
+    _In_ PVOID Hive,
+    _In_ ULONG Size,
+    _In_ BOOLEAN Clamped)
 {
     CM_CHECK_REGISTRY_STATUS CheckStatus;
 
@@ -120,6 +147,18 @@ OslInitializeSystemHive(
                                  NULL)))
     {
         return FALSE;
+    }
+
+    if (Clamped)
+    {
+        /* Deep validation walks cells the truncated hive may reference
+           into the discarded tail; the bounded accessor turns those into
+           NULL, which the checker does not expect. Settle for a reachable
+           root: without Select there is no boot anyway, and the kernel
+           self-heal does the repair with the full machinery. */
+        if (HvGetCell(&OslHive.Hive, OslHive.Hive.BaseBlock->RootCell) == NULL)
+            return FALSE;
+        return TRUE;
     }
 
     CheckStatus = CmCheckRegistry(&OslHive,
@@ -147,16 +186,25 @@ OslLoadSystemHive(
     if (((PHBASE_BLOCK)Hive)->Sequence1 != ((PHBASE_BLOCK)Hive)->Sequence2)
         Recovered = OslRecoverSystemHive(Device, SystemRoot, &Hive, &Size);
 
-    if (!OslInitializeSystemHive(Hive, Size))
+    if (!OslInitializeSystemHive(Hive, Size, FALSE))
     {
-        if (Recovered ||
-            !OslRecoverSystemHive(Device, SystemRoot, &Hive, &Size) ||
-            !OslInitializeSystemHive(Hive, Size))
-        {
-            return FALSE;
-        }
+        if (!Recovered)
+            Recovered = OslRecoverSystemHive(Device, SystemRoot, &Hive, &Size);
 
-        Recovered = TRUE;
+        if (!Recovered ||
+            !OslInitializeSystemHive(Hive, Size, FALSE))
+        {
+            /* Neither the log nor a plain load can produce a hive: clamp
+               the surviving bins in place and import the prefix. */
+            if (!OslClampSystemHive(Hive, Size) ||
+                !OslInitializeSystemHive(Hive, Size, TRUE))
+            {
+                return FALSE;
+            }
+
+            DPRINT1("WINLOAD: SYSTEM hive clamped to its valid bins (self-heal)\n");
+            Recovered = TRUE;
+        }
     }
 
     ((PHBASE_BLOCK)Hive)->BootRecover = Recovered ? HBOOT_BOOT_RECOVERED_BY_HIVE_LOG

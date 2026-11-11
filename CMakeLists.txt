@@ -61,9 +61,11 @@ endif()
 
 # Versioning
 include(sdk/include/reactos/version.cmake)
+# Leeway Build Identity: one allocated attempt -> lbi.h / lbi.json (WS-B prototype)
 
 # Compile options
 include(sdk/cmake/config.cmake)
+include(sdk/cmake/lbi.cmake)
 
 # Derive the target NTDDI level from REACTOS_TARGET_NT for *both* the
 # cross-compile (target) build and the host-tools build below — host tools like

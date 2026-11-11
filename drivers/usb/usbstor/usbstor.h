@@ -122,6 +122,7 @@ typedef struct __COMMON_DEVICE_EXTENSION__
 #define USBSTOR_FDO_FLAGS_DEVICE_RESETTING   0x00000001 // hard reset is in progress
 #define USBSTOR_FDO_FLAGS_IRP_LIST_FREEZE    0x00000002 // the irp list is freezed
 #define USBSTOR_FDO_FLAGS_RESET_REQUIRED     0x00000004 // a failed reset must be retried before I/O
+#define USBSTOR_FDO_FLAGS_DEVICE_GONE        0x00000008 // device surprise-removed; fail all I/O, never touch the hardware
 
 typedef struct
 {
@@ -378,6 +379,15 @@ NTSTATUS
 USBSTOR_ResetPipeWithHandle(
     IN PDEVICE_OBJECT DeviceObject,
     IN USBD_PIPE_HANDLE PipeHandle);
+
+NTSTATUS
+USBSTOR_AbortPipeWithHandle(
+    IN PDEVICE_OBJECT DeviceObject,
+    IN USBD_PIPE_HANDLE PipeHandle);
+
+VOID
+USBSTOR_SurpriseRemoveDevice(
+    IN PDEVICE_OBJECT FdoDevice);
 
 VOID
 USBSTOR_InitializeRequestTimer(

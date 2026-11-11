@@ -13,7 +13,7 @@
 #define NDEBUG
 #include <debug.h>
 
-#define K32_QPC_BYPASS_CONFIGURATION 0x0001
+#define K32_QPC_BYPASS_ENABLED 0x01
 
 /* FUNCTIONS ******************************************************************/
 
@@ -27,7 +27,7 @@ QueryPerformanceCounter(OUT PLARGE_INTEGER lpPerformanceCount)
     LARGE_INTEGER Frequency;
     NTSTATUS Status;
 
-    if ((*(volatile USHORT *)&SharedUserData->QpcData == K32_QPC_BYPASS_CONFIGURATION) &&
+    if ((*(volatile UCHAR *)&SharedUserData->QpcBypassEnabled & K32_QPC_BYPASS_ENABLED) &&
         RtlQueryPerformanceCounter(lpPerformanceCount))
     {
         return TRUE;
@@ -55,7 +55,7 @@ QueryPerformanceFrequency(OUT PLARGE_INTEGER lpFrequency)
     LARGE_INTEGER Count;
     NTSTATUS Status;
 
-    if ((*(volatile USHORT *)&SharedUserData->QpcData == K32_QPC_BYPASS_CONFIGURATION) &&
+    if ((*(volatile UCHAR *)&SharedUserData->QpcBypassEnabled & K32_QPC_BYPASS_ENABLED) &&
         RtlQueryPerformanceFrequency(lpFrequency) &&
         (lpFrequency->QuadPart != 0))
     {

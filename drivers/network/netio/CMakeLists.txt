@@ -13,6 +13,7 @@ include_directories(
 list(APPEND SOURCE
     netio.c
     nmr_stubs.c
+    nsi.c
     wfp/device.c
     wfp/engine.c
     wfp/flow.c

@@ -1224,7 +1224,7 @@ Release(
                     }
                     else
                     {
-                        ConResPrintf(StdOut, IDS_DHCPRELEASED);
+                        ConResPrintf(StdOut, IDS_DHCPRELEASED, szFriendlyName);
                     }
                 }
                 else

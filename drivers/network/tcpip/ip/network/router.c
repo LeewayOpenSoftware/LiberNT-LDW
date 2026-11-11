@@ -303,6 +303,7 @@ PFIB_ENTRY RouterAddRoute(
     TcpipInterlockedInsertTailList(&FIBListHead, &FIBE->ListEntry, &FIBLock);
 
     TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_ADD);
     return FIBE;
 }
 
@@ -596,6 +597,7 @@ NTSTATUS RouterRemoveRoute(PIP_ADDRESS Target, PIP_ADDRESS Router)
     if (!Found)
         return STATUS_UNSUCCESSFUL;
     TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
     return STATUS_SUCCESS;
 }
 
@@ -682,6 +684,8 @@ BOOLEAN RouterSetAdvertisedRoute(PIP_INTERFACE Interface, PIP_ADDRESS RouterAddr
             FIBE->Lifetime = Lifetime;
             FIBE->Updated = KeQueryInterruptTime();
             TcpipReleaseSpinLock(&FIBLock, OldIrql);
+            TiSignalChange();
+            TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_PARAMETER);
             return TRUE;
         }
     }
@@ -701,6 +705,7 @@ BOOLEAN RouterSetAdvertisedRoute(PIP_INTERFACE Interface, PIP_ADDRESS RouterAddr
     FIBE->Origin = NlroRouterAdvertisement;
     FIBE->Lifetime = Lifetime;
     TcpipReleaseSpinLock(&FIBLock, OldIrql);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_PARAMETER);
     return TRUE;
 }
 
@@ -708,6 +713,7 @@ VOID RouterRemoveAdvertisedRoutes(PIP_INTERFACE Interface, PIP_ADDRESS RouterAdd
 {
     PLIST_ENTRY Entry, Next;
     KIRQL OldIrql;
+    BOOLEAN Removed = FALSE;
 
     TcpipAcquireSpinLock(&FIBLock, &OldIrql);
     for (Entry = FIBListHead.Flink; Entry != &FIBListHead; Entry = Next)
@@ -717,9 +723,17 @@ VOID RouterRemoveAdvertisedRoutes(PIP_INTERFACE Interface, PIP_ADDRESS RouterAdd
         Next = Entry->Flink;
         if (FIBE->Origin == NlroRouterAdvertisement && FIBE->Router->Interface == Interface &&
             (!RouterAddress || AddrIsEqual(&FIBE->Router->Address, RouterAddress)))
+        {
             DestroyFIBE(FIBE);
+            Removed = TRUE;
+        }
     }
     TcpipReleaseSpinLock(&FIBLock, OldIrql);
+    if (Removed)
+    {
+        TiSignalChange();
+        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
+    }
 }
 
 VOID RouterAgeAdvertisedRoutes(VOID)
@@ -727,6 +741,7 @@ VOID RouterAgeAdvertisedRoutes(VOID)
     ULONGLONG Now = KeQueryInterruptTime();
     PLIST_ENTRY Entry, Next;
     KIRQL OldIrql;
+    BOOLEAN Removed = FALSE;
 
     TcpipAcquireSpinLock(&FIBLock, &OldIrql);
     for (Entry = FIBListHead.Flink; Entry != &FIBListHead; Entry = Next)
@@ -736,9 +751,17 @@ VOID RouterAgeAdvertisedRoutes(VOID)
         Next = Entry->Flink;
         if (FIBE->Origin == NlroRouterAdvertisement &&
             Now >= FIBE->Updated + (ULONGLONG)FIBE->Lifetime * 10000000)
+        {
             DestroyFIBE(FIBE);
+            Removed = TRUE;
+        }
     }
     TcpipReleaseSpinLock(&FIBLock, OldIrql);
+    if (Removed)
+    {
+        TiSignalChange();
+        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
+    }
 }
 
 NTSTATUS RouterQueryRouteV4(PIP4_ROUTE_INFO Info)

@@ -2025,7 +2025,7 @@ static DWORD open_connection( struct request *request )
     struct connect *connect;
     WCHAR *addressW = NULL;
     INTERNET_PORT port;
-    DWORD ret, len;
+    DWORD ret, len, secure_flags = 0;
 
     if (request->netconn) goto done;
 
@@ -2154,8 +2154,13 @@ static DWORD open_connection( struct request *request )
 
             if ((ret = ensure_cred_handle( request )) ||
                 (ret = netconn_secure_connect( netconn, connect->hostname, request->security_flags,
-                                               &request->cred_handle, request->check_revocation )))
+                                               &request->cred_handle, request->check_revocation,
+                                               &secure_flags )))
             {
+                /* Windows reports why the certificate was rejected before the request fails. */
+                if (ret == ERROR_WINHTTP_SECURE_FAILURE)
+                    send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_SECURE_FAILURE,
+                                   &secure_flags, sizeof(secure_flags) );
                 request->netconn = NULL;
                 free( addressW );
                 netconn_release( netconn );

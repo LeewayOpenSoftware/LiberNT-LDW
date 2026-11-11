@@ -1423,6 +1423,33 @@ C_ASSERT(sizeof(APPBAR_COMMAND) == 0x40);
 C_ASSERT(sizeof(APPBAR_COMMAND) == 0x38);
 #endif
 
+/*
+ * Jump list store (windows.storage), read by the taskbar.
+ * Custom lists: %RECENT%\CustomDestinations\<hash>.customDestinations-ms (ICustomDestinationList).
+ * Automatic lists: %RECENT%\AutomaticDestinations\<hash>.automaticDestinations-ms (SHAddToRecentDocs).
+ * <hash> is HashData of the lower-cased AppUserModelID, or of the exe path for apps without one.
+ */
+#define JUMPLIST_SECTION_CUSTOM 1 /* pszName + Items */
+#define JUMPLIST_SECTION_KNOWN  2 /* Category = KDC_FREQUENT or KDC_RECENT; no Items */
+#define JUMPLIST_SECTION_TASKS  3 /* Items (IShellLinkW) */
+
+typedef struct _JUMPLIST_SECTION
+{
+    DWORD Type;
+    DWORD Category;
+    LPWSTR pszName;              /* CoTaskMemAlloc'ed, or NULL */
+    struct IObjectArray *Items;  /* IShellLinkW or IShellItem objects, or NULL */
+} JUMPLIST_SECTION, *PJUMPLIST_SECTION;
+
+#define JUMPLIST_AUTO_RECENT   0 /* unpinned, most recent first */
+#define JUMPLIST_AUTO_FREQUENT 1 /* unpinned, most used first */
+#define JUMPLIST_AUTO_PINNED   2 /* pinned, in pin order */
+
+HRESULT SHELL_LoadCustomDestinations(LPCWSTR pszAppID, PJUMPLIST_SECTION *ppSections, UINT *pcSections);
+VOID SHELL_FreeCustomDestinations(PJUMPLIST_SECTION pSections, UINT cSections);
+HRESULT SHELL_GetAutomaticDestinations(LPCWSTR pszAppID, DWORD dwList, UINT cMax, REFIID riid, void **ppv);
+HRESULT SHELL_PinAutomaticDestination(LPCWSTR pszAppID, IUnknown *punk, BOOL bPin);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

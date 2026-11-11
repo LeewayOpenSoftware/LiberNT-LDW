@@ -554,6 +554,30 @@ SetUserSettings(VOID)
     SetUserWallpaper();
 }
 
+/* Debug-port stage trace for the boot-to-desktop path; off unless the
+ * Winlogon value LiberNTStageTrace (REG_DWORD) is non-zero. */
+static VOID
+LogonStage(
+    _In_ PCSTR Stage)
+{
+    DWORD Value = 0, Size = sizeof(Value);
+    CHAR Line[96];
+
+    if (RegGetValueW(HKEY_LOCAL_MACHINE,
+                     L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon",
+                     L"LiberNTStageTrace",
+                     RRF_RT_REG_DWORD,
+                     NULL,
+                     &Value,
+                     &Size) != ERROR_SUCCESS || !Value)
+    {
+        return;
+    }
+
+    StringCchPrintfA(Line, ARRAYSIZE(Line), "LOGONSTAGE %lu userinit %s\n", GetTickCount(), Stage);
+    OutputDebugStringA(Line);
+}
+
 static VOID
 SignalUserDesktopReady(VOID)
 {
@@ -780,6 +804,8 @@ wWinMain(IN HINSTANCE hInst,
 
     hInstance = hInst;
 
+    LogonStage("start");
+
     bIsLiveCD = IsLiveCD();
     ApplyUserPowerScheme();
     SetUserSettings();
@@ -789,9 +815,11 @@ wWinMain(IN HINSTANCE hInst,
     if (!IsConsoleShell())
         StartDesktopCompositor(pEnvironment);
     Success = StartShell(pEnvironment);
+    LogonStage(Success ? "shell-started" : "shell-failed");
     if (pEnvironment)
         DestroyEnvironmentBlock(pEnvironment);
     SignalUserDesktopReady();
+    LogonStage("desktop-ready");
     if (Success)
         NotifyLogon();
 

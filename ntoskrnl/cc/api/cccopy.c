@@ -146,6 +146,7 @@ CcCopyWrite(
     PCC_NT_MAP NtMap;
     ULONG64 Offset;
     CC_NT_MOVE Move = { Buffer, 0, TRUE, FALSE };
+    LONG64 DirtyBefore;
     NTSTATUS Status;
 
     if (FileObject == NULL || FileOffset == NULL)
@@ -165,6 +166,7 @@ CcCopyWrite(
         return FALSE;
     }
 
+    DirtyBefore = CC_ATOMIC_READ64(&NtMap->Map.DirtyPages);
     Status = (Length != 0) ? CcCopyRange(&NtMap->Map, Offset, Length, TRUE, CcNtMove, &Move, NULL)
                            : STATUS_SUCCESS;
 
@@ -173,8 +175,18 @@ CcCopyWrite(
         NtMap->Map.ValidDataLength = Offset + Length;
     }
 
-    if (CC_ATOMIC_READ64(&CcNtCache.TotalDirtyPages) > CcNtCache.DirtyPageThreshold / 2)
+    /*
+     * Wake the lazy writer when the cache as a whole is half way to its
+     * threshold, as before, and also the first time this file's dirty pages
+     * cross CC_LAZY_KICK_PAGES: the write-back of a file that keeps growing
+     * then starts within the pass instead of up to a tick later, and a
+     * file that stays under the mark costs nothing.
+     */
+    if (CC_ATOMIC_READ64(&CcNtCache.TotalDirtyPages) > CcNtCache.DirtyPageThreshold / 2 ||
+        (DirtyBefore < CC_LAZY_KICK_PAGES && CC_ATOMIC_READ64(&NtMap->Map.DirtyPages) >= CC_LAZY_KICK_PAGES))
+    {
         CcNtKickLazyWriter();
+    }
 
     CcNtDereferenceMap(NtMap);
 

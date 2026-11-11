@@ -54,6 +54,7 @@
 #include "tmschema.h"
 #include "resource.h"
 #include "taskbarpin.h"
+#include "jumplist.h"
 
 #include <wine/debug.h>
 
@@ -64,22 +65,35 @@ HBITMAP CreateStartOrbBitmap(INT Size, UINT ResourceId);
 INT GetStartOrbExtent(HBITMAP Bitmap);
 BOOL DrawStartOrbBitmap(HDC hdc, HBITMAP Source, INT x, INT y, INT Size, double Scale);
 
+/* The shell's current logical DPI, cached (the value used to be read through a
+   fresh screen DC on every call). Invalidate with ShellInvalidateDpi() when the
+   DPI may have changed (WM_DPICHANGED, WM_DISPLAYCHANGE, SPI_SETNONCLIENTMETRICS). */
+extern UINT g_ShellDpi;
+UINT ShellQueryDpi(VOID);
+
+static inline UINT
+ShellGetDpi(VOID)
+{
+    if (!g_ShellDpi)
+        g_ShellDpi = ShellQueryDpi();
+    return g_ShellDpi;
+}
+
+static inline VOID
+ShellInvalidateDpi(VOID)
+{
+    g_ShellDpi = 0;
+}
+
+/* DPI of the monitor/window a window lives on. LiberNT currently has a single
+   logical desktop DPI, so this is the system value until win32k reports
+   per-monitor DPI; callers should use it so that they pick that up for free. */
+UINT ShellGetDpiForWindow(HWND hWnd);
+
 static inline INT
 ShellScaleForDpi(INT Value)
 {
-    HDC hdc = GetDC(NULL);
-    INT dpi = 96;
-
-    if (hdc)
-    {
-        dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-        ReleaseDC(NULL, hdc);
-    }
-
-    if (dpi <= 0)
-        dpi = 96;
-
-    return MulDiv(Value, dpi, 96);
+    return MulDiv(Value, (INT)ShellGetDpi(), 96);
 }
 
 static inline BOOL
@@ -269,6 +283,12 @@ DECLARE_INTERFACE_(ITrayWindow, IUnknown)
 #endif
 
 HRESULT CreateTrayWindow(ITrayWindow ** ppTray);
+HRESULT CreateSecondaryTrayWindow(HMONITOR hMonitor, ITrayWindow ** ppTray);
+
+class TrayManager;
+extern TrayManager *g_TrayManager;
+VOID TrayManager_OnDisplayChange();
+VOID TrayManager_OnSettingsChanged();
 
 VOID
 TrayProcessMessages(IN OUT ITrayWindow *Tray);
@@ -308,16 +328,23 @@ typedef struct _TW_STUCKRECTS2
     RECT Rect;
 } TW_STRUCKRECTS2, *PTW_STUCKRECTS2;
 
+#define TASKBAR_GLOM_ALWAYS 0
+#define TASKBAR_GLOM_WHEN_FULL 1
+#define TASKBAR_GLOM_NEVER 2
+
 struct TaskbarSettings
 {
     BOOL bLock;
     BOOL bGroupButtons;
+    DWORD dwTaskbarGlomLevel;
     BOOL bShowSeconds;
     BOOL bPreferDate;
     BOOL bHideInactiveIcons;
     BOOL bSmallIcons;
     TrayIconsMode eCompactTrayIcons;
     BOOL bShowDesktopButton;
+    BOOL bMMTaskbarEnabled;   // "Show taskbar on all displays" (reg MMTaskbarEnabled)
+    UINT uMMTaskbarMode;     // "Show taskbar buttons on" 0=all 1=where-open 2=main+where-open (reg MMTaskbarMode)
     TW_STRUCKRECTS2 sr;
 
     BOOL Load();
@@ -404,6 +431,7 @@ DECLARE_INTERFACE_(ITrayBandSite, IUnknown)
     STDMETHOD_(HRESULT, ProcessMessage) (THIS_ HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *plResult) PURE;
     STDMETHOD_(HRESULT, AddContextMenus) (THIS_ HMENU hmenu, UINT indexMenu, UINT idCmdFirst, UINT idCmdLast, UINT uFlags, IContextMenu **ppcm) PURE;
     STDMETHOD_(HRESULT, Lock) (THIS_ BOOL bLock) PURE;
+    STDMETHOD_(HRESULT, Save) (THIS) PURE;
 };
 #undef INTERFACE
 
@@ -420,6 +448,7 @@ DECLARE_INTERFACE_(ITrayBandSite, IUnknown)
 #define ITrayBandSite_ProcessMessage(p,a,b,c,d,e)       (p)->lpVtbl->ProcessMessage(p,a,b,c,d,e)
 #define ITrayBandSite_AddContextMenus(p,a,b,c,d,e,f)    (p)->lpVtbl->AddContextMenus(p,a,b,c,d,e,f)
 #define ITrayBandSite_Lock(p,a)                         (p)->lpVtbl->Lock(p,a)
+#define ITrayBandSite_Save(p)                           (p)->lpVtbl->Save(p)
 #endif
 
 HRESULT CTrayBandSite_CreateInstance(IN ITrayWindow *tray, IN IDeskBand* pTaskBand, OUT ITrayBandSite** pBandSite);

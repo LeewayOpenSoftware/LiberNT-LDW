@@ -322,6 +322,7 @@ HvpWriteHive(
     ULONG FileOffset;
     ULONG BlockIndex;
     ULONG LastIndex;
+    ULONG CommittedLength;
     PVOID Block;
 
     ASSERT(!RegistryHive->ReadOnly);
@@ -347,6 +348,8 @@ HvpWriteHive(
         return FALSE;
     }
 
+    CommittedLength = RegistryHive->CommittedLength;
+
     /*
      * Update the primary sequence number and write
      * the base block to hive.
@@ -357,6 +360,16 @@ HvpWriteHive(
 
     if (!PrimaryDirty)
     {
+        /* The primary-sequence header must not publish a Length the file
+           does not hold yet. A growth the volume refused (or a crash
+           between this header and the bin writes) would otherwise leave a
+           header claiming bins that are not on disk, which fails the next
+           boot. Publish the committed Length here; the final header after
+           the bins publishes the grown one. The log, written before this
+           call, already carries the new Length for recovery. */
+        RegistryHive->BaseBlock->Length = CommittedLength;
+        RegistryHive->BaseBlock->CheckSum = HvpHiveHeaderChecksum(RegistryHive->BaseBlock);
+
         /* Write hive block */
         FileOffset = 0;
         Success = RegistryHive->FileWrite(RegistryHive, FileType,
@@ -365,13 +378,16 @@ HvpWriteHive(
         if (!Success)
         {
             DPRINT1("Failed to write the base block header to primary hive (primary sequence)\n");
-            return FALSE;
+            goto FailWrite;
         }
+
+        RegistryHive->BaseBlock->Length = RegistryHive->Storage[Stable].Length;
+        RegistryHive->BaseBlock->CheckSum = HvpHiveHeaderChecksum(RegistryHive->BaseBlock);
 
         if (!CmpFileFlush(RegistryHive, FileType, NULL, 0))
         {
             DPRINT1("Failed to flush the primary hive base block\n");
-            return FALSE;
+            goto FailWrite;
         }
     }
 
@@ -409,7 +425,7 @@ HvpWriteHive(
         {
             DPRINT1("Failed to write hive block to primary hive file (block 0x%p, block index 0x%x)\n",
                     Block, BlockIndex);
-            return FALSE;
+            goto FailWrite;
         }
 
         /* Go to the next block */
@@ -424,7 +440,7 @@ HvpWriteHive(
     if (!Success)
     {
         DPRINT1("Failed to flush the primary hive\n");
-        return FALSE;
+        goto FailWrite;
     }
 
     /*
@@ -445,10 +461,20 @@ HvpWriteHive(
     if (!Success)
     {
         DPRINT1("Failed to write the base block header to primary hive (secondary sequence)\n");
-        return FALSE;
+        goto FailWrite;
     }
 
+    RegistryHive->CommittedLength = RegistryHive->BaseBlock->Length;
     return TRUE;
+
+FailWrite:
+    /* Keep the hive dirty and syncable: roll the in-memory transaction
+       marker back and restore the in-memory Length. The on-disk header
+       kept the committed Length, so no header over-claims the file. */
+    RegistryHive->BaseBlock->Length = RegistryHive->Storage[Stable].Length;
+    RegistryHive->BaseBlock->Sequence1 = RegistryHive->BaseBlock->Sequence2;
+    RegistryHive->BaseBlock->CheckSum = HvpHiveHeaderChecksum(RegistryHive->BaseBlock);
+    return FALSE;
 }
 
 #if !defined(CMLIB_HOST) && !defined(_BLDR_)

@@ -158,6 +158,66 @@ HvpApplyIncrementalLog(
     return TRUE;
 }
 
+/**
+ * @brief
+ * Clamps the hive header Length to the contiguous run of valid bins
+ * actually present in an in-memory hive image.
+ *
+ * @param[in,out] BaseBlock
+ * The base block of the hive image, followed by ImageLength bytes of
+ * bin data. The Length field and checksum are updated in place when
+ * a clamp was necessary.
+
+ * @param[in] ImageLength
+ * The size in bytes of the bin data that follows the base block.
+
+ * @return
+ * Returns the clamped Length (a multiple of HBLOCK_SIZE, possibly
+ * equal to the incoming BaseBlock->Length when every bin is valid).
+ *
+ * @remarks
+ * A growth write that the volume refuses (e.g. disk full) leaves the
+ * primary header claiming bins the file does not hold. After the dirty
+ * data of a log has been applied into an image, the region a log could
+ * not cover stays zero-filled and fails bin validation at hive init.
+ * Loading only the valid contiguous prefix keeps the hive bootable and
+ * confines the loss to what was never written; the caller is expected
+ * to mark the hive for self-heal.
+ */
+ULONG
+CMAPI
+HvpClampHiveToValidBins(
+    _Inout_ PHBASE_BLOCK BaseBlock,
+    _In_ ULONG ImageLength)
+{
+    ULONG Offset = 0;
+    PUCHAR Image = (PUCHAR)BaseBlock;
+
+    while (Offset + sizeof(HBIN) <= ImageLength)
+    {
+        PHBIN Bin = (PHBIN)(Image + HBLOCK_SIZE + Offset);
+
+        if (Bin->Signature != HV_HBIN_SIGNATURE ||
+            !Bin->Size ||
+            (Bin->Size % HBLOCK_SIZE) != 0 ||
+            Bin->Size > ImageLength - Offset ||
+            Bin->FileOffset != Offset)
+        {
+            break;
+        }
+
+        Offset += Bin->Size;
+    }
+
+    if (Offset != BaseBlock->Length)
+    {
+        BaseBlock->Length = Offset;
+        BaseBlock->CheckSum = HvpHiveHeaderChecksum(BaseBlock);
+    }
+
+    return Offset;
+}
+
 #if !defined(CMLIB_HOST) && !defined(_BLDR_)
 ULONG
 CMAPI
@@ -253,6 +313,13 @@ HvpRecoverHiveFromLog(
 
     HvpApplyIncrementalLog(Image, Required, Log, LogSize, TRUE, AppliedBlocks, &Required);
     Hive->Free(Log, LogSize);
+
+    /* A refused growth write leaves the header claiming bins neither the
+       file nor the log holds; the untouched tail of the image stays
+       zero-filled and would fail bin validation. Clamp to what is valid
+       so the hive loads, and flag the loss for self-heal. */
+    if (HvpClampHiveToValidBins(Image, Required) != Required)
+        Image->BootType |= HBOOT_TYPE_SELF_HEAL;
 
     *HiveData = Image;
     *HiveDataSize = ImageSize;

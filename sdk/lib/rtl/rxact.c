@@ -130,6 +130,7 @@ RXactpCommit(
     NTSTATUS Status, TmpStatus;
     HANDLE KeyHandle;
     ULONG i;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
 
     Data = Context->Data;
 
@@ -310,6 +311,7 @@ RtlInitializeRXact(
     ULONG ValueDataLength;
     ULONG Length;
     HANDLE KeyHandle;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(TmpStatus);
 
     /* Open or create the 'RXACT' key in the root directory */
     RtlInitUnicodeString(&KeyName, L"RXACT");

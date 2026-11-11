@@ -12,6 +12,7 @@
 /* INCLUDES *****************************************************************/
 
 #include <stdio.h>
+#include <string.h>
 
 #define WIN32_NO_STATUS
 #include <windef.h>
@@ -39,6 +40,11 @@
 
 /* DEFINES ******************************************************************/
 
+/* Complete checker output lines copied to the debug log before the mirror
+ * stops. The serial log is the only record a lab keeps of a boot-time
+ * repair, and at 115200 baud a few thousand lines cost seconds. */
+#define AUTOCHK_MIRROR_LINES 4000
+
 typedef struct _FILESYSTEM_CHKDSK
 {
     WCHAR Name[10];
@@ -59,6 +65,15 @@ FILESYSTEM_CHKDSK FileSystems[] =
 };
 
 HANDLE KeyboardHandle = NULL;
+/* Set while PrintString shows a line from the file system checker. */
+static BOOLEAN InCheckerOutput = FALSE;
+
+/* bootex.log capture state; volumes are checked sequentially */
+static PUCHAR LogBuffer;
+static ULONG LogLength;
+static ULONG LogCapacity;
+static WCHAR LogVolumePath[128];
+static BOOLEAN LogVolumeWritable;
 
 /* FUNCTIONS ****************************************************************/
 
@@ -79,6 +94,29 @@ PrintString(char* fmt,...)
     Len = vsprintf(buffer, fmt, ap);
     va_end(ap);
 
+    /*
+     * Mirror complete lines to the debug log, so a serial capture shows what
+     * the check decided (dirty, skipped, in use, problems found). Progress and
+     * countdown lines end in a bare carriage return and are not mirrored. The
+     * mirror is capped so a large repair cannot slow the boot down.
+     */
+    if (strchr(buffer, '\n'))
+    {
+        static ULONG MirroredLines = 0;
+
+        /* Only the checker's per-problem lines count against the cap; its
+         * verdicts reach the log on their own (NTFSLIB:), and autochk's own
+         * decisions are always mirrored. */
+        if (!InCheckerOutput)
+            DbgPrint("AUTOCHK: %s", buffer);
+        else if (MirroredLines < AUTOCHK_MIRROR_LINES)
+            DbgPrint("AUTOCHK: %s", buffer);
+        else if (MirroredLines == AUTOCHK_MIRROR_LINES)
+            DbgPrint("AUTOCHK: (further checker output not mirrored)\n");
+        if (InCheckerOutput && MirroredLines <= AUTOCHK_MIRROR_LINES)
+            MirroredLines++;
+    }
+
     RtlInitAnsiString(&AnsiString, buffer);
     RtlAnsiStringToUnicodeString(&UnicodeString,
                                  &AnsiString,
@@ -87,6 +125,164 @@ PrintString(char* fmt,...)
     RtlFreeUnicodeString(&UnicodeString);
 
     return Len;
+}
+
+static VOID
+LogClear(IN PCWSTR VolumePath)
+{
+    ULONG Length;
+
+    LogLength = 0;
+    LogVolumeWritable = TRUE;
+
+    Length = (ULONG)wcslen(VolumePath);
+    if (Length > RTL_NUMBER_OF(LogVolumePath) - 12)
+        Length = RTL_NUMBER_OF(LogVolumePath) - 12;
+    RtlCopyMemory(LogVolumePath, VolumePath, Length * sizeof(WCHAR));
+    LogVolumePath[Length] = UNICODE_NULL;
+}
+
+static VOID
+__cdecl
+LogAppend(IN PCSTR fmt, ...)
+{
+    va_list ap;
+    CHAR Line[512];
+    INT Len;
+    PUCHAR NewBuffer;
+    ULONG NewCapacity;
+
+    if (!LogBuffer)
+    {
+        LogCapacity = 8192;
+        LogBuffer = RtlAllocateHeap(RtlGetProcessHeap(), 0, LogCapacity);
+        if (!LogBuffer)
+            return;
+    }
+
+    /* Native image: no _vscprintf. Format into a bounded stack buffer and
+     * truncate a single over-long line rather than measuring it first. */
+    va_start(ap, fmt);
+    Len = _vsnprintf(Line, sizeof(Line) - 1, fmt, ap);
+    va_end(ap);
+    if (Len < 0)
+        Len = sizeof(Line) - 1;
+    Line[Len] = ANSI_NULL;
+
+    while (LogLength + (ULONG)Len + 1 > LogCapacity)
+    {
+        NewCapacity = LogCapacity * 2;
+        NewBuffer = RtlReAllocateHeap(RtlGetProcessHeap(), 0, LogBuffer, NewCapacity);
+        if (!NewBuffer)
+            return;
+        LogBuffer = NewBuffer;
+        LogCapacity = NewCapacity;
+    }
+
+    RtlCopyMemory((PCHAR)LogBuffer + LogLength, Line, Len + 1);
+    LogLength += (ULONG)Len;
+}
+
+static VOID
+LogWriteBootEx(VOID)
+{
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    UNICODE_STRING FileName;
+    IO_STATUS_BLOCK IoStatusBlock;
+    WCHAR FullPath[160];
+    ULONG Length;
+    HANDLE FileHandle;
+    NTSTATUS Status;
+
+    if (!LogBuffer || LogLength == 0)
+        return;
+
+    if (!LogVolumeWritable)
+    {
+        DPRINT1("AUTOCHK: %ws is read-only, bootex.log not written\n", LogVolumePath);
+        return;
+    }
+
+    Length = (ULONG)wcslen(LogVolumePath);
+    RtlCopyMemory(FullPath, LogVolumePath, Length * sizeof(WCHAR));
+    RtlCopyMemory(FullPath + Length, L"\\bootex.log", sizeof(L"\\bootex.log"));
+    RtlInitUnicodeString(&FileName, FullPath);
+    InitializeObjectAttributes(&ObjectAttributes,
+                               &FileName,
+                               OBJ_CASE_INSENSITIVE,
+                               NULL,
+                               NULL);
+
+    Status = NtCreateFile(&FileHandle,
+                          FILE_GENERIC_WRITE | SYNCHRONIZE,
+                          &ObjectAttributes,
+                          &IoStatusBlock,
+                          NULL,
+                          FILE_ATTRIBUTE_NORMAL,
+                          0,
+                          FILE_OVERWRITE_IF,
+                          FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_WRITE_THROUGH,
+                          NULL,
+                          0);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("AUTOCHK: bootex.log create on %ws failed (0x%08lx)\n", LogVolumePath, Status);
+        return;
+    }
+
+    Status = NtWriteFile(FileHandle,
+                         NULL,
+                         NULL,
+                         NULL,
+                         &IoStatusBlock,
+                         LogBuffer,
+                         LogLength,
+                         NULL,
+                         NULL);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("AUTOCHK: bootex.log write on %ws failed (0x%08lx)\n", LogVolumePath, Status);
+        NtClose(FileHandle);
+        return;
+    }
+
+    /*
+     * FILE_WRITE_THROUGH covers the data only. The new file's record and
+     * the root directory entry that names it are held back in the file
+     * system's write-back cache, and a check that changed the volume ends
+     * in a restart that does not wait for that cache (Lab03, b774d48: a
+     * dirty boot ended in "was changed and dismounted" and left no
+     * bootex.log on the volume). Flush the file (its data, size and
+     * record), then the volume (every held-back metadata block, the
+     * directory entry included, and the device cache), so the log is on
+     * the disk before autochk returns, whatever follows.
+     */
+    Status = NtFlushBuffersFile(FileHandle, &IoStatusBlock);
+    if (!NT_SUCCESS(Status))
+        DPRINT1("AUTOCHK: bootex.log flush on %ws failed (0x%08lx)\n", LogVolumePath, Status);
+    NtClose(FileHandle);
+
+    RtlInitUnicodeString(&FileName, LogVolumePath);
+    InitializeObjectAttributes(&ObjectAttributes,
+                               &FileName,
+                               OBJ_CASE_INSENSITIVE,
+                               NULL,
+                               NULL);
+    Status = NtOpenFile(&FileHandle,
+                        FILE_GENERIC_WRITE | SYNCHRONIZE,
+                        &ObjectAttributes,
+                        &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        FILE_SYNCHRONOUS_IO_NONALERT);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("AUTOCHK: volume open of %ws for the bootex.log flush failed (0x%08lx)\n", LogVolumePath, Status);
+        return;
+    }
+    Status = NtFlushBuffersFile(FileHandle, &IoStatusBlock);
+    if (!NT_SUCCESS(Status))
+        DPRINT1("AUTOCHK: volume flush of %ws after bootex.log failed (0x%08lx)\n", LogVolumePath, Status);
+    NtClose(FileHandle);
 }
 
 static VOID
@@ -143,6 +339,45 @@ OpenKeyboard(
                       &IoStatusBlock,
                       FILE_OPEN,
                       0);
+}
+
+/*
+ * Discard key presses queued before autochk asked anything. WaitForKeyboard
+ * returns on the first queued key-down, so a key typed at the boot menu (or
+ * sent by a test harness) would otherwise cancel the first check at once.
+ */
+static VOID
+DrainKeyboard(
+    IN HANDLE KeyboardHandle)
+{
+    NTSTATUS Status;
+    IO_STATUS_BLOCK IoStatusBlock;
+    LARGE_INTEGER Offset;
+    KEYBOARD_INPUT_DATA InputData;
+    ULONG Discarded = 0;
+
+    do
+    {
+        Offset.QuadPart = 0;
+        Status = NtReadFile(KeyboardHandle,
+                            NULL,
+                            NULL,
+                            NULL,
+                            &IoStatusBlock,
+                            &InputData,
+                            sizeof(KEYBOARD_INPUT_DATA),
+                            &Offset,
+                            NULL);
+        if (!NT_SUCCESS(Status))
+            return;
+        if (Status != STATUS_PENDING)
+            Discarded++;
+    } while (Status != STATUS_PENDING);
+
+    /* Nothing is queued any more: drop the read that is now waiting */
+    NtCancelIoFile(KeyboardHandle, &IoStatusBlock);
+    if (Discarded)
+        DPRINT1("AUTOCHK: discarded %lu queued key event(s)\n", Discarded);
 }
 
 static NTSTATUS
@@ -229,7 +464,8 @@ static NTSTATUS
 GetFileSystem(
     IN PUNICODE_STRING VolumePathU,
     IN OUT PWSTR FileSystemName,
-    IN SIZE_T FileSystemNameSize)
+    IN SIZE_T FileSystemNameSize,
+    OUT PULONG FileSystemAttributes)
 {
     NTSTATUS Status;
     OBJECT_ATTRIBUTES ObjectAttributes;
@@ -276,6 +512,8 @@ GetFileSystem(
         DPRINT1("NtQueryVolumeInformationFile() failed, Status 0x%08lx\n", Status);
         return Status;
     }
+
+    *FileSystemAttributes = FileFsAttribute->FileSystemAttributes;
 
     if (FileSystemNameSize >= FileFsAttribute->FileSystemNameLength + sizeof(WCHAR))
     {
@@ -373,7 +611,10 @@ ChkdskCallback(
 
     case OUTPUT:
         Output = (PTEXTOUTPUT) Argument;
+        InCheckerOutput = TRUE;
         PrintString("%s", Output->Output);
+        LogAppend("%s", Output->Output);
+        InCheckerOutput = FALSE;
         break;
 
     case DONE:
@@ -381,6 +622,7 @@ ChkdskCallback(
         if (*Status == FALSE)
         {
             PrintString("The file system check was unable to complete successfully.\r\n\r\n");
+            LogAppend("The file system check was unable to complete successfully.\r\n");
             // Error = TRUE;
         }
         break;
@@ -406,7 +648,9 @@ CheckVolume(
 {
     NTSTATUS Status;
     BOOLEAN Success;
+    BOOLEAN FixAttempted = FALSE;
     PCWSTR DisplayName;
+    ULONG FileSystemAttributes;
     UNICODE_STRING VolumePathU;
     ULONG Count;
     WCHAR FileSystem[128];
@@ -431,10 +675,16 @@ CheckVolume(
 
     DPRINT1("AUTOCHK: Checking %wZ\n", &VolumePathU);
 
+    LogClear(VolumePath);
+    LogAppend("Checking file system on %S\r\n", DisplayName);
+
     /* Get the file system */
+    FileSystemAttributes = 0;
     Status = GetFileSystem(&VolumePathU,
                            FileSystem,
-                           sizeof(FileSystem));
+                           sizeof(FileSystem),
+                           &FileSystemAttributes);
+    LogVolumeWritable = !(FileSystemAttributes & FILE_READ_ONLY_VOLUME);
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("GetFileSystem() failed, Status 0x%08lx\n", Status);
@@ -478,15 +728,20 @@ CheckVolume(
         {
             PrintString("The file system on volume %S needs to be checked for problems.\r\n", DisplayName);
             PrintString("You may cancel this check, but it is recommended that you continue.\r\n");
+            LogAppend("The file system on volume %S needs to be checked for problems.\r\n", DisplayName);
+            LogAppend("You may cancel this check, but it is recommended that you continue.\r\n");
         }
         else
         {
             PrintString("A volume check has been scheduled.\r\n");
+            LogAppend("A volume check has been scheduled.\r\n");
         }
 
         if (!KeyboardHandle || WaitForKeyboard(KeyboardHandle, TimeOut) == STATUS_TIMEOUT)
         {
             PrintString("The system will now check the file system.\r\n\r\n");
+            LogAppend("The system will now check the file system.\r\n\r\n");
+            FixAttempted = TRUE;
             Status = STATUS_SUCCESS;
             Success = FileSystems[Count].ChkdskFunc(&VolumePathU,
                                                     ChkdskCallback,
@@ -513,6 +768,8 @@ CheckVolume(
 
 Quit:
     PrintString("\r\n\r\n");
+    if (FixAttempted)
+        LogWriteBootEx();
     return Status;
 }
 
@@ -661,6 +918,10 @@ _main(
     {
         DPRINT1("OpenKeyboard() failed, Status 0x%08lx\n", Status);
         /* Ignore keyboard interaction */
+    }
+    else
+    {
+        DrainKeyboard(KeyboardHandle);
     }
 
     if (CheckAllVolumes)

@@ -11,6 +11,7 @@
 
 #include <ntoskrnl.h>
 #include <reactos/buildno.h>
+#include <reactos/lbi.h>
 #include <reactos/smpdbg.h>
 #include "inbv/logo.h"
 
@@ -78,8 +79,8 @@ static WCHAR ExpArm64CsdVersionBuffer[256];
 static WCHAR ExpArm64VersionBuffer[64];
 #endif
 
-CHAR NtBuildLab[] = KERNEL_VERSION_BUILD_STR "."
-                    REACTOS_COMPILER_NAME "_" REACTOS_COMPILER_VERSION;
+CHAR NtBuildLab[] = LBI_BUILDLAB;
+CHAR NtBuildLabEx[] = LBI_BUILDLABEX;
 
 /* Init flags and settings */
 ULONG ExpInitializationPhase;

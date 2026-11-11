@@ -1245,6 +1245,19 @@ Return Value:
                 FatReleaseGlobal( &IrpContext );
 
                 //
+                //  LiberNT PNPDIAG: show whether the last close of a surprise-removed
+                //  volume finally dismounts it (refs reach 0 -> Safe removal). Do not
+                //  touch Vcb after a TRUE result - it has been freed.
+                //
+                if (LocalVcbDeleted) {
+                    DbgPrint("PNPDIAG fatclose vcb dismounted=1 (safe removal path clear)\n");
+                } else if (Vcb->VcbCondition == VcbBad) {
+                    DbgPrint("PNPDIAG fatclose vcb %p NOT dismounted vpbref %lu residual %lu openfiles %lu cond %u\n",
+                             Vcb, (ULONG)(Vcb->Vpb ? Vcb->Vpb->ReferenceCount : 0),
+                             (ULONG)Vcb->ResidualOpenCount, (ULONG)Vcb->OpenFileCount, (ULONG)Vcb->VcbCondition);
+                }
+
+                //
                 //  Let the caller know what happened, if they want this information.
                 //
 

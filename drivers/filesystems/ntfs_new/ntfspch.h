@@ -55,6 +55,7 @@ extern BOOLEAN gAllowExtChar8dot3;
 extern BOOLEAN gShowVersionInfo;
 extern BOOLEAN gBugCheckOnCorrupt;
 extern BOOLEAN gDisable8dot3NameCreation;
+extern BOOLEAN gTracePagingWrites;
 extern INT gDisableLastAccessUpdate;
 /* NtfsDisableLastAccessUpdate policy, as fsutil behavior shows it. Windows
  * stores the System Managed forms with bit 31 set (0x80000002, 0x80000003). */

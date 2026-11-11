@@ -9,6 +9,9 @@
 
 #include "ccnt.h"
 
+#define NDEBUG
+#include <debug.h>
+
 typedef struct _CC_NT_DEFERRED_WRITE
 {
     LIST_ENTRY Link;
@@ -51,6 +54,8 @@ static KSPIN_LOCK CcNtDeferredLock;
 static LIST_ENTRY CcNtLazyWaiters;
 static KSPIN_LOCK CcNtLazyWaitLock;
 static BOOLEAN CcNtReady;
+/* Set at shutdown: the lazy writer no longer starts passes on its own timer. */
+static volatile LONG CcNtLazyTimerStopped;
 
 NTSTATUS
 CcNtFlushMap(
@@ -184,6 +189,15 @@ CcDeferWrite(
     CcNtKickLazyWriter();
 }
 
+/* Engine callback, under DirtyLock: a clean map got its first dirty page. */
+static
+VOID
+CcNtMapDirtied(
+    _Inout_ PCC_MAP Map)
+{
+    CC_ATOMIC_WRITE64(&CONTAINING_RECORD(Map, CC_NT_MAP, Map)->DirtySince, (LONG64)KeQueryInterruptTime());
+}
+
 static
 BOOLEAN
 CcNtReferenceDirtyMap(
@@ -223,6 +237,40 @@ CcNtNextDirtyMap(VOID)
     return NULL;
 }
 
+/* Writes back up to MaximumPages of one map with the file system's lazy-write
+ * lock held, and returns how many pages reached the file system. */
+static
+ULONG
+CcNtLazyFlushMap(
+    _Inout_ PCC_NT_MAP NtMap,
+    _In_ ULONG MaximumPages,
+    _In_ BOOLEAN Wait,
+    _In_ BOOLEAN CalledFromLazy)
+{
+    ULONG Flushed = 0;
+
+    KeEnterCriticalRegion();
+    KeWaitForSingleObject(&NtMap->LazyWriteGate, Executive, KernelMode, FALSE, NULL);
+    if (NtMap->Callbacks.AcquireForLazyWrite == NULL ||
+        NtMap->Callbacks.AcquireForLazyWrite(NtMap->LazyWriteContext, Wait))
+    {
+        CcNtFlushMap(NtMap, 0, (ULONG64)-1, MaximumPages, &Flushed);
+
+        if (NtMap->Callbacks.ReleaseFromLazyWrite != NULL)
+            NtMap->Callbacks.ReleaseFromLazyWrite(NtMap->LazyWriteContext);
+    }
+    KeSetEvent(&NtMap->LazyWriteGate, IO_NO_INCREMENT, FALSE);
+    KeLeaveCriticalRegion();
+
+    if (CalledFromLazy && Flushed != 0)
+    {
+        CcLazyWriteIos++;
+        CcLazyWritePages += Flushed;
+    }
+
+    return Flushed;
+}
+
 NTSTATUS
 CcRosFlushDirtyPages(
     ULONG Target,
@@ -233,36 +281,14 @@ CcRosFlushDirtyPages(
     ULONG Total = 0;
     ULONG Visited = 0;
 
-    UNREFERENCED_PARAMETER(Wait);
-
     while (Total < Target && Visited++ < 256)
     {
         PCC_NT_MAP NtMap = CcNtNextDirtyMap();
-        ULONG Flushed = 0;
 
         if (NtMap == NULL)
             break;
 
-        KeEnterCriticalRegion();
-        KeWaitForSingleObject(&NtMap->LazyWriteGate, Executive, KernelMode, FALSE, NULL);
-        if (NtMap->Callbacks.AcquireForLazyWrite == NULL ||
-            NtMap->Callbacks.AcquireForLazyWrite(NtMap->LazyWriteContext, Wait))
-        {
-            CcNtFlushMap(NtMap, 0, (ULONG64)-1, Target - Total, &Flushed);
-
-            if (NtMap->Callbacks.ReleaseFromLazyWrite != NULL)
-                NtMap->Callbacks.ReleaseFromLazyWrite(NtMap->LazyWriteContext);
-        }
-        KeSetEvent(&NtMap->LazyWriteGate, IO_NO_INCREMENT, FALSE);
-        KeLeaveCriticalRegion();
-
-        if (CalledFromLazy && Flushed != 0)
-        {
-            CcLazyWriteIos++;
-            CcLazyWritePages += Flushed;
-        }
-
-        Total += Flushed;
+        Total += CcNtLazyFlushMap(NtMap, Target - Total, Wait, CalledFromLazy);
         CcNtDereferenceMap(NtMap);
     }
 
@@ -270,6 +296,70 @@ CcRosFlushDirtyPages(
         *Count = Total;
 
     return STATUS_SUCCESS;
+}
+
+/*
+ * The budgeted pass writes TotalDirtyPages / CC_LAZY_DIVISOR a second, which
+ * is a rate limit for a busy cache, not a bound on how long a page stays
+ * dirty: a 1 MiB file alone in the cache took 14 passes, and nothing wrote a
+ * closed file any sooner. Before the budgeted pass, write back completely
+ * every dirty map whose last handle is gone or whose oldest dirty data is
+ * older than CC_LAZY_MAX_AGE_SECONDS. A map that is written to continuously
+ * gets such a pass every CC_LAZY_MAX_AGE_SECONDS, so no page of it is older
+ * than that plus one pass. The pass writes at most CC_LAZY_AGED_MAX_PAGES
+ * and leaves the rest aged for the next one, so a large closed file cannot
+ * hold the lazy writer for seconds; deferred writers are served between
+ * maps. Returns the pages written.
+ */
+static
+ULONG
+CcNtFlushAgedMaps(
+    _In_ ULONG64 Now)
+{
+    const ULONG64 MaximumAge = (ULONG64)CC_LAZY_MAX_AGE_SECONDS * 10 * 1000 * 1000;
+    PCC_MAP First = NULL;
+    ULONG Total = 0;
+    ULONG Visited;
+
+    /* CcDirtyNextMapAccept rotates the list, so one full turn ends where it
+     * began; the bound covers a list that changes under us. */
+    for (Visited = 0; Visited < 256 && Total < CC_LAZY_AGED_MAX_PAGES; Visited++)
+    {
+        BOOLEAN Accepted;
+        PCC_MAP Map = CcDirtyNextMapAccept(&CcNtCache, CcNtReferenceDirtyMap, &Accepted);
+        PCC_NT_MAP NtMap;
+        BOOLEAN Aged;
+
+        if (Map == NULL || Map == First)
+        {
+            if (Map != NULL && Accepted)
+                CcNtDereferenceMap(CONTAINING_RECORD(Map, CC_NT_MAP, Map));
+            break;
+        }
+        if (First == NULL)
+            First = Map;
+        if (!Accepted)
+            continue;
+
+        NtMap = CONTAINING_RECORD(Map, CC_NT_MAP, Map);
+        Aged = (CC_ATOMIC_READ32(&NtMap->Map.OpenCount) == 0) ||
+               (Now - (ULONG64)CC_ATOMIC_READ64(&NtMap->DirtySince) >= MaximumAge);
+        if (Aged)
+        {
+            ULONG Room = CC_LAZY_AGED_MAX_PAGES - Total;
+            ULONG Wanted = (CC_ATOMIC_READ64(&NtMap->Map.DirtyPages) > (LONG64)Room) ? Room : ~0u;
+
+            /* Within the room, a full flush (CcBcbCompleteFlush included);
+             * beyond it, a budgeted one, and the map stays aged. */
+            Total += CcNtLazyFlushMap(NtMap, Wanted, TRUE, TRUE);
+            if (Wanted == ~0u)
+                CC_ATOMIC_WRITE64(&NtMap->DirtySince, (LONG64)Now);
+            CcNtProcessDeferredWrites();
+        }
+        CcNtDereferenceMap(NtMap);
+    }
+
+    return Total;
 }
 
 static
@@ -306,6 +396,9 @@ CcNtLazyWriter(
     _In_ PVOID Context)
 {
     LARGE_INTEGER Period;
+#if DBG
+    ULONG64 LastPass = 0;
+#endif
 
     UNREFERENCED_PARAMETER(Context);
     Period.QuadPart = -10 * 1000 * 1000;
@@ -314,18 +407,72 @@ CcNtLazyWriter(
     {
         LIST_ENTRY Waiters;
         ULONG Target;
+        NTSTATUS Status;
+        ULONG Aged;
+        ULONG Flushed = 0;
+        ULONG64 Started;
+        ULONG64 Teardown;
 
-        KeWaitForSingleObject(&CcNtLazyWriterEvent, Executive, KernelMode, FALSE, &Period);
+        Status = KeWaitForSingleObject(&CcNtLazyWriterEvent, Executive, KernelMode, FALSE, &Period);
 
         CcNtTakeLazyWaiters(&Waiters);
+        /*
+         * After shutdown has begun, a pass runs only when someone asks for one
+         * (CcWaitForCurrentLazyWriterActivity, a deferred or throttled write).
+         * A timer pass could otherwise start between the shutdown's last lazy
+         * wait and the file systems' shutdown, and its writes and map closes
+         * would land on volumes already marked clean.
+         */
+        if (Status == STATUS_TIMEOUT && CcNtLazyTimerStopped && IsListEmpty(&Waiters))
+            continue;
+
+        Started = KeQueryInterruptTime();
+#if DBG
+        /* A pass that starts late was held up by the previous pass's tail
+         * (teardown of closed maps, deferred writes), not by the timer. */
+        if (LastPass != 0 && Started - LastPass > 15 * 1000 * 1000)
+            DPRINT1("CC: lazy pass late: %I64u ms since the previous pass started\n", (Started - LastPass) / 10000);
+        LastPass = Started;
+#endif
+        Aged = CcNtFlushAgedMaps(Started);
         Target = CcDirtyLazyTarget(&CcNtCache);
         if (Target != 0)
-            CcRosFlushDirtyPages(Target, NULL, TRUE, TRUE);
+            CcRosFlushDirtyPages(Target, &Flushed, TRUE, TRUE);
 
+#if DBG
+        /* Lab trace: one line per pass that had work, so a power-cut probe
+         * can read the write-back cadence off COM1. */
+        if (Aged != 0 || Target != 0)
+        {
+            DPRINT1("CC: lazy pass at %I64u ms: aged %lu, target %lu, flushed %lu, dirty left %I64d, took %I64u ms\n",
+                    Started / 10000, Aged, Target, Flushed, CC_ATOMIC_READ64(&CcNtCache.TotalDirtyPages),
+                    (KeQueryInterruptTime() - Started) / 10000);
+        }
+#else
+        UNREFERENCED_PARAMETER(Aged);
+        UNREFERENCED_PARAMETER(Flushed);
+#endif
+
+        Teardown = KeQueryInterruptTime();
         CcNtExpireClosedMaps();
         CcNtProcessDeferredWrites();
+#if DBG
+        if (KeQueryInterruptTime() - Teardown >= 50 * 10 * 1000)
+        {
+            DPRINT1("CC: lazy pass teardown took %I64u ms\n", (KeQueryInterruptTime() - Teardown) / 10000);
+        }
+#else
+        UNREFERENCED_PARAMETER(Teardown);
+#endif
         CcNtReleaseLazyWaiters(&Waiters);
     }
+}
+
+VOID
+NTAPI
+CcStopLazyWriterTimer(VOID)
+{
+    InterlockedExchange(&CcNtLazyTimerStopped, 1);
 }
 
 NTSTATUS
@@ -370,6 +517,7 @@ CcInitializeCacheManager(VOID)
     CcNtCache.BcbBytes = sizeof(CC_NT_BCB);
     CcNtCache.BcbCreated = CcNtBcbCreated;
     CcNtCache.BcbDeleting = CcNtBcbDeleting;
+    CcNtCache.MapDirtied = CcNtMapDirtied;
 
     CcNtInitializeMapTable();
     InitializeListHead(&CcNtDeferredWrites);

@@ -288,6 +288,15 @@ TCPUnregisterInterface(PIP_INTERFACE IF)
     LibIP6ConfigForgetNetif(IF->TCPContext);
     netif_remove(IF->TCPContext);
     UNLOCK_TCPIP_CORE();
+
+    /* The netif and everything LibIP6 kept for it are gone. Tell the IPv6
+     * table watchers now, as the IPv4 side does when it drops its addresses.
+     * Without this the deletions only surface with the next IPv6 change,
+     * which after an unplug is the replacement adapter's first address. */
+    TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_DELETE);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_DELETE);
 }
 
 VOID

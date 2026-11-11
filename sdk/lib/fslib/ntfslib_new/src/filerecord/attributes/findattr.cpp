@@ -339,33 +339,54 @@ FileRecord::FindNextAttributeFromList(_In_ AttributeType Type,
     return STATUS_SUCCESS;
 }
 
+/*
+ * The list is read into a private buffer and published once complete
+ * (NtfsPublishOnce, length first): before, the read itself set
+ * AttributeListData, so a second reader could walk a list that was still
+ * being filled. Only writers, under the exclusive metadata lock, drop it.
+ */
 NTSTATUS
 FileRecord::LoadAttributeList()
 {
     PAttribute ListAttribute;
+    PUCHAR List = NULL;
+    ULONG Length = 0;
+    NTSTATUS Status;
 
-    if (AttributeListData)
+    if (NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&AttributeListData)))
         return STATUS_SUCCESS;
 
     ListAttribute = FindAttributeInRecord(TypeAttributeList, NULL, NULL);
     if (!ListAttribute)
         return STATUS_NOT_FOUND;
 
-    return ReadAttributeAlloc(ListAttribute,
-                              &AttributeListData,
-                              &AttributeListLength);
+    Status = ReadAttributeAlloc(ListAttribute, &List, &Length);
+    if (!NT_SUCCESS(Status) || !List)
+        return Status;
+
+    /* Every loader stores the same length for the same record. */
+    AttributeListLength = Length;
+    if (NtfsPublishOnce(reinterpret_cast<PVOID volatile*>(&AttributeListData), List) != List)
+        delete[] List;
+    return STATUS_SUCCESS;
 }
 
 FileRecord*
 FileRecord::GetExtentRecord(_In_ ULONGLONG FileReference)
 {
     PFileRecordExtentCacheEntry Entry;
+    PFileRecordExtentCacheEntry Head;
+    PFileRecordExtentCacheEntry Seen;
     PFileRecord Record = NULL;
     ULONGLONG FileRecordNumber = GetFRNFromFileRef(FileReference);
     USHORT SequenceNumber = (USHORT)(FileReference >> 48);
     NTSTATUS Status;
 
-    for (Entry = ExtentCache; Entry; Entry = Entry->Next)
+    /* Readers walk the list without a lock; entries are only prepended
+     * (compare-exchange below) and only writers remove them. */
+    Seen = static_cast<PFileRecordExtentCacheEntry>(
+        NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&ExtentCache)));
+    for (Entry = Seen; Entry; Entry = Entry->Next)
     {
         if (Entry->FileReference == FileReference)
             return Entry->Record;
@@ -397,10 +418,31 @@ FileRecord::GetExtentRecord(_In_ ULONGLONG FileReference)
 
     Entry->FileReference = FileReference;
     Entry->Record = Record;
-    Entry->Next = ExtentCache;
     Record->BaseRecordOwner = this;
-    ExtentCache = Entry;
-    return Record;
+    for (;;)
+    {
+        PFileRecordExtentCacheEntry Other;
+
+        Entry->Next = Seen;
+        Head = static_cast<PFileRecordExtentCacheEntry>(
+            NtfsCompareExchangePublished(reinterpret_cast<PVOID volatile*>(&ExtentCache),
+                                         Entry,
+                                         Seen));
+        if (Head == Seen)
+            return Record;
+
+        /* Another reader prepended first: use its record if it is this one. */
+        for (Other = Head; Other && Other != Seen; Other = Other->Next)
+        {
+            if (Other->FileReference == FileReference)
+            {
+                delete Record;
+                delete Entry;
+                return Other->Record;
+            }
+        }
+        Seen = Head;
+    }
 }
 
 FileRecord*
@@ -656,6 +698,7 @@ FileRecord::BuildCompositeDataRuns(_In_ PAttribute Attribute)
     ULONG Offset = 0;
     ULONGLONG ExpectedVCN = 0;
     BOOLEAN FoundSegment = FALSE;
+    BOOLEAN ListBroken = FALSE;
     NTSTATUS Status;
 
     /*
@@ -729,7 +772,8 @@ FileRecord::BuildCompositeDataRuns(_In_ PAttribute Attribute)
         !AttributeListData ||
         AttributeListLength == 0)
     {
-        return NULL;
+        ListBroken = TRUE;
+        goto Corrupt;
     }
 
     ListData = AttributeListData;
@@ -742,7 +786,10 @@ FileRecord::BuildCompositeDataRuns(_In_ PAttribute Attribute)
         ULONG Remaining = ListLength - Offset;
 
         if (!IsAttributeListEntryValid(ListEntry, Remaining))
+        {
+            ListBroken = TRUE;
             goto Corrupt;
+        }
 
         if (ListEntry->Type == Attribute->AttributeType &&
             AttributeNameMatchesListEntry(Attribute, ListEntry))
@@ -827,6 +874,27 @@ FileRecord::BuildCompositeDataRuns(_In_ PAttribute Attribute)
 
 Corrupt:
     FreeDataRun(Head);
+
+    /*
+     * A list that cannot be read hides only what lives in extension records.
+     * An extent in this record that starts at VCN 0 and covers the whole
+     * stream needs no other segment, so it stays usable: the checker can
+     * still clear an index bitmap while the list is broken.
+     */
+    if (ListBroken &&
+        reinterpret_cast<PUCHAR>(Attribute) >= Data &&
+        reinterpret_cast<PUCHAR>(Attribute) < Data + Header->ActualSize &&
+        Attribute->NonResident.LastVCN != ~(ULONGLONG)0)
+    {
+        ULONGLONG ClusterSize = BytesPerCluster(DiskVolume);
+
+        if (ClusterSize != 0 &&
+            Attribute->NonResident.LastVCN + 1 >=
+                (Attribute->NonResident.DataSize + ClusterSize - 1) / ClusterSize)
+        {
+            return DecodeDataRuns(Attribute);
+        }
+    }
     return NULL;
 }
 
@@ -840,8 +908,14 @@ PDataRun
 FileRecord::GetCachedDataRuns(_In_ PAttribute Attribute)
 {
     PDataRunCacheEntry Entry;
+    PDataRunCacheEntry Head;
+    PDataRunCacheEntry Seen;
 
-    for (Entry = DataRunCache; Entry; Entry = Entry->Next)
+    /* Readers walk the list without a lock; entries are only prepended
+     * (compare-exchange below) and only writers clear it. */
+    Seen = static_cast<PDataRunCacheEntry>(
+        NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&DataRunCache)));
+    for (Entry = Seen; Entry; Entry = Entry->Next)
     {
         if (Entry->Attribute == Attribute)
             return Entry->Runs;
@@ -859,9 +933,30 @@ FileRecord::GetCachedDataRuns(_In_ PAttribute Attribute)
     }
 
     Entry->Attribute = Attribute;
-    Entry->Next = DataRunCache;
-    DataRunCache = Entry;
-    return Entry->Runs;
+    for (;;)
+    {
+        PDataRunCacheEntry Other;
+
+        Entry->Next = Seen;
+        Head = static_cast<PDataRunCacheEntry>(
+            NtfsCompareExchangePublished(reinterpret_cast<PVOID volatile*>(&DataRunCache),
+                                         Entry,
+                                         Seen));
+        if (Head == Seen)
+            return Entry->Runs;
+
+        /* Another reader prepended first: keep its runs if they are these. */
+        for (Other = Head; Other && Other != Seen; Other = Other->Next)
+        {
+            if (Other->Attribute == Attribute)
+            {
+                FreeDataRun(Entry->Runs);
+                delete Entry;
+                return Other->Runs;
+            }
+        }
+        Seen = Head;
+    }
 }
 
 void
@@ -874,6 +969,16 @@ FileRecord::ClearDataRunCache()
         FreeDataRun(Entry->Runs);
         delete Entry;
     }
+
+    /*
+     * The base object caches the composite run list of an attribute that
+     * lives in this extension record, keyed by the attribute's address in
+     * this record's buffer. Whatever made this record drop its runs (a
+     * mapping rewritten in place, a buffer restored on rollback) made that
+     * entry stale too.
+     */
+    if (BaseRecordOwner)
+        BaseRecordOwner->ClearDataRunCache();
 }
 
 ULONGLONG

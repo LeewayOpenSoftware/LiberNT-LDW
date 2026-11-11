@@ -20,6 +20,7 @@ INT gDisableLastAccessUpdate;
 BOOLEAN gDisableLfsDowngrade;
 BOOLEAN gDisableLfsUpgrade;
 INT gMftZoneReservation;
+BOOLEAN gTracePagingWrites;
 
 HANDLE
 OpenRegistryKey()
@@ -267,6 +268,16 @@ GetGlobalSettingsFromRegistry()
     gShowVersionInfo = QueryBooleanRegistryValueEx(RegistryKey,
                                                    L"NtfsShowVersionInfo",
                                                    FALSE);
+
+    /* Prints one debug line per paging write (checked builds only), for the
+     * power-cut probes that read a file's write-back timeline off the serial
+     * port. The line costs more than the write at 115200 baud and throttles
+     * every paging write, so it is off unless a lab turns it on.
+     * Default is OFF (0). Read once; takes effect at the next boot.
+     */
+    gTracePagingWrites = QueryBooleanRegistryValueEx(RegistryKey,
+                                                     L"NtfsTracePagingWrites",
+                                                     FALSE);
 
     CloseRegistryKey(RegistryKey);
 }

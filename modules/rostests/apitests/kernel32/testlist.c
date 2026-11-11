@@ -101,6 +101,7 @@ extern void func_PssSnapshot(void);
 extern void func_OpenFileByIdRename(void);
 extern void func_PagingFileOpen(void);
 extern void func_PrivMoveFileIdentityW(void);
+extern void func_QueryPerformanceCounter(void);
 extern void func_RenameDirectoryOldPath(void);
 extern void func_QueueUserAPC(void);
 extern void func_QueryProcessCycleTime(void);
@@ -231,6 +232,7 @@ const struct test winetest_testlist[] =
     { "PrivMoveFileIdentityW",       func_PrivMoveFileIdentityW },
     { "RenameDirectoryOldPath",      func_RenameDirectoryOldPath },
     { "QueueUserAPC",                func_QueueUserAPC },
+    { "QueryPerformanceCounter",     func_QueryPerformanceCounter },
     { "QueryProcessCycleTime",       func_QueryProcessCycleTime },
     { "ResizePseudoConsole",         func_ResizePseudoConsole },
     { "SetComputerNameExW",          func_SetComputerNameExW },

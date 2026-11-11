@@ -757,6 +757,12 @@ HvpApplyIncrementalLog(
     _Inout_opt_ PRTL_BITMAP AppliedBlocks,
     _Out_ PULONG RequiredLength);
 
+ULONG
+CMAPI
+HvpClampHiveToValidBins(
+    _Inout_ PHBASE_BLOCK BaseBlock,
+    _In_ ULONG ImageLength);
+
 #if !defined(CMLIB_HOST) && !defined(_BLDR_)
 ULONG
 CMAPI

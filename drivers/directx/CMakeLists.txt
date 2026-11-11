@@ -10,6 +10,7 @@
 add_subdirectory(dxgmms2)
 add_subdirectory(dxgkrnl)
 add_subdirectory(softgpu)   # basic-display fallback WDDM miniport (yields to real drivers, drives dxgkrnl)
+add_subdirectory(legacytest) # synthetic WDDM 1.x test miniport (version-negotiation vehicle)
 add_registry_inf(softgpu/softgpu_root_reg.inf)
 if(ARCH STREQUAL "amd64")
     add_subdirectory(hypervvid)

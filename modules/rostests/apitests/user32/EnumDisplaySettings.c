@@ -9,6 +9,54 @@
 #define SIZEOF_DEVMODEW_400_A 148
 #define SIZEOF_DEVMODEW_500_A 156
 
+static void
+TestCurrentRegistryAndCdsTest(void)
+{
+    DEVMODEW Current, Registry, Indexed, After;
+    LONG Result;
+    DWORD Index;
+    BOOL Found = FALSE;
+
+    ZeroMemory(&Current, sizeof(Current));
+    Current.dmSize = sizeof(Current);
+    ok(EnumDisplaySettingsExW(NULL, ENUM_CURRENT_SETTINGS, &Current, 0),
+       "EnumDisplaySettingsExW(ENUM_CURRENT_SETTINGS) failed, error %lu\n", GetLastError());
+
+    ZeroMemory(&Registry, sizeof(Registry));
+    Registry.dmSize = sizeof(Registry);
+    ok(EnumDisplaySettingsExW(NULL, ENUM_REGISTRY_SETTINGS, &Registry, 0),
+       "EnumDisplaySettingsExW(ENUM_REGISTRY_SETTINGS) failed, error %lu\n", GetLastError());
+
+    for (Index = 0; Index < 512; Index++)
+    {
+        ZeroMemory(&Indexed, sizeof(Indexed));
+        Indexed.dmSize = sizeof(Indexed);
+        if (!EnumDisplaySettingsExW(NULL, Index, &Indexed, 0))
+            break;
+        if (Indexed.dmPelsWidth == Current.dmPelsWidth &&
+            Indexed.dmPelsHeight == Current.dmPelsHeight &&
+            Indexed.dmBitsPerPel == Current.dmBitsPerPel)
+        {
+            Found = TRUE;
+        }
+    }
+    ok(Found, "The current %lux%lux%lu mode was absent from the indexed list\n",
+       Current.dmPelsWidth, Current.dmPelsHeight, Current.dmBitsPerPel);
+
+    Result = ChangeDisplaySettingsExW(NULL, &Current, NULL, CDS_TEST, NULL);
+    ok(Result == DISP_CHANGE_SUCCESSFUL, "CDS_TEST for the current mode returned %ld\n", Result);
+
+    ZeroMemory(&After, sizeof(After));
+    After.dmSize = sizeof(After);
+    ok(EnumDisplaySettingsExW(NULL, ENUM_CURRENT_SETTINGS, &After, 0),
+       "The post-CDS_TEST current-mode query failed, error %lu\n", GetLastError());
+    ok(After.dmPelsWidth == Current.dmPelsWidth &&
+       After.dmPelsHeight == Current.dmPelsHeight &&
+       After.dmBitsPerPel == Current.dmBitsPerPel &&
+       After.dmDisplayFrequency == Current.dmDisplayFrequency,
+       "CDS_TEST changed the current mode\n");
+}
+
 START_TEST(EnumDisplaySettings)
 {
     DEVMODEW dmW;
@@ -104,4 +152,6 @@ START_TEST(EnumDisplaySettings)
     ok(dmA.dmSize == SIZEOF_DEVMODEW_300_A, "%d\n", dmA.dmSize);
 
     DeleteDC(icDisplay);
+
+    TestCurrentRegistryAndCdsTest();
 }

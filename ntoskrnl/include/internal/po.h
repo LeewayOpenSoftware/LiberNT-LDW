@@ -458,6 +458,12 @@ PopHiberPagingFileCreated(
     VOID
 );
 
+VOID
+NTAPI
+PopHiberRegistryInitialized(
+    VOID
+);
+
 BOOLEAN
 NTAPI
 PopHiberIsReady(

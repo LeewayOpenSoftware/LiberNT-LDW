@@ -24,6 +24,41 @@ PWLSESSION WLSession = NULL;
 
 /**
  * @brief
+ * Reports a boot-to-desktop stage on the debug port when the
+ * Winlogon value LiberNTStageTrace (REG_DWORD) is non-zero. Off by default.
+ **/
+VOID
+LogonStage(
+    _In_ PCSTR Stage)
+{
+    static LONG Enabled = -1;
+    CHAR Line[96];
+
+    if (Enabled < 0)
+    {
+        DWORD Value = 0, Size = sizeof(Value);
+
+        if (RegGetValueW(HKEY_LOCAL_MACHINE,
+                         L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon",
+                         L"LiberNTStageTrace",
+                         RRF_RT_REG_DWORD,
+                         NULL,
+                         &Value,
+                         &Size) != ERROR_SUCCESS)
+        {
+            Value = 0;
+        }
+        Enabled = (Value != 0);
+    }
+    if (!Enabled)
+        return;
+
+    StringCchPrintfA(Line, ARRAYSIZE(Line), "LOGONSTAGE %lu winlogon %s\n", GetTickCount(), Stage);
+    OutputDebugStringA(Line);
+}
+
+/**
+ * @brief
  * Duplicates the given string, allocating a buffer on the heap.
  **/
 PWSTR
@@ -413,6 +448,7 @@ WaitForBootDeviceInstallThread(
     if (hEvents[0] != NULL)
         CloseHandle(hEvents[0]);
 
+    LogonStage("services-ready");
     PostMessageW(Session->SASWindow, WLX_WM_SAS, WLX_SAS_TYPE_CTRL_ALT_DEL, 0);
     return 0;
 }
@@ -449,6 +485,8 @@ WinMain(
         ERR("WL: Could not register logon process\n");
         ExitProcess(1);
     }
+
+    LogonStage("init");
 
     /* Make us critical */
     RtlSetProcessIsCritical(TRUE, NULL, FALSE);
@@ -511,6 +549,8 @@ WinMain(
         HandleShutdown(WLSession, WLX_SAS_ACTION_SHUTDOWN_REBOOT);
         ExitProcess(1);
     }
+
+    LogonStage("gina-loaded");
 
     SetupType = GetSetupType();
     DisplayStatusMessage(WLSession,
@@ -587,6 +627,7 @@ WinMain(
     /* Tell kernel that CurrentControlSet is good (needed
      * to support Last good known configuration boot) */
     NtInitializeRegistry(CM_BOOT_FLAG_ACCEPTED | 1);
+    LogonStage("boot-accepted");
 
     /* Message loop for the SAS window */
     while (GetMessageW(&Msg, WLSession->SASWindow, 0, 0))

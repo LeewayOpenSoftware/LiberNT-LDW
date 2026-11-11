@@ -338,6 +338,9 @@ BOOLEAN IPRegisterInterface(
 
     TcpipReleaseSpinLock(&InterfaceListLock, OldIrql);
 
+    TiNsiNotifyInterface(IF->Index, TI_NSI_CHANGE_ADD);
+    TiSignalChange();
+
     return TRUE;
 }
 
@@ -358,6 +361,9 @@ VOID IPUnregisterInterface(
     RemoveEntryList(&IF->ListEntry);
     IF->Registered = FALSE;
     TcpipReleaseSpinLock(&InterfaceListLock, OldIrql);
+
+    TiNsiNotifyInterface(IF->Index, TI_NSI_CHANGE_DELETE);
+    TiSignalChange();
 
     if (IF->EntityRegistered)
     {

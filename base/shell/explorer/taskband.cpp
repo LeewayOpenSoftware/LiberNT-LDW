@@ -48,7 +48,7 @@ public:
     {
     }
 
-    virtual ~CTaskBand() { }
+    virtual ~CTaskBand() { TaskbarPin_StopWatch(); }
 
     /*****************************************************************************/
 
@@ -268,6 +268,13 @@ public:
 
         TRACE("CTaskBand::SetSite(0x%p)\n", pUnkSite);
 
+        if (!pUnkSite)
+        {
+            TaskbarPin_StopWatch();
+            m_Site = NULL;
+            return S_OK;
+        }
+
         hRet = IUnknown_GetWindow(pUnkSite, &hwndSite);
         if (FAILED_UNEXPECTEDLY(hRet))
             return hRet;
@@ -283,6 +290,7 @@ public:
             return hRet;
 
         m_Site = pUnkSite;
+        TaskbarPin_StartWatch();
 
         return S_OK;
     }

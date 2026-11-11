@@ -305,6 +305,29 @@ FileRecord::MoveClusters(_In_ AttributeType AttrType,
         }
     }
 
+    /*
+     * Each move of a few clusters out of a run adds run pairs to a mapping
+     * that may already fill the base record. Once it has no room left for
+     * a list either, the retry below cannot create one and the move fails
+     * STATUS_BUFFER_TOO_SMALL, so create the list while the record still
+     * has the headroom for it. The commit drops it again if the mapping
+     * stayed in the base record and the room allows.
+     */
+    if (AttributeOwner == this &&
+        RecordNumber != _MFT &&
+        !FindAttributeInRecord(TypeAttributeList, NULL, NULL) &&
+        Header->AllocatedSize >= Header->ActualSize &&
+        Header->AllocatedSize - Header->ActualSize < NTFS_MAPPING_GROWTH_HEADROOM)
+    {
+        Status = EnsureAttributeListForMappingGrowth(AttrType,
+                                                     StreamName,
+                                                     &TargetAttribute,
+                                                     &AttributeOwner,
+                                                     &ListCreated);
+        if (!NT_SUCCESS(Status))
+            goto Done;
+    }
+
     RtlCopyMemory(RecordBackup, Data, RecordBufferSize);
     if (AttributeOwner != this)
     {

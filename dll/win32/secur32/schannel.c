@@ -330,8 +330,11 @@ static SECURITY_STATUS schan_QueryCredentialsAttributes(
     case SECPKG_ATTR_SUPPORTED_PROTOCOLS:
         if(pBuffer) {
             /* Regardless of MSDN documentation, tests show that this attribute takes into account
-             * what protocols are enabled for given credential. */
-            ((SecPkgCred_SupportedProtocols*)pBuffer)->grbitProtocol = cred->enabled_protocols;
+             * what protocols are enabled for given credential. Only protocols the engine actually
+             * implements may be reported: the engine negotiates TLS 1.2/1.3 only, so obsolete
+             * protocols (PCT1/SSL2/SSL3) must never appear as supported. */
+            ((SecPkgCred_SupportedProtocols*)pBuffer)->grbitProtocol = cred->enabled_protocols &
+                GNUTLS_CALL( get_enabled_protocols, NULL );
             ret = SEC_E_OK;
         }else {
             ret = SEC_E_INTERNAL_ERROR;
@@ -476,6 +479,29 @@ static DWORD get_enabled_protocols(const void *credentials)
 
     default:
         FIXME("unhandled version %lu\n", cred->dwVersion);
+        return 0;
+    }
+}
+
+static DWORD get_cred_flags(const void *credentials)
+{
+    const SCHANNEL_CRED *cred_old;
+    const SCH_CREDENTIALS *cred = credentials;
+
+    if (!cred)
+        return 0;
+
+    switch (cred->dwVersion)
+    {
+    case SCH_CRED_V3:
+    case SCHANNEL_CRED_VERSION:
+        cred_old = credentials;
+        return cred_old->dwFlags;
+
+    case SCH_CREDENTIALS_VERSION:
+        return cred->dwFlags;
+
+    default:
         return 0;
     }
 }
@@ -784,6 +810,7 @@ static SECURITY_STATUS acquire_credentials_handle(ULONG fCredentialUse,
     if (!(creds = malloc(sizeof(*creds)))) return SEC_E_INSUFFICIENT_MEMORY;
     creds->credential_use = fCredentialUse;
     creds->enabled_protocols = enabled_protocols;
+    creds->flags = schanCred ? get_cred_flags(schanCred) : 0;
 
 #ifdef __REACTOS__
     if (cert && !(key_blob = get_key_blob(cert, &key_size))
@@ -1200,7 +1227,8 @@ static SECURITY_STATUS establish_context(
     }
     RtlFreeHeap( GetProcessHeap(), 0, alloc_buffer.pvBuffer );
 
-    if (input_offset && input_offset != pInput->pBuffers[0].cbBuffer)
+    if ((ret == SEC_E_OK || ret == SEC_I_CONTINUE_NEEDED) &&
+        input_offset && input_offset != pInput->pBuffers[0].cbBuffer)
     {
         if(pInput->cBuffers<2 || pInput->pBuffers[1].BufferType!=SECBUFFER_EMPTY)
             return SEC_E_INVALID_TOKEN;
@@ -1598,6 +1626,20 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
     buffer = &message->pBuffers[data_idx];
 
     data_size = buffer->cbBuffer;
+
+    /* Windows refuses messages above the reported cbMaximumMessage with
+     * SEC_E_ENCRYPT_FAILURE instead of splitting them; match that. */
+    {
+        struct session_params size_params = { ctx->session };
+        unsigned int max_message = GNUTLS_CALL( get_max_message_size, &size_params );
+
+        if (data_size > max_message)
+        {
+            WARN("message of %Iu bytes exceeds the %u-byte maximum\n", data_size, max_message);
+            return SEC_E_ENCRYPT_FAILURE;
+        }
+    }
+
     data = malloc(data_size);
 #ifdef __REACTOS__
     if (!data)
@@ -1638,11 +1680,14 @@ static SECURITY_STATUS SEC_ENTRY schan_EncryptMessage(PCtxtHandle context_handle
     params.length = data_size;
     params.output_buffer_idx = &output_buffer_idx;
     params.output_offset = &output_offset;
+    params.control_token = ctx->control_token;
+    params.alert_type = ctx->alert_type;
+    params.alert_number = ctx->alert_number;
+    ctx->control_token = CONTROL_TOKEN_NONE;
     status = GNUTLS_CALL( send, &params );
 
     if (!status)
         message->pBuffers[buffer_index[output_buffer_idx]].cbBuffer = output_offset;
-
     free(data);
 
     TRACE("Returning %#lx.\n", status);
@@ -1735,6 +1780,23 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
     buffer = &message->pBuffers[idx];
     buf_ptr = buffer->pvBuffer;
 
+    if (buffer->cbBuffer < ctx->header_size)
+    {
+        TRACE("Expected at least %Iu header bytes, buffer only contains %lu bytes\n",
+              ctx->header_size, buffer->cbBuffer);
+        remaining_size = ctx->header_size - buffer->cbBuffer;
+        buffer->BufferType = SECBUFFER_MISSING;
+        buffer->cbBuffer = remaining_size;
+
+        idx = schan_find_sec_buffer_idx(message, 0, SECBUFFER_EMPTY);
+        buffer = &message->pBuffers[idx];
+        buffer->BufferType = SECBUFFER_MISSING;
+        buffer->cbBuffer = remaining_size;
+
+        TRACE("Returning SEC_E_INCOMPLETE_MESSAGE\n");
+        return SEC_E_INCOMPLETE_MESSAGE;
+    }
+
     expected_size = ctx->header_size + read_record_size(buf_ptr, ctx->header_size);
     if(buffer->cbBuffer < expected_size)
     {
@@ -1754,6 +1816,10 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
 
     data_size = expected_size - ctx->header_size;
     data = malloc(data_size);
+#ifdef __REACTOS__
+    if (!data)
+        RaiseException(STATUS_NO_MEMORY, EXCEPTION_NONCONTINUABLE, 0, NULL);
+#endif
 
     received = data_size;
 

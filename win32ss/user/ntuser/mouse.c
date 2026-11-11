@@ -250,6 +250,22 @@ UserSendMouseInputWorker(MOUSEINPUT *pmi, BOOL bInjected)
             ptCursor.x = pmi->dx * UserGetSystemMetrics(SM_CXSCREEN) >> 16;
             ptCursor.y = pmi->dy * UserGetSystemMetrics(SM_CYSCREEN) >> 16;
         }
+
+        /* Keep the position on the screen (0..W-1, 0..H-1) before it is used
+         * for the message point: a full-scale absolute value scales to W/H
+         * (one past the last pixel), and relative motion is otherwise unbounded. */
+        {
+            LONG xMin = UserGetSystemMetrics(SM_XVIRTUALSCREEN);
+            LONG yMin = UserGetSystemMetrics(SM_YVIRTUALSCREEN);
+            LONG xMax = xMin + UserGetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
+            LONG yMax = yMin + UserGetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
+
+            if (xMax >= xMin && yMax >= yMin)
+            {
+                ptCursor.x = min(max(ptCursor.x, xMin), xMax);
+                ptCursor.y = min(max(ptCursor.y, yMin), yMax);
+            }
+        }
     }
 
     if ((dwFlags & MOUSEEVENTF_MOVE) && (bInjected || (dwFlags & MOUSEEVENTF_ABSOLUTE)) &&

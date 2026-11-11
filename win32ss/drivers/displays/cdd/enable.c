@@ -156,6 +156,8 @@ RcddEnablePDEV(
    ppdev->hDriver = hDriver;
    KeInitializeMutex(&ppdev->PointerMutex, 0);
    KeInitializeMutex(&ppdev->CaptureMutex, 0);
+   DbgPrint("K2TRACE: CDD EnablePDEV %lux%lux%lu enter hDriver %p\n",
+            pdm->dmPelsWidth, pdm->dmPelsHeight, pdm->dmBitsPerPel, hDriver);
 
    RtlZeroMemory(&GdiInfo, sizeof(GdiInfo));
    RtlZeroMemory(&DevInfo, sizeof(DevInfo));

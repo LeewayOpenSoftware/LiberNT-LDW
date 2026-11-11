@@ -363,6 +363,7 @@ HvpInitializeMemoryHive(
         return STATUS_NO_MEMORY;
 
     RtlCopyMemory(Hive->BaseBlock, ChunkBase, sizeof(HBASE_BLOCK));
+    Hive->CommittedLength = ChunkBase->Length;
 
     /* Setup hive data */
     Hive->Version = ChunkBase->Minor;
@@ -1135,6 +1136,7 @@ HvLoadHive(
     PVOID HiveData;
     ULONG FileSize;
     BOOLEAN HiveSelfHeal = FALSE;
+    BOOLEAN ShortFileRecovered = FALSE;
 #if !defined(CMLIB_HOST) && !defined(_BLDR_)
     PHBASE_BLOCK RecoveredData;
     RTL_BITMAP AppliedBlocks;
@@ -1170,6 +1172,21 @@ HvLoadHive(
                         Hive->DirtyCount++;
                     }
                 }
+
+                /* The file may hold fewer bins than the recovered image (a
+                   growth the volume refused). The write-back during init
+                   extends it; until one succeeds, a later sync must not
+                   publish more than the file durably holds. */
+                {
+                    ULONG ActualSize = HvpQueryFileSize(Hive, HFILE_TYPE_PRIMARY);
+
+                    if (ActualSize > HBLOCK_SIZE &&
+                        Hive->CommittedLength > ActualSize - HBLOCK_SIZE)
+                    {
+                        Hive->CommittedLength = (ActualSize - HBLOCK_SIZE) &
+                                                ~(HBLOCK_SIZE - 1);
+                    }
+                }
             }
             Hive->Free(AppliedBlocks.Buffer, 0);
             return NT_SUCCESS(Status) ? STATUS_REGISTRY_RECOVERED : Status;
@@ -1202,6 +1219,22 @@ HvLoadHive(
 /* FIXME: See the comment above (near HvpQueryHiveSize) */
 #if defined(_M_AMD64)
         {
+            /*
+             * No legacy log-recovery path on amd64; the incremental log was
+             * already attempted above (HvpRecoverHiveFromLog). RecoverData
+             * still holds a verified header whose sequences mismatch - the
+             * machine died mid-transaction, and the log that held the dirty
+             * data is unavailable. Load the bins that are on disk; the
+             * valid-bin clamp below confines the loss to what was never
+             * written, and self-heal flags the truncation. A header that
+             * fails verification (RecoverHeader) cannot be trusted for a
+             * Length clamp and stays corrupt.
+             */
+            if (Result == RecoverData)
+            {
+                HiveSelfHeal = TRUE;
+                break;
+            }
             if (BaseBlock)
                 Hive->Free(BaseBlock, Hive->BaseBlockAlloc);
             return STATUS_REGISTRY_CORRUPT;
@@ -1222,6 +1255,13 @@ HvLoadHive(
             if (Result2 == Fail)
             {
                 DPRINT1("Failed to recover the hive header\n");
+                if (Result == RecoverData && BaseBlock != NULL)
+                {
+                    /* Verified header, no usable log: load the bins that
+                       are on disk, same fallback as the amd64 path. */
+                    HiveSelfHeal = TRUE;
+                    break;
+                }
                 return STATUS_REGISTRY_CORRUPT;
             }
 
@@ -1236,6 +1276,11 @@ HvLoadHive(
             if (Result2 == Fail)
             {
                 DPRINT1("Failed to recover the hive data\n");
+                if (Result == RecoverData)
+                {
+                    HiveSelfHeal = TRUE;
+                    break;
+                }
                 return STATUS_REGISTRY_CORRUPT;
             }
 
@@ -1281,6 +1326,34 @@ HvLoadHive(
                              &Offset,
                              HiveData,
                              FileSize);
+#if !defined(CMLIB_HOST) && !defined(_BLDR_)
+    if (!Success)
+    {
+        ULONG ActualSize = HvpQueryFileSize(Hive, HFILE_TYPE_PRIMARY);
+
+        /* A growth write the volume refused leaves the header claiming
+           more bins than the file holds. Read the bins that are present,
+           clamp the header to the valid contiguous prefix and let the
+           caller write the consistent image back. */
+        if (ActualSize > HBLOCK_SIZE && ActualSize < FileSize)
+        {
+            Offset = 0;
+            Success = Hive->FileRead(Hive,
+                                     HFILE_TYPE_PRIMARY,
+                                     &Offset,
+                                     HiveData,
+                                     ActualSize);
+            if (Success)
+            {
+                ULONG Clamped = HvpClampHiveToValidBins((PHBASE_BLOCK)HiveData,
+                                                        ActualSize - HBLOCK_SIZE);
+
+                Success = (Clamped != 0);
+                ShortFileRecovered = Success;
+            }
+        }
+    }
+#endif
     if (!Success)
     {
         DPRINT1("Failed to read the whole hive\n");
@@ -1288,6 +1361,22 @@ HvLoadHive(
         Hive->Free(BaseBlock, Hive->BaseBlockAlloc);
         return STATUS_NOT_REGISTRY_FILE;
     }
+
+    if (Result == RecoverData)
+    {
+        /* The verified header still carries the mismatched sequences that
+           sent us here, and HvpInitializeMemoryHive verifies them. Normalise
+           the in-memory copy - placed after the short-file retry because
+           that re-reads the header from disk - and keep the on-disk header
+           untouched until the self-heal write-back persists the consistent
+           state. */
+        PHBASE_BLOCK ChunkHeader = (PHBASE_BLOCK)HiveData;
+        ChunkHeader->Sequence2 = ChunkHeader->Sequence1;
+        ChunkHeader->CheckSum = HvpHiveHeaderChecksum(ChunkHeader);
+    }
+
+    if (ShortFileRecovered)
+        ((PHBASE_BLOCK)HiveData)->BootType |= HBOOT_TYPE_SELF_HEAL;
 
     /*
      * HACK (FIXME): Free our base block... it's useless in
@@ -1320,7 +1409,9 @@ HvLoadHive(
      * tell the caller we did recover it. The caller
      * is responsible to flush the data later on.
      */
-    return (Result == RecoverHeader || Result == RecoverData) ? STATUS_REGISTRY_RECOVERED : STATUS_SUCCESS;
+    return (ShortFileRecovered ||
+            Result == RecoverHeader ||
+            Result == RecoverData) ? STATUS_REGISTRY_RECOVERED : STATUS_SUCCESS;
 }
 
 /**
@@ -1537,26 +1628,31 @@ HvInitialize(
              */
             if (Status == STATUS_REGISTRY_RECOVERED)
             {
-                if (!HvSyncHiveFromRecover(Hive))
+                if (HvSyncHiveFromRecover(Hive))
                 {
-                    DPRINT1("Fail to write healthy data back to hive\n");
-                    HvFree(Hive);
-                    return STATUS_REGISTRY_IO_FAILED;
+                    /*
+                     * We are saved from hell, now clear out the
+                     * dirty bits and dirty count.
+                     *
+                     * FIXME: We must as well clear out the log
+                     * and reset its size to 0 but we are lacking
+                     * in code that deals with log growing/shrinking
+                     * management. When the time comes to implement
+                     * this stuff we must set the LogSize and file size
+                     * to 0 here.
+                     */
+                    RtlClearAllBits(&Hive->DirtyVector);
+                    Hive->DirtyCount = 0;
                 }
-
-                /*
-                 * We are saved from hell, now clear out the
-                 * dirty bits and dirty count.
-                 *
-                 * FIXME: We must as well clear out the log
-                 * and reset its size to 0 but we are lacking
-                 * in code that deals with log growing/shrinking
-                 * management. When the time comes to implement
-                 * this stuff we must set the LogSize and file size
-                 * to 0 here.
-                 */
-                RtlClearAllBits(&Hive->DirtyVector);
-                Hive->DirtyCount = 0;
+                else
+                {
+                    /* The volume can refuse the write-back (e.g. a full
+                       disk). The recovered hive is healthy in memory; keep
+                       it dirty and let the flusher retry rather than
+                       failing the boot. */
+                    DPRINT1("Deferred recovered-hive write-back (hive stays dirty)\n");
+                    Hive->BaseBlock->BootType |= HBOOT_TYPE_SELF_HEAL;
+                }
 
                 /*
                  * Masquerade the status code as success.

@@ -411,6 +411,9 @@ typedef struct _HHIVE
     RTL_BITMAP DirtyVector;
     ULONG DirtyCount;
     ULONG DirtyAlloc;
+    /* Length as durably committed on disk; a growth sync must not publish
+       the larger in-memory Length in the primary-sequence header write. */
+    ULONG CommittedLength;
     RTL_BITMAP UnreconciledVector;
     ULONG UnreconciledCount;
     ULONG BaseBlockAlloc;

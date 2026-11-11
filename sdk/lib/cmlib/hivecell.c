@@ -93,9 +93,43 @@ HvpGetCellData(
     PCELL_DATA Data;
 
     if (!Hive->Flat)
+    {
+        ULONG CellType, CellBlock;
+
         LockAcquired = HvLockHiveReader(Hive);
+
+        /*
+         * A clamped self-heal load (refused growth write, log covering only
+         * part of the gap) leaves cell references from the surviving bins
+         * into the discarded tail. A release build would read out of range
+         * here; fail the lookup so the walk stops at the lost subtree.
+         */
+        CellType = HvGetCellType(CellIndex);
+        CellBlock = HvGetCellBlock(CellIndex);
+        if (CellBlock >= Hive->Storage[CellType].Length / HBLOCK_SIZE ||
+            !HvpLookupBlock(Hive, CellType, CellBlock))
+        {
+            DPRINT1("HvpGetCellData: cell 0x%lx out of range (block %lu, storage 0x%lx)\n",
+                    CellIndex, CellBlock, Hive->Storage[CellType].Length);
+            HvUnlockHiveReader(Hive, LockAcquired);
+            return NULL;
+        }
+    }
+    else
+    {
+        /* Flat hives (the boot loaders read the preloaded image directly)
+           have no block vector to bound against; range-check the offset. */
+        if (CellIndex > Hive->BaseBlock->Length ||
+            Hive->BaseBlock->Length - CellIndex < sizeof(HCELL))
+        {
+            DPRINT1("HvpGetCellData: flat cell 0x%lx out of range (length 0x%lx)\n",
+                    CellIndex, Hive->BaseBlock->Length);
+            return NULL;
+        }
+    }
     Data = (PCELL_DATA)(HvpGetCellHeaderLocked(Hive, CellIndex) + 1);
-    HvUnlockHiveReader(Hive, LockAcquired);
+    if (!Hive->Flat)
+        HvUnlockHiveReader(Hive, LockAcquired);
     return Data;
 }
 
@@ -123,6 +157,8 @@ HvMarkCellDirty(
     BOOLEAN LockAcquired = FALSE;
     ULONG CellBlock;
     ULONG CellLastBlock;
+    ULONG LastBlock;
+    LONG CellSize;
 
     ASSERT(RegistryHive->ReadOnly == FALSE);
 
@@ -138,11 +174,28 @@ HvMarkCellDirty(
         LockAcquired = TRUE;
     }
 
+    /*
+     * Mark every block the cell touches, from its header to its last byte.
+     * Deriving the range from the cell index alone marked no block at all
+     * for a cell that starts on a block boundary (inside a multi-block bin),
+     * and only the first block of a cell that spans several, so the change
+     * was neither logged nor flushed past that block.
+     */
+    CellSize = HvpGetCellHeaderLocked(RegistryHive, CellIndex)->Size;
+    if (CellSize < 0)
+        CellSize = -CellSize;
+    if (CellSize < (LONG)sizeof(HCELL))
+        CellSize = sizeof(HCELL);
+
     CellBlock     = HvGetCellBlock(CellIndex);
-    CellLastBlock = HvGetCellBlock(CellIndex + HBLOCK_SIZE - 1);
+    CellLastBlock = HvGetCellBlock(CellIndex + (ULONG)CellSize - 1);
+    LastBlock     = RegistryHive->Storage[Stable].Length / HBLOCK_SIZE;
+    ASSERT(CellBlock < LastBlock);
+    if (CellLastBlock >= LastBlock)
+        CellLastBlock = LastBlock - 1;
 
     RtlSetBits(&RegistryHive->DirtyVector,
-               CellBlock, CellLastBlock - CellBlock);
+               CellBlock, CellLastBlock - CellBlock + 1);
     RegistryHive->DirtyCount++;
 
     /*

@@ -200,6 +200,7 @@ VOID NBTimeout(VOID)
                      * and solicit now */
                     NCE->State |= NUD_STALE;
                     NCE->NextSolicit = 0;
+                    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_PARAMETER);
                 }
                 if (NCE->EventCount >= NBEntryLifetime(NCE)) {
                     /* Unlink and destroy the NCE */
@@ -221,6 +222,7 @@ VOID NBTimeout(VOID)
 
                     NBFlushPacketQueue(NCE, Status);
                     NCE->Removed = TRUE;
+                    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_DELETE);
                     NBDereferenceNeighbor(NCE);
 
                     continue;
@@ -352,6 +354,7 @@ VOID NBDestroyNeighborsForInterface(PIP_INTERFACE Interface)
 
                 NBFlushPacketQueue(NCE, NDIS_STATUS_REQUEST_ABORTED);
                 NCE->Removed = TRUE;
+                TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_DELETE);
                 NBDereferenceNeighbor(NCE);
 
                 continue;
@@ -482,6 +485,7 @@ PNEIGHBOR_CACHE_ENTRY NBAddNeighbor(
   TcpipReleaseSpinLockFromDpcLevel(&NeighborCache[HashValue].Lock);
   TcpipReleaseSpinLock(&InterfaceListLock, OldIrql);
 
+  TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_ADD);
   return NCE;
 }
 
@@ -523,6 +527,7 @@ VOID NBUpdateNeighbor(
     NCE->EventCount = 0;
 
     TcpipReleaseSpinLock(&NeighborCache[HashValue].Lock, OldIrql);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_PARAMETER);
 
     if( !(NCE->State & NUD_INCOMPLETE) )
     {
@@ -760,6 +765,7 @@ VOID NBRemoveNeighbor(
 
 	  NBFlushPacketQueue( CurNCE, NDIS_STATUS_REQUEST_ABORTED );
           CurNCE->Removed = TRUE;
+          TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_DELETE);
           NBDereferenceNeighbor(CurNCE);
 
 	  break;

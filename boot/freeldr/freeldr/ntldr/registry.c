@@ -308,7 +308,16 @@ RegRecoverHiveFromLog(
     }
 
     WARN("Recovering the hive from %s\n", FullLogFileName);
-    return HvpApplyIncrementalLog(*ChunkBase, Required, LogData, LogSize, TRUE, NULL, &Required);
+    if (!HvpApplyIncrementalLog(*ChunkBase, Required, LogData, LogSize, TRUE, NULL, &Required))
+        return FALSE;
+
+    /* A growth write the volume refused leaves regions the log does not
+       cover zero-filled; clamp the header to the valid bins so the flat
+       hive stays consistent and flag the loss. */
+    if (HvpClampHiveToValidBins((PHBASE_BLOCK)*ChunkBase, Required) != Required)
+        ((PHBASE_BLOCK)*ChunkBase)->BootType |= HBOOT_TYPE_SELF_HEAL;
+
+    return TRUE;
 }
 
 /**
@@ -526,16 +535,50 @@ RegImportBinaryHive(
 
         if (!RegRecoverHiveFromLog(ChunkBase, ChunkSize, SearchPath, "SYSTEM"))
         {
+            /* A missing or unusable .LOG must not refuse the primary hive
+               outright: the clamp below bounds the header to the bins the
+               chunk carries, so the boot continues from the surviving bins
+               instead of falling through to the SYSTEM.ALT fallback. */
             if (!RegRecoverHeaderHive(*ChunkBase, SearchPath, "SYSTEM"))
             {
                 ERR("Failed to recover the hive header block\n");
-                return FALSE;
             }
 
             if (!RegRecoverDataHive(*ChunkBase, SearchPath, "SYSTEM"))
             {
                 ERR("Failed to recover the hive data\n");
+            }
+        }
+
+        /* Neither log could recover the hive (e.g. dirty from a refused
+           growth write with the log gone). Clamp to the bins the file
+           holds and import the surviving prefix, as winload does; the
+           kernel self-heal persists the consistent image. */
+        if (*ChunkSize <= HBLOCK_SIZE)
+        {
+            ERR("Failed to recover the hive (no valid bins)\n");
+            return FALSE;
+        }
+
+        {
+            PHBASE_BLOCK ClampedHeader = (PHBASE_BLOCK)*ChunkBase;
+            ULONG ClaimedLength = ClampedHeader->Length;
+            ULONG ValidBins = HvpClampHiveToValidBins(ClampedHeader,
+                                                      *ChunkSize - HBLOCK_SIZE);
+
+            if (ValidBins == 0)
+            {
+                ERR("Failed to recover the hive (no valid bins)\n");
                 return FALSE;
+            }
+
+            if (ValidBins != ClaimedLength)
+            {
+                ClampedHeader->Sequence2 = ClampedHeader->Sequence1;
+                ClampedHeader->CheckSum = HvpHiveHeaderChecksum(ClampedHeader);
+                ClampedHeader->BootType |= HBOOT_TYPE_SELF_HEAL;
+                ClampedHeader->BootRecover = HBOOT_BOOT_RECOVERED_BY_HIVE_LOG;
+                WARN("Clamping the hive to its valid bins (self-heal)\n");
             }
         }
 
@@ -563,7 +606,13 @@ RegImportBinaryHive(
 
     /* Verify it is accessible */
     KeyNode = (PCM_KEY_NODE)HvGetCell(SystemHive, SystemRootCell);
-    ASSERT(KeyNode);
+    if (KeyNode == NULL)
+    {
+        /* A clamped self-heal hive can leave the root cell in the discarded tail */
+        ERR("System hive root cell 0x%lx is out of range\n", SystemRootCell);
+        HvReleaseCell(SystemHive, SystemRootCell);
+        return FALSE;
+    }
     ASSERT(KeyNode->Signature == CM_KEY_NODE_SIGNATURE);
     HvReleaseCell(SystemHive, SystemRootCell);
 
@@ -600,7 +649,13 @@ RegInitCurrentControlSet(
 
     /* Verify it is accessible */
     KeyNode = (PCM_KEY_NODE)HvGetCell(SystemHive, ControlCell);
-    ASSERT(KeyNode);
+    if (KeyNode == NULL)
+    {
+        ERR("Control set cell 0x%lx is out of range\n", ControlCell);
+        CurrentControlSetKey = NULL;
+        HvReleaseCell(SystemHive, ControlCell);
+        return FALSE;
+    }
     ASSERT(KeyNode->Signature == CM_KEY_NODE_SIGNATURE);
     HvReleaseCell(SystemHive, ControlCell);
 
@@ -804,7 +859,11 @@ RegOpenKey(
 
     /* Get the key node */
     KeyNode = (PCM_KEY_NODE)HvGetCell(Hive, CellIndex);
-    ASSERT(KeyNode);
+    if (KeyNode == NULL)
+    {
+        WARN("RegOpenKey: key cell 0x%lx out of range\n", CellIndex);
+        return ERROR_FILE_NOT_FOUND;
+    }
     ASSERT(KeyNode->Signature == CM_KEY_NODE_SIGNATURE);
 
     TRACE("RegOpenKey: RemainingPath '%wZ'\n", &RemainingPath);
@@ -828,7 +887,11 @@ RegOpenKey(
 
         /* Get the found key */
         KeyNode = (PCM_KEY_NODE)HvGetCell(Hive, CellIndex);
-        ASSERT(KeyNode);
+        if (KeyNode == NULL)
+        {
+            WARN("RegOpenKey: sub key cell 0x%lx out of range\n", CellIndex);
+            return ERROR_FILE_NOT_FOUND;
+        }
         ASSERT(KeyNode->Signature == CM_KEY_NODE_SIGNATURE);
     }
 
@@ -895,7 +958,12 @@ RegQueryValue(
 
     /* Get the key node */
     KeyNode = GET_CM_KEY_NODE(Hive, Key);
-    ASSERT(KeyNode);
+    if (KeyNode == NULL)
+    {
+        WARN("RegQueryValue: key cell out of range\n");
+        HvReleaseCell(Hive, HKEY_TO_HCI(Key));
+        return ERROR_FILE_NOT_FOUND;
+    }
     ASSERT(KeyNode->Signature == CM_KEY_NODE_SIGNATURE);
 
     /* Initialize value name string */
@@ -912,7 +980,12 @@ RegQueryValue(
 
     /* Get the value cell */
     ValueCell = (PCM_KEY_VALUE)HvGetCell(Hive, CellIndex);
-    ASSERT(ValueCell != NULL);
+    if (ValueCell == NULL)
+    {
+        WARN("RegQueryValue: value cell 0x%lx out of range\n", CellIndex);
+        HvReleaseCell(Hive, CellIndex);
+        return ERROR_FILE_NOT_FOUND;
+    }
 
     RepGetValueData(Hive, ValueCell, Type, Data, DataSize);
 

@@ -592,6 +592,7 @@ static WINECRYPT_CERTSTORE *CRYPT_SysRegOpenStoreA(HCRYPTPROV hCryptProv,
 static WINECRYPT_CERTSTORE *CRYPT_SysOpenStoreW(HCRYPTPROV hCryptProv,
  DWORD dwFlags, const void *pvPara)
 {
+    const DWORD location = dwFlags & CERT_SYSTEM_STORE_LOCATION_MASK;
     HCERTSTORE store = 0;
     BOOL ret;
 
@@ -656,6 +657,26 @@ static WINECRYPT_CERTSTORE *CRYPT_SysOpenStoreW(HCRYPTPROV hCryptProv,
             /* System store doesn't need crypto provider, so close it */
             if (hCryptProv && !(dwFlags & CERT_STORE_NO_CRYPT_RELEASE_FLAG))
                 CryptReleaseContext(hCryptProv, 0);
+            /* The Root logical store aggregates AuthRoot as a read-only
+             * physical store, matching Windows Vista and later. It is opened
+             * with the caller's original location (dwFlags was switched to
+             * the machine store above for a CurrentUser open), and read-only,
+             * because a delete through the collection reaches the child store
+             * whatever its update flags.
+             */
+            if (!wcsicmp(pvPara, L"Root") &&
+             (location == CERT_SYSTEM_STORE_CURRENT_USER ||
+              location == CERT_SYSTEM_STORE_LOCAL_MACHINE))
+            {
+                HCERTSTORE authRoot = CertOpenStore(CERT_STORE_PROV_SYSTEM_W,
+                 0, 0, location | CERT_STORE_READONLY_FLAG, L"AuthRoot");
+
+                if (authRoot)
+                {
+                    CertAddStoreToCollection(store, authRoot, 0, 0);
+                    CertCloseStore(authRoot, 0);
+                }
+            }
         }
     }
     return store;

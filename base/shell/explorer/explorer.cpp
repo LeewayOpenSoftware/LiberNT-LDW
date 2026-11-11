@@ -20,6 +20,7 @@
 
 #include "precomp.h"
 #include <browseui_undoc.h>
+#include "traymanager.h"
 
 HINSTANCE hExplorerInstance;
 HANDLE hProcessHeap;
@@ -295,8 +296,10 @@ StartWithDesktop(IN HINSTANCE hInstance)
 
     InitializeServerAdminUI();
 
-    CComPtr<ITrayWindow> Tray;
-    CreateTrayWindow(&Tray);
+    TrayManager TrayMgr;
+    TrayMgr.Initialize();
+
+    CComPtr<ITrayWindow> Tray = TrayMgr.GetPrimaryTray();
 
 #if !WIN7_DEBUG_MODE
     /* This not only hides the minimized window captions in the bottom
@@ -323,13 +326,11 @@ StartWithDesktop(IN HINSTANCE hInstance)
     ReleaseStartupMutex(); // For ProcessRunOnceItems
 #endif
 
-    if (Tray != NULL)
-    {
-        TrayMessageLoop(Tray);
+    TrayMgr.Open();
+    TrayMgr.TrayMessageLoop();
 #if !WIN7_DEBUG_MODE
-        HideMinimizedWindows(FALSE);
+    HideMinimizedWindows(FALSE);
 #endif
-    }
 
 #if !WIN7_DEBUG_MODE
     if (hShellDesktop != NULL)

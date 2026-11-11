@@ -760,6 +760,8 @@ NTSTATUS IPAddInterfaceAddress(PIP_INTERFACE Interface, IPv4_RAW_ADDRESS Address
     ExReleaseFastMutex(&NetTableMutex);
 
     TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_ADD);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_ADD);
     return STATUS_SUCCESS;
 }
 
@@ -801,6 +803,8 @@ NTSTATUS IPDeleteInterfaceAddress(ULONG Context)
     if (!Nte)
         return STATUS_NOT_FOUND;
     TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_DELETE);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
     return STATUS_SUCCESS;
 }
 
@@ -841,6 +845,8 @@ VOID IPDeleteInterfaceAddresses(PIP_INTERFACE Interface)
 
     ExReleaseFastMutex(&NetTableMutex);
     TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_DELETE);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
 }
 
 static
@@ -1006,6 +1012,7 @@ VOID NteDadTimeout(VOID)
         {
             RdiscStart(Pending[i].Interface);
             TiSignalChange();
+            TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_PARAMETER);
         }
         IPDereferenceInterface(Pending[i].Interface);
     }
@@ -1037,7 +1044,10 @@ VOID NteDadConflict(PIP_INTERFACE Interface, IPv4_RAW_ADDRESS Sender, IPv4_RAW_A
     }
     TcpipReleaseSpinLock(&NetTableListLock, OldIrql);
     if (Changed)
+    {
         TiSignalChange();
+        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_PARAMETER);
+    }
 }
 
 NTSTATUS IPQueryAddressV4(PIP4_ADDRESS_INFO Info)

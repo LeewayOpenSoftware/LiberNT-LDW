@@ -64,6 +64,8 @@ CcDirtyAccount(
     {
         InsertTailList(&Cache->DirtyMaps, &Map->DirtyLink);
         Map->OnDirtyList = TRUE;
+        if (Cache->MapDirtied != NULL)
+            Cache->MapDirtied(Map);
     }
     else if (Now <= 0 && Map->OnDirtyList)
     {
@@ -140,8 +142,28 @@ CcDirtyTake(
     {
         Bits = Slot->DirtyMap & CcDirtySlotBits(Number, Start, End);
 
-        while (CC_POPCOUNT64(Bits) > MaximumPages)
-            Bits &= Bits - 1;
+        /*
+         * Over budget: keep the lowest pages. A budgeted pass then advances
+         * from the start of the view, so the written part of a file is always
+         * a prefix of it and an interrupted write-back never leaves data above
+         * a hole. The file system also extends its on-disk initialized size
+         * in step with the writes instead of zero-filling a gap it is about
+         * to overwrite.
+         */
+        if (CC_POPCOUNT64(Bits) > MaximumPages)
+        {
+            ULONG64 Kept = 0;
+            ULONG Taken;
+
+            for (Taken = 0; Taken < MaximumPages; Taken++)
+            {
+                ULONG64 Lowest = Bits & (0 - Bits);
+
+                Kept |= Lowest;
+                Bits &= ~Lowest;
+            }
+            Bits = Kept;
+        }
 
         Slot->DirtyMap &= ~Bits;
     }

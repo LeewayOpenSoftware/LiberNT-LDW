@@ -17,6 +17,14 @@
 LARGE_INTEGER HalpCpuClockFrequency = {{INITIAL_STALL_COUNT * 1000000}};
 
 UCHAR TscCalibrationPhase;
+
+/* The performance counter is the TSC shifted right by HalpQpcShift, plus
+ * HalpQpcBias, at HalpQpcFrequency counts per second. Kernel and user mode
+ * (through KUSER_SHARED_DATA) compute the same value from the same formula. */
+static UCHAR HalpQpcShift;
+static ULONG64 HalpQpcFrequency;
+static ULONG64 HalpQpcBias;
+static BOOLEAN HalpQpcReady;
 ULONG64 TscCalibrationArray[NUM_SAMPLES];
 
 #define HALP_PERFORMANCE_FREQUENCY 10000000ULL
@@ -258,6 +266,53 @@ HalpInitializeTsc(VOID)
 }
 
 CODE_SEG("INIT")
+static
+VOID
+HalpInitializeQpc(VOID)
+{
+    ULONG64 Frequency = HalpCpuClockFrequency.QuadPart;
+    ULONG64 Tsc, Current;
+    UCHAR Shift = 0;
+
+    /* Largest shift that keeps the counter at 10 MHz or faster, like the
+     * fixed 10 MHz it replaces. */
+    while (Shift < 32 && (Frequency >> (Shift + 1)) >= HALP_PERFORMANCE_FREQUENCY)
+        Shift++;
+
+    /* Continue from the value the 10 MHz counter has right now, so a time
+     * stamp taken before this point never ends up ahead of a later one. */
+    Tsc = __rdtsc();
+    Current = (Tsc / Frequency) * HALP_PERFORMANCE_FREQUENCY +
+              ((Tsc % Frequency) * HALP_PERFORMANCE_FREQUENCY) / Frequency;
+
+    HalpQpcShift = Shift;
+    HalpQpcFrequency = Frequency >> Shift;
+    HalpQpcBias = Current - (Tsc >> Shift);
+    HalpQpcReady = TRUE;
+
+#ifdef _M_AMD64
+    {
+        PKUSER_SHARED_DATA Data = (PKUSER_SHARED_DATA)KI_USER_SHARED_DATA;
+
+        /* Publish the data first, the enable byte last: a reader that sees
+         * it enabled sees a complete configuration. */
+        Data->QpcFrequency = HalpQpcFrequency;
+        Data->QpcBias = HalpQpcBias;
+        Data->QpcShift = Shift;
+        KeMemoryBarrier();
+        Data->QpcBypassEnabled = 1;
+    }
+#else
+    /* Nothing is published for user mode on x86. There, offset 0x300 of
+     * KUSER_SHARED_DATA (QpcFrequency on x64) still holds the NT5
+     * SystemCall stub pointer that ntdll calls through, and the x86 ntdll
+     * has no user-mode counter. The bypass stays off, and
+     * QueryPerformanceCounter keeps taking the system call, which returns
+     * this same counter. */
+#endif
+}
+
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpCalibrateStallExecution(VOID)
@@ -265,6 +320,7 @@ HalpCalibrateStallExecution(VOID)
     // Timer interrupt is now active
 
     HalpInitializeTsc();
+    HalpInitializeQpc();
 
     HalpStallScaleFactor = (ULONG)(HalpCpuClockFrequency.QuadPart / 1000000);
     KeGetPcr()->StallScaleFactor = HalpStallScaleFactor;
@@ -280,17 +336,21 @@ KeQueryPerformanceCounter(
     LARGE_INTEGER Result;
     ULONG64 Tsc, Seconds, Remainder, Frequency;
 
-    /* Make sure it's calibrated */
-    ASSERT(HalpCpuClockFrequency.QuadPart != 0);
-
-    /* Does the caller want the frequency? */
-    if (PerformanceFrequency)
+    if (HalpQpcReady)
     {
-        /* Return tsc frequency */
-        PerformanceFrequency->QuadPart = HALP_PERFORMANCE_FREQUENCY;
+        if (PerformanceFrequency)
+            PerformanceFrequency->QuadPart = HalpQpcFrequency;
+
+        Result.QuadPart = (__rdtsc() >> HalpQpcShift) + HalpQpcBias;
+        return Result;
     }
 
-    /* Return the current value */
+    /* Before the calibration is done: the initial estimate, scaled to 10 MHz */
+    ASSERT(HalpCpuClockFrequency.QuadPart != 0);
+
+    if (PerformanceFrequency)
+        PerformanceFrequency->QuadPart = HALP_PERFORMANCE_FREQUENCY;
+
     Frequency = HalpCpuClockFrequency.QuadPart;
     Tsc = __rdtsc();
     Seconds = Tsc / Frequency;

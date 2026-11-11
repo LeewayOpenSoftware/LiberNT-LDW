@@ -22,6 +22,16 @@
 
 #include <shdeprecated.h>
 
+#define TBSF_MAGIC 0x5342424C
+#define TBSF_VERSION 1
+
+typedef struct _TBSF_RECORD
+{
+    DWORD fHidden;
+    UINT cx;
+    DWORD fPersist;
+} TBSF_RECORD;
+
 /*****************************************************************************
  ** ITrayBandSite ************************************************************
  *****************************************************************************/
@@ -235,12 +245,27 @@ public:
                 case NM_NCHITTEST:
                 {
                     LPNMMOUSE nmm = (LPNMMOUSE) lParam;
+                    BOOL bTransparent = (nmm->dwHitInfo == RBHT_CLIENT || nmm->dwHitInfo == RBHT_NOWHERE ||
+                                         nmm->dwItemSpec == (DWORD_PTR) -1);
 
-                    if (nmm->dwHitInfo == RBHT_CLIENT || nmm->dwHitInfo == RBHT_NOWHERE ||
-                        nmm->dwItemSpec == (DWORD_PTR) -1)
+                    if (!bTransparent)
+                    {
+                        /* The rebar sends NM_NCHITTEST without dwHitInfo and with the band index
+                           of whatever band the point is in, so an empty part of the task band
+                           would never be transparent. Ask the rebar where the point really is
+                           (nmm->pt is in client coordinates). */
+                        RBHITTESTINFO rbhti = { nmm->pt, 0, -1 };
+
+                        ::SendMessageW(m_Rebar, RB_HITTEST, 0, (LPARAM) &rbhti);
+                        if (rbhti.flags == RBHT_CLIENT || rbhti.flags == RBHT_NOWHERE)
+                            bTransparent = TRUE;
+                    }
+
+                    if (bTransparent)
                     {
                         /* Make the rebar control appear transparent so the user
-                           can drag the tray window */
+                           can drag the tray window.  This is the task-band half of
+                           the hit-test seam table in traywnd.cpp. */
                         *plResult = HTTRANSPARENT;
                     }
                     return S_OK;
@@ -552,23 +577,126 @@ public:
 
     virtual HRESULT LoadFromStream(IN OUT IStream *pStm)
     {
-        CComPtr<IPersistStream> pPStm;
+        DWORD header[2];
+        ULONG uRead;
+        UINT cLoaded = 0;
         HRESULT hRet;
 
-        ASSERT(m_BandSite != NULL);
-
-        /* We implement the undocumented COM interface IBandSiteStreamCallback
-           that the shell will query so that we can intercept and custom-load
-           the task band when it finds the task band's CLSID (which is internal).
-           This way we can prevent the shell from attempting to CoCreateInstance
-           the (internal) task band, resulting in a failure... */
-        hRet = m_BandSite->QueryInterface(IID_PPV_ARG(IPersistStream, &pPStm));
-        if (SUCCEEDED(hRet))
+        hRet = pStm->Read(header, sizeof(header), &uRead);
+        if (FAILED(hRet) || uRead != sizeof(header) ||
+            header[0] != TBSF_MAGIC || header[1] != TBSF_VERSION)
         {
-            hRet = pPStm->Load(pStm);
-            TRACE("->Load() returned 0x%x\n", hRet);
+            return E_FAIL;
         }
 
+        for (;;)
+        {
+            TBSF_RECORD rec;
+            CComPtr<IUnknown> punk;
+            DWORD dwNewID = 0;
+
+            hRet = pStm->Read(&rec, sizeof(rec), &uRead);
+            if (FAILED(hRet) || uRead != sizeof(rec))
+                break;
+
+            if (rec.fPersist)
+            {
+                hRet = OleLoadFromStream(pStm, IID_PPV_ARG(IUnknown, &punk));
+                if (FAILED(hRet))
+                    break;
+            }
+
+            if (punk == NULL)
+                continue;
+
+            hRet = m_BandSite->AddBand(punk);
+            if (FAILED(hRet))
+                continue;
+
+            UINT uCount = (UINT)m_BandSite->EnumBands(0xffffffff, NULL);
+            if (SUCCEEDED(m_BandSite->EnumBands(uCount - 1, &dwNewID)))
+            {
+                UINT cRebarBands = (UINT)::SendMessageW(m_Rebar, RB_GETBANDCOUNT, 0, 0);
+                for (UINT k = 0; k < cRebarBands; k++)
+                {
+                    REBARBANDINFOW rbi = { sizeof(rbi) };
+                    rbi.fMask = RBBIM_ID;
+                    if (!::SendMessageW(m_Rebar, RB_GETBANDINFOW, k, (LPARAM)&rbi) || rbi.wID != dwNewID)
+                        continue;
+
+                    if (rec.fHidden)
+                        ::SendMessageW(m_Rebar, RB_SHOWBAND, k, FALSE);
+                    if (rec.cx != 0)
+                    {
+                        rbi.fMask = RBBIM_SIZE;
+                        rbi.cx = rec.cx;
+                        ::SendMessageW(m_Rebar, RB_SETBANDINFOW, k, (LPARAM)&rbi);
+                    }
+                    break;
+                }
+            }
+
+            cLoaded++;
+        }
+
+        return cLoaded ? S_OK : E_FAIL;
+    }
+
+    STDMETHODIMP
+    Save() override
+    {
+        IStream *pStm;
+        DWORD header[2] = { TBSF_MAGIC, TBSF_VERSION };
+        HRESULT hRet;
+
+        pStm = GetUserBandsStream(STGM_WRITE);
+        if (pStm == NULL)
+            return E_FAIL;
+
+        hRet = pStm->Write(header, sizeof(header), NULL);
+        if (SUCCEEDED(hRet))
+        {
+            UINT cRebarBands = (UINT)::SendMessageW(m_Rebar, RB_GETBANDCOUNT, 0, 0);
+
+            for (UINT i = 0; i < cRebarBands; i++)
+            {
+                REBARBANDINFOW rbi = { sizeof(rbi) };
+                CComPtr<IDeskBand> pBand;
+                CComPtr<IPersistStream> pPersist;
+                TBSF_RECORD rec;
+
+                rbi.fMask = RBBIM_ID | RBBIM_SIZE | RBBIM_STYLE;
+                if (!::SendMessageW(m_Rebar, RB_GETBANDINFOW, i, (LPARAM)&rbi))
+                    continue;
+
+                if (FAILED(QueryBand(rbi.wID, &pBand, NULL, NULL, 0)))
+                    continue;
+
+                if (IsSameObject(pBand, m_TaskBand) == S_OK)
+                    continue;
+
+                pBand->QueryInterface(IID_PPV_ARG(IPersistStream, &pPersist));
+
+                rec.fHidden = (rbi.fStyle & RBBS_HIDDEN) ? 1 : 0;
+                rec.cx = rbi.cx;
+                rec.fPersist = pPersist ? 1 : 0;
+
+                hRet = pStm->Write(&rec, sizeof(rec), NULL);
+                if (FAILED(hRet))
+                    break;
+
+                if (rec.fPersist)
+                {
+                    hRet = OleSaveToStream(pPersist, pStm);
+                    if (FAILED(hRet))
+                        break;
+                }
+            }
+        }
+
+        TRACE("CTrayBandSite::Save() returned 0x%x\n", hRet);
+
+        pStm->Release();
         return hRet;
     }
 
@@ -709,6 +837,38 @@ public:
             hRet = m_BandSite->AddBand(m_TaskBand);
             if (FAILED_UNEXPECTEDLY(hRet))
                 return hRet;
+        }
+
+        /* The task band is always the first band in the rebar */
+        {
+            DWORD dwTaskID = 0;
+            UINT cBands = (UINT)m_BandSite->EnumBands(0xffffffff, NULL);
+
+            for (UINT i = 0; i < cBands; i++)
+            {
+                DWORD dwID;
+                CComPtr<IDeskBand> pBand;
+                if (SUCCEEDED(m_BandSite->EnumBands(i, &dwID)) &&
+                    SUCCEEDED(QueryBand(dwID, &pBand, NULL, NULL, 0)) &&
+                    IsSameObject(pBand, m_TaskBand) == S_OK)
+                {
+                    dwTaskID = dwID;
+                    break;
+                }
+            }
+
+            UINT cRebarBands = (UINT)SendMessageW(m_Rebar, RB_GETBANDCOUNT, 0, 0);
+            for (UINT i = 1; i < cRebarBands; i++)
+            {
+                REBARBANDINFOW rbi = { sizeof(rbi) };
+                rbi.fMask = RBBIM_ID;
+                if (SendMessageW(m_Rebar, RB_GETBANDINFOW, i, (LPARAM)&rbi) &&
+                    rbi.wID == dwTaskID)
+                {
+                    SendMessageW(m_Rebar, RB_MOVEBAND, i, 0);
+                    break;
+                }
+            }
         }
 
         /* Should we send this after showing it? */

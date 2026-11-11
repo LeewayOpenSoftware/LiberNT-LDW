@@ -715,6 +715,7 @@ NtfsOpenNamedDataStream(
         }
     }
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     PagingAcquired = TRUE;
     NtfsAcquireMetadata(VolCB);
     MetadataAcquired = TRUE;
@@ -918,6 +919,61 @@ NtfsAssignCreateSecurity(
     return Status;
 }
 
+/*
+ * Detaches the cached lookup parent if a directory edit made it stale; the
+ * caller holds CachedLookupParentMutex and destroys the record after
+ * releasing it.
+ */
+static
+PNtfsFileRecord
+NtfsDetachStaleLookupParent(
+    _In_ PVolumeContextBlock VolCB)
+{
+    PNtfsFileRecord Stale = NULL;
+
+    if (VolCB->CachedLookupParent &&
+        VolCB->CachedLookupParentGeneration != VolCB->DirGeneration)
+    {
+        Stale = VolCB->CachedLookupParent;
+        VolCB->CachedLookupParent = NULL;
+        VolCB->CachedLookupParentPathLength = 0;
+    }
+    return Stale;
+}
+
+/*
+ * Returns a parent taken by NtfsLookupInCachedParent to the slot, unless the
+ * slot was refilled meanwhile or a directory edit made the parent stale.
+ */
+static
+VOID
+NtfsPutBackLookupParent(
+    _In_ PVolumeContextBlock VolCB,
+    _In_ PNtfsFileRecord Parent,
+    _In_ LONG Generation,
+    _In_ PCWSTR Path,
+    _In_ USHORT PathLength)
+{
+    BOOLEAN Kept = FALSE;
+
+    ExAcquireFastMutex(&VolCB->CachedLookupParentMutex);
+    if (!VolCB->CachedLookupParent &&
+        Generation == VolCB->DirGeneration &&
+        PathLength <= RTL_NUMBER_OF(VolCB->CachedLookupParentPath))
+    {
+        VolCB->CachedLookupParent = Parent;
+        VolCB->CachedLookupParentGeneration = Generation;
+        VolCB->CachedLookupParentPathLength = PathLength;
+        RtlCopyMemory(VolCB->CachedLookupParentPath,
+                      Path,
+                      PathLength * sizeof(WCHAR));
+        Kept = TRUE;
+    }
+    ExReleaseFastMutex(&VolCB->CachedLookupParentMutex);
+    if (!Kept)
+        NtfsFileRecordDestroy(Parent);
+}
+
 static
 BOOLEAN
 NtfsTakeCachedLookupParent(
@@ -925,42 +981,37 @@ NtfsTakeCachedLookupParent(
     _In_ PUNICODE_STRING Name,
     _Out_ PNtfsFileRecord* File)
 {
+    PNtfsFileRecord Stale;
     USHORT CachedLength;
     USHORT NameLength;
+    BOOLEAN Taken = FALSE;
 
     *File = NULL;
-    if (VolCB->CachedLookupParent &&
-        VolCB->CachedLookupParentGeneration != VolCB->DirGeneration)
+    ExAcquireFastMutex(&VolCB->CachedLookupParentMutex);
+    Stale = NtfsDetachStaleLookupParent(VolCB);
+    if (VolCB->CachedLookupParent && Name && Name->Buffer)
     {
-        NtfsFileRecordDestroy(VolCB->CachedLookupParent);
-        VolCB->CachedLookupParent = NULL;
-        VolCB->CachedLookupParentPathLength = 0;
+        /* Directory opens may retain one trailing separator in the object name. */
+        NameLength = Name->Length / sizeof(WCHAR);
+        CachedLength = VolCB->CachedLookupParentPathLength;
+        if (((NameLength == CachedLength) ||
+             (NameLength == CachedLength + 1 &&
+              Name->Buffer[NameLength - 1] == L'\\')) &&
+            RtlCompareMemory(VolCB->CachedLookupParentPath,
+                             Name->Buffer,
+                             CachedLength * sizeof(WCHAR)) ==
+                CachedLength * sizeof(WCHAR))
+        {
+            *File = VolCB->CachedLookupParent;
+            VolCB->CachedLookupParent = NULL;
+            VolCB->CachedLookupParentPathLength = 0;
+            Taken = TRUE;
+        }
     }
-    if (!VolCB->CachedLookupParent ||
-        !Name ||
-        !Name->Buffer)
-    {
-        return FALSE;
-    }
-
-    /* Directory opens may retain one trailing separator in the object name. */
-    NameLength = Name->Length / sizeof(WCHAR);
-    CachedLength = VolCB->CachedLookupParentPathLength;
-    if (!((NameLength == CachedLength) ||
-          (NameLength == CachedLength + 1 &&
-           Name->Buffer[NameLength - 1] == L'\\')) ||
-        RtlCompareMemory(VolCB->CachedLookupParentPath,
-                         Name->Buffer,
-                         CachedLength * sizeof(WCHAR)) !=
-            CachedLength * sizeof(WCHAR))
-    {
-        return FALSE;
-    }
-
-    *File = VolCB->CachedLookupParent;
-    VolCB->CachedLookupParent = NULL;
-    VolCB->CachedLookupParentPathLength = 0;
-    return TRUE;
+    ExReleaseFastMutex(&VolCB->CachedLookupParentMutex);
+    if (Stale)
+        NtfsFileRecordDestroy(Stale);
+    return Taken;
 }
 
 /*
@@ -978,9 +1029,12 @@ NtfsLookupInCachedParent(
     _Out_ PNTSTATUS LookupStatus,
     _Out_ PNtfsFileRecord* File)
 {
+    PNtfsFileRecord Parent = NULL;
+    PNtfsFileRecord Stale;
     PWCHAR LeafName;
     USHORT LeafLength;
     USHORT ParentLength;
+    LONG Generation = 0;
     NTSTATUS Status;
 
     *File = NULL;
@@ -992,29 +1046,34 @@ NtfsLookupInCachedParent(
         return FALSE;
     }
 
+    /* Take the parent out of the slot: this lookup uses it alone. */
+    ExAcquireFastMutex(&VolCB->CachedLookupParentMutex);
+    Stale = NtfsDetachStaleLookupParent(VolCB);
     if (VolCB->CachedLookupParent &&
-        VolCB->CachedLookupParentGeneration != VolCB->DirGeneration)
+        VolCB->CachedLookupParentPathLength == ParentLength &&
+        RtlCompareMemory(VolCB->CachedLookupParentPath,
+                         Name->Buffer,
+                         ParentLength * sizeof(WCHAR)) ==
+            ParentLength * sizeof(WCHAR))
     {
-        NtfsFileRecordDestroy(VolCB->CachedLookupParent);
+        Parent = VolCB->CachedLookupParent;
+        Generation = VolCB->CachedLookupParentGeneration;
         VolCB->CachedLookupParent = NULL;
         VolCB->CachedLookupParentPathLength = 0;
     }
-    if (!VolCB->CachedLookupParent ||
-        VolCB->CachedLookupParentPathLength != ParentLength ||
-        RtlCompareMemory(VolCB->CachedLookupParentPath,
-                         Name->Buffer,
-                         ParentLength * sizeof(WCHAR)) !=
-            ParentLength * sizeof(WCHAR))
-    {
+    ExReleaseFastMutex(&VolCB->CachedLookupParentMutex);
+    if (Stale)
+        NtfsFileRecordDestroy(Stale);
+    if (!Parent)
         return FALSE;
-    }
 
     Status = NtfsMasterFileTableGetFileRecordInDirectory(
         Mft,
-        VolCB->CachedLookupParent,
+        Parent,
         LeafName,
         LeafLength,
         File);
+    NtfsPutBackLookupParent(VolCB, Parent, Generation, Name->Buffer, ParentLength);
     if (NT_SUCCESS(Status) &&
         !OpenFinalReparsePoint &&
         NtfsFileRecordGetAttribute(
@@ -1037,10 +1096,13 @@ NtfsRememberLookupParent(
     _In_ PUNICODE_STRING Name)
 {
     PNtfsFileRecord Parent = NULL;
+    PNtfsFileRecord Previous;
     PWCHAR LeafName;
     USHORT LeafLength;
     USHORT ParentLength;
     ULONG RemainingNameLength;
+    LONG Generation;
+    BOOLEAN Cached;
     NTSTATUS Status;
 
     if (!NtfsSplitParentName(Name,
@@ -1054,16 +1116,18 @@ NtfsRememberLookupParent(
     UNREFERENCED_PARAMETER(LeafName);
     UNREFERENCED_PARAMETER(LeafLength);
 
-    if (VolCB->CachedLookupParent &&
-        VolCB->CachedLookupParentGeneration == VolCB->DirGeneration &&
-        VolCB->CachedLookupParentPathLength == ParentLength &&
-        RtlCompareMemory(VolCB->CachedLookupParentPath,
-                         Name->Buffer,
-                         ParentLength * sizeof(WCHAR)) ==
-            ParentLength * sizeof(WCHAR))
-    {
+    ExAcquireFastMutex(&VolCB->CachedLookupParentMutex);
+    Cached = VolCB->CachedLookupParent &&
+             VolCB->CachedLookupParentGeneration == VolCB->DirGeneration &&
+             VolCB->CachedLookupParentPathLength == ParentLength &&
+             RtlCompareMemory(VolCB->CachedLookupParentPath,
+                              Name->Buffer,
+                              ParentLength * sizeof(WCHAR)) ==
+                 ParentLength * sizeof(WCHAR);
+    ExReleaseFastMutex(&VolCB->CachedLookupParentMutex);
+    if (Cached)
         return;
-    }
+    Generation = VolCB->DirGeneration;
 
     Status = NtfsMasterFileTableGetFileRecordFromQueryEx(
         Mft,
@@ -1081,14 +1145,17 @@ NtfsRememberLookupParent(
         return;
     }
 
-    if (VolCB->CachedLookupParent)
-        NtfsFileRecordDestroy(VolCB->CachedLookupParent);
+    ExAcquireFastMutex(&VolCB->CachedLookupParentMutex);
+    Previous = VolCB->CachedLookupParent;
     VolCB->CachedLookupParent = Parent;
-    VolCB->CachedLookupParentGeneration = VolCB->DirGeneration;
+    VolCB->CachedLookupParentGeneration = Generation;
     VolCB->CachedLookupParentPathLength = ParentLength;
     RtlCopyMemory(VolCB->CachedLookupParentPath,
                   Name->Buffer,
                   ParentLength * sizeof(WCHAR));
+    ExReleaseFastMutex(&VolCB->CachedLookupParentMutex);
+    if (Previous)
+        NtfsFileRecordDestroy(Previous);
 }
 
 static
@@ -1225,6 +1292,7 @@ NtfsReferenceStreamContext(
     StreamCB->CommonFCBHeader.PagingIoResource = &StreamCB->PagingIoResource;
     StreamCB->CommonFCBHeader.IsFastIoPossible = FastIoIsPossible;
     FsRtlInitializeFileLock(&StreamCB->FileLock, NULL, NULL);
+    KeInitializeSpinLock(&StreamCB->ExtentLock);
     DataAttribute = NtfsFileRecordGetAttribute(File, RequestedType, RequestedStream);
     if (DataAttribute)
     {
@@ -3062,6 +3130,9 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                             Status);
         }
 
+        /* Early refusal only: nothing is held here, so a section can still
+         * appear before the file is emptied below. The check that counts is
+         * repeated there under MainResource. */
         ZeroSize.QuadPart = 0;
         if (!MmCanFileBeTruncated(&FileCB->StreamCB->SectionObjectPointers, &ZeroSize))
         {
@@ -3349,19 +3420,66 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
          Disposition == FILE_OVERWRITE ||
          Disposition == FILE_OVERWRITE_IF))
     {
-        KeEnterCriticalRegion();
-        NtfsAcquireMetadata(VolCB);
-        Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, FileCB->RequestedType, FileCB->RequestedStream, 0);
-        if (NT_SUCCESS(Status) && !FileCB->RequestedStream)
-        {
-            NtfsFileBasicInformation OverwriteBasic;
+        /*
+         * Truncating frees the stream's clusters. A paging write that already
+         * looked up its extent holds PagingIoResource shared, so take it
+         * exclusive first, as every other path that frees clusters does.
+         * Order: Main -> PagingIo -> Metadata. The header takes the new
+         * sizes before PagingIo is dropped so no paging write sees the old
+         * ones; the cache manager hears of them, and the stale pages are
+         * purged, only after PagingIo is released, because both take the
+         * segment lock that a page-in of this stream holds while its paging
+         * read waits for PagingIo (NtfsPurgeStreamCache says why).
+         */
+        LARGE_INTEGER OverwriteZeroSize;
 
-            RtlZeroMemory(&OverwriteBasic, sizeof(OverwriteBasic));
-            OverwriteBasic.Fields = NTFS_BASIC_INFO_FILE_ATTRIBUTES;
-            OverwriteBasic.FileAttributes = FileAttributes;
-            Status = NtfsFileRecordSetBasicInformation(FileCB->FileRec, &OverwriteBasic);
+        KeEnterCriticalRegion();
+        ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
+        /*
+         * The mapped-file check made before the share access was granted
+         * held nothing, so a mapping can have appeared since; decide again
+         * here, right before the stream is emptied, as the named stream
+         * path does. This is the last word only for the instant it runs:
+         * nothing in this kernel takes a file system lock to create a
+         * section (FsRtlAcquireToCreateMappedSection has no caller), so a
+         * view mapped after it reads zeros past the new end, which is what
+         * a mapped reader of a truncated file gets anyway.
+         */
+        OverwriteZeroSize.QuadPart = 0;
+        if (!MmCanFileBeTruncated(&FileCB->StreamCB->SectionObjectPointers, &OverwriteZeroSize))
+        {
+            Status = STATUS_USER_MAPPED_FILE;
         }
-        NtfsReleaseMetadata(VolCB);
+        else
+        {
+            ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+            NtfsDropPagingExtent(FileCB->StreamCB);
+            NtfsAcquireMetadata(VolCB);
+            Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, FileCB->RequestedType, FileCB->RequestedStream, 0);
+            if (NT_SUCCESS(Status) && !FileCB->RequestedStream)
+            {
+                NtfsFileBasicInformation OverwriteBasic;
+
+                RtlZeroMemory(&OverwriteBasic, sizeof(OverwriteBasic));
+                OverwriteBasic.Fields = NTFS_BASIC_INFO_FILE_ATTRIBUTES;
+                OverwriteBasic.FileAttributes = FileAttributes;
+                Status = NtfsFileRecordSetBasicInformation(FileCB->FileRec, &OverwriteBasic);
+            }
+            NtfsReleaseMetadata(VolCB);
+            if (NT_SUCCESS(Status))
+            {
+                if (FileCB->StreamCB)
+                    FileCB->StreamCB->SizePending = FALSE;
+                NtfsRefreshFileSizes(VolCB, FileCB, NULL);
+            }
+            ExReleaseResourceLite(NtfsGetPagingIoResource(FileCB));
+            if (NT_SUCCESS(Status))
+            {
+                NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
+                NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
+            }
+        }
+        ExReleaseResourceLite(NtfsGetMainResource(FileCB));
         KeLeaveCriticalRegion();
         if (!NT_SUCCESS(Status))
         {
@@ -3380,10 +3498,6 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                             Status);
         }
 
-        if (FileCB->StreamCB)
-            FileCB->StreamCB->SizePending = FALSE;
-        NtfsRefreshFileSizes(VolCB, FileCB, FileObject);
-        NtfsPurgeStreamCache(FileCB, FileObject, NULL, 0);
         FileObject->Flags |= FO_FILE_MODIFIED | FO_FILE_SIZE_CHANGED;
         Overwritten = TRUE;
     }

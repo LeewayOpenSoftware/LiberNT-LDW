@@ -804,6 +804,475 @@ WriteIndexNode(
     return Status;
 }
 
+/*
+ * Pointer-after-pointee ordering for the index tree. The kernel environment
+ * holds every write of one block or less back in its cache and commits the
+ * dirty blocks in slot, eviction or range order, so the order the functions
+ * below issue their writes in (child node, bitmap bit, then the parent's
+ * pointer) says nothing about the order the blocks reach the disk. A cut can
+ * then leave a root or a parent node pointing at an INDX block that never
+ * landed, with its $I30 bit set (J36 r149: root -> VCN 5, 21 of 23 blocks
+ * never written, 174 of 200 names unreachable). Each helper resolves the
+ * child node's disk range from the $INDEX_ALLOCATION run list and defers to
+ * Volume::OrderAfter; a node whose range cannot be resolved (sparse, or
+ * crossing a run boundary) is made durable by a full flush, so nothing is
+ * ordered silently.
+ */
+static NTSTATUS
+ResolveIndexNodeRange(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONGLONG Vcn,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _Out_ PULONGLONG DiskOffset,
+    _Out_ PULONG Length)
+{
+    PAttribute IndexAllocationAttribute;
+
+    *DiskOffset = 0;
+    *Length = 0;
+    if (AllocationUnit == 0 ||
+        Vcn > ~(ULONGLONG)0 / AllocationUnit)
+    {
+        return STATUS_FILE_CORRUPT_ERROR;
+    }
+    IndexAllocationAttribute =
+        DirectoryFile->GetAttribute(
+            TypeIndexAllocation,
+            const_cast<PWSTR>(IndexName));
+    if (!IndexAllocationAttribute)
+        return STATUS_NOT_FOUND;
+    return DiskVolume->MFT->GetAttributeRangeDiskOffset(
+        DirectoryFile,
+        IndexAllocationAttribute,
+        Vcn * AllocationUnit,
+        RecordSize,
+        DiskOffset,
+        Length);
+}
+
+/*
+ * Orders the pointer range after each node in Vcns. PointerLength 0 commits
+ * the nodes synchronously (the pointer is unknown, is a block the cache does
+ * not hold yet, or is spread over several blocks).
+ */
+static NTSTATUS
+OrderAfterIndexNodes(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_reads_(Count) const ULONGLONG* Vcns,
+    _In_ ULONG Count,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _In_ ULONGLONG PointerDiskOffset,
+    _In_ ULONG PointerLength)
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    for (ULONG Index = 0; Index < Count; Index++)
+    {
+        ULONGLONG NodeDiskOffset;
+        ULONG NodeLength;
+
+        Status = ResolveIndexNodeRange(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            Vcns[Index],
+            AllocationUnit,
+            RecordSize,
+            &NodeDiskOffset,
+            &NodeLength);
+        if (!NT_SUCCESS(Status))
+        {
+            /* Unresolvable: everything held back goes out, nodes included. */
+            return DiskVolume->FlushVolume();
+        }
+        Status = DiskVolume->OrderAfter(
+            PointerDiskOffset,
+            PointerLength,
+            NodeDiskOffset,
+            NodeLength);
+        if (!NT_SUCCESS(Status))
+            break;
+    }
+    return Status;
+}
+
+/* The pointer is a file record (the directory's, carrying $INDEX_ROOT and
+ * $BITMAP, or whichever record owns the root). NULL or an unresolvable
+ * record commits the nodes synchronously. */
+static NTSTATUS
+OrderRecordAfterIndexNodes(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_reads_(Count) const ULONGLONG* Vcns,
+    _In_ ULONG Count,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _In_opt_ PFileRecord PointerRecord)
+{
+    ULONGLONG RecordDiskOffset = 0;
+    ULONG PointerLength = 0;
+
+    if (PointerRecord &&
+        PointerRecord->RecordNumber != MAXULONG &&
+        NT_SUCCESS(DiskVolume->MFT->GetFileRecordDiskOffset(
+            PointerRecord->RecordNumber,
+            &RecordDiskOffset)))
+    {
+        PointerLength = DiskVolume->MFT->FileRecordSize;
+    }
+    return OrderAfterIndexNodes(
+        DiskVolume,
+        DirectoryFile,
+        IndexName,
+        Vcns,
+        Count,
+        AllocationUnit,
+        RecordSize,
+        RecordDiskOffset,
+        PointerLength);
+}
+
+/* The pointer is the index node at NodeVcn (a parent about to be rewritten
+ * with a link to the children in Vcns). */
+static NTSTATUS
+OrderNodeAfterIndexNodes(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONGLONG NodeVcn,
+    _In_reads_(Count) const ULONGLONG* Vcns,
+    _In_ ULONG Count,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize)
+{
+    ULONGLONG NodeDiskOffset = 0;
+    ULONG NodeLength = 0;
+
+    if (!NT_SUCCESS(ResolveIndexNodeRange(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            NodeVcn,
+            AllocationUnit,
+            RecordSize,
+            &NodeDiskOffset,
+            &NodeLength)))
+    {
+        NodeLength = 0;
+    }
+    return OrderAfterIndexNodes(
+        DiskVolume,
+        DirectoryFile,
+        IndexName,
+        Vcns,
+        Count,
+        AllocationUnit,
+        RecordSize,
+        NodeDiskOffset,
+        NodeLength);
+}
+
+/*
+ * The reverse pair: a node that references a VCN must not reach the disk
+ * before the record whose $INDEX_ALLOCATION run list covers that VCN. The
+ * growth of the allocation (ExtendNonResidentData, via WriteIndexNode of a
+ * new block) rewrites the record, and the parent that points at the new
+ * block is written next; committed out of order, the parent references a
+ * VCN beyond the allocation on the disk (J36 shape scan type B: 1-28 record
+ * 15668 references VCN 15-22 while only 0-14 exist). Orders the pointer
+ * range after the record; a record whose offset cannot be resolved is made
+ * durable by a full flush.
+ */
+static NTSTATUS
+OrderPointerAfterRecord(
+    _In_ PVolume DiskVolume,
+    _In_ ULONGLONG PointerDiskOffset,
+    _In_ ULONG PointerLength,
+    _In_opt_ PFileRecord PointeeRecord)
+{
+    ULONGLONG RecordDiskOffset = 0;
+
+    if (!PointeeRecord ||
+        PointeeRecord->RecordNumber == MAXULONG ||
+        !NT_SUCCESS(DiskVolume->MFT->GetFileRecordDiskOffset(
+            PointeeRecord->RecordNumber,
+            &RecordDiskOffset)))
+    {
+        return DiskVolume->FlushVolume();
+    }
+    return DiskVolume->OrderAfter(
+        PointerDiskOffset,
+        PointerLength,
+        RecordDiskOffset,
+        DiskVolume->MFT->FileRecordSize);
+}
+
+/* The pointer is the index node at NodeVcn. */
+static NTSTATUS
+OrderNodeAfterRecord(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONGLONG NodeVcn,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _In_opt_ PFileRecord PointeeRecord)
+{
+    ULONGLONG NodeDiskOffset = 0;
+    ULONG NodeLength = 0;
+
+    if (!NT_SUCCESS(ResolveIndexNodeRange(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            NodeVcn,
+            AllocationUnit,
+            RecordSize,
+            &NodeDiskOffset,
+            &NodeLength)))
+    {
+        NodeLength = 0;
+    }
+    return OrderPointerAfterRecord(
+        DiskVolume,
+        NodeDiskOffset,
+        NodeLength,
+        PointeeRecord);
+}
+
+/* The pointer is a record (the one owning $INDEX_ROOT); nothing to do when
+ * it is the record owning the allocation, they are one write. */
+static NTSTATUS
+OrderRecordAfterRecord(
+    _In_ PVolume DiskVolume,
+    _In_opt_ PFileRecord PointerRecord,
+    _In_opt_ PFileRecord PointeeRecord)
+{
+    ULONGLONG RecordDiskOffset = 0;
+    ULONG PointerLength = 0;
+
+    if (PointerRecord == PointeeRecord)
+        return STATUS_SUCCESS;
+    if (PointerRecord &&
+        PointerRecord->RecordNumber != MAXULONG &&
+        NT_SUCCESS(DiskVolume->MFT->GetFileRecordDiskOffset(
+            PointerRecord->RecordNumber,
+            &RecordDiskOffset)))
+    {
+        PointerLength = DiskVolume->MFT->FileRecordSize;
+    }
+    return OrderPointerAfterRecord(
+        DiskVolume,
+        RecordDiskOffset,
+        PointerLength,
+        PointeeRecord);
+}
+
+/* Current data size of the $INDEX_ALLOCATION, 0 when there is none. */
+static ULONGLONG
+IndexAllocationSize(
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName)
+{
+    PAttribute IndexAllocationAttribute =
+        DirectoryFile->GetAttribute(
+            TypeIndexAllocation,
+            const_cast<PWSTR>(IndexName));
+
+    return IndexAllocationAttribute
+        ? GetAttributeDataSize(IndexAllocationAttribute)
+        : 0;
+}
+
+/*
+ * Freeing an index block. The write that drops the last pointer to the
+ * block (a parent node, or the record holding $INDEX_ROOT) must be durable
+ * before the block's $I30 bit is cleared, in both barrier modes. The bit
+ * clears in memory at once, so the next split can reuse the block and write
+ * a node of another subtree into it; were the old pointer still on the disk
+ * when that content landed, a cut would leave a parent pointing into a
+ * foreign subtree. No constraint can express "before the block is reused",
+ * so this is the one ordering that stays a synchronous commit with the
+ * barrier on. A block is freed only when a leaf empties, so the cost is
+ * bounded. PointerRecord names the record that held the pointer; NULL means
+ * the node at PointerVcn held it.
+ */
+static NTSTATUS
+CommitIndexPointerHolder(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _In_opt_ PFileRecord PointerRecord,
+    _In_ ULONGLONG PointerVcn)
+{
+    if (PointerRecord)
+    {
+        return OrderPointerAfterRecord(
+            DiskVolume,
+            0,
+            0,
+            PointerRecord);
+    }
+    return OrderAfterIndexNodes(
+        DiskVolume,
+        DirectoryFile,
+        IndexName,
+        &PointerVcn,
+        1,
+        AllocationUnit,
+        RecordSize,
+        0,
+        0);
+}
+
+/*
+ * A node write that RemoveMaxFromSubtree leaves to its caller. The node
+ * gives up its collation maximum, which the caller writes into an ancestor
+ * as the replacement key; the node must not reach the disk before that
+ * ancestor, or a cut leaves the key in no node. The caller orders and
+ * writes the image, then releases ChainVcn (an END-only chain the node no
+ * longer references) once that write is durable.
+ */
+typedef struct _DEFERRED_INDEX_WRITE
+{
+    PUCHAR Image;          /* caller-owned, RecordSize bytes */
+    ULONGLONG Vcn;
+    BOOLEAN Valid;
+    ULONGLONG ChainVcn;
+    BOOLEAN ChainValid;
+} DEFERRED_INDEX_WRITE, *PDEFERRED_INDEX_WRITE;
+
+/*
+ * A failure after the entry is out of the index. The removal has happened,
+ * so the caller must see success; an error here made every caller abort
+ * half way (the name gone, the record and its DOS alias kept, the deleted
+ * file back at the next check). What is left behind is a duplicated key or
+ * blocks whose bits stayed set, both repaired by a check: keep the volume
+ * dirty through a clean dismount so the next boot runs one, and name the
+ * site in the debug log.
+ */
+static void
+NoteIndexDamage(
+    _In_ PVolume DiskVolume,
+    _In_ const char* What,
+    _In_ ULONGLONG Vcn,
+    _In_ NTSTATUS Status)
+{
+    DPRINT1(
+        "Index %s at VCN %llu failed after the entry "
+        "was removed: 0x%lx; the volume stays dirty "
+        "for a check.\n",
+        What,
+        Vcn,
+        Status);
+    /* The print is debug-only; the builds without it must not warn. */
+    (void)What;
+    (void)Vcn;
+    (void)Status;
+    DiskVolume->RetainDirty(TRUE);
+}
+
+/*
+ * A left half that a split holds back. Right, parent, then left: the left
+ * node may be rewritten with only its half of the entries once the node
+ * that links the new right node is written, else a cut that lands the left
+ * node first leaves the moved entries unreachable although every record
+ * exists.
+ */
+typedef struct _DEFERRED_LEFT_NODE
+{
+    PUCHAR Image;       /* RecordSize bytes, the rewritten left half */
+    ULONGLONG LeftVcn;
+    ULONGLONG RightVcn; /* the new right sibling of that level */
+} DEFERRED_LEFT_NODE, *PDEFERRED_LEFT_NODE;
+
+/*
+ * Writes the left halves a split held back, highest level first. Each is
+ * ordered after its own right sibling (the moved entries must be on the
+ * disk first) and after the nodes that may link that sibling: the left and
+ * right nodes of the level above, or, for the highest level, the node or
+ * record the split ended in (TopParentVcn when TopParentIsNode, else
+ * TopParentRecord). Only then may a left half land, so a cut can duplicate
+ * the moved entries but never lose them.
+ */
+static NTSTATUS
+WriteDeferredLeftNodes(
+    _In_ PVolume DiskVolume,
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONGLONG AllocationUnit,
+    _In_ ULONG RecordSize,
+    _In_reads_(Count) const DEFERRED_LEFT_NODE* Deferred,
+    _In_ ULONG Count,
+    _In_ BOOLEAN TopParentIsNode,
+    _In_ ULONGLONG TopParentVcn,
+    _In_opt_ PFileRecord TopParentRecord)
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    for (ULONG Index = Count; Index-- > 0;)
+    {
+        ULONGLONG Pointees[3];
+        ULONG PointeeCount = 0;
+
+        Pointees[PointeeCount++] = Deferred[Index].RightVcn;
+        if (Index + 1 < Count)
+        {
+            Pointees[PointeeCount++] = Deferred[Index + 1].LeftVcn;
+            Pointees[PointeeCount++] = Deferred[Index + 1].RightVcn;
+        }
+        else if (TopParentIsNode)
+        {
+            Pointees[PointeeCount++] = TopParentVcn;
+        }
+        Status = OrderNodeAfterIndexNodes(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            Deferred[Index].LeftVcn,
+            Pointees,
+            PointeeCount,
+            AllocationUnit,
+            RecordSize);
+        if (NT_SUCCESS(Status) &&
+            Index + 1 == Count &&
+            !TopParentIsNode &&
+            TopParentRecord)
+        {
+            Status = OrderNodeAfterRecord(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                Deferred[Index].LeftVcn,
+                AllocationUnit,
+                RecordSize,
+                TopParentRecord);
+        }
+        if (!NT_SUCCESS(Status))
+            break;
+        Status = WriteIndexNode(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            Deferred[Index].LeftVcn,
+            AllocationUnit,
+            RecordSize,
+            Deferred[Index].Image);
+        if (!NT_SUCCESS(Status))
+            break;
+    }
+    return Status;
+}
+
 static NTSTATUS
 SetIndexRecordBitmapBit(
     _In_ PFileRecord DirectoryFile,
@@ -1008,6 +1477,48 @@ SelectIndexRecordSlot(
  * Replaces the complete $INDEX_ROOT value with backup/restore so a
  * failed record commit leaves the previous root intact.
  */
+/*
+ * Whether the root of a large index may grow to ValueLength bytes. While
+ * the directory has no attribute list, the root must leave the base record
+ * the room a mapping growth needs to create one: a root that fills the
+ * record leaves the next index block with neither room for its mapping nor
+ * for a list, and every insert fails STATUS_BUFFER_TOO_SMALL (Lab03 L1-B,
+ * about 1400 entries with 200-character names). When it returns FALSE the
+ * caller pushes the root down, as for a full record. Once a list exists,
+ * a mapping that does not fit moves to an extension record instead.
+ */
+BOOLEAN
+Directory::RootGrowthKeepsListRoom(
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONG ValueLength)
+{
+    PFileRecordHeader Header = DirectoryFile->Header;
+    PAttribute Root;
+    PAttribute Allocation;
+    ULONG OldLength;
+    ULONG NewLength;
+
+    if (!Header || !DirectoryFile->Data || Header->BaseFileRecord != 0 ||
+        Header->ActualSize > Header->AllocatedSize ||
+        DirectoryFile->FindAttributeInRecord(TypeAttributeList, NULL, NULL))
+    {
+        return TRUE;
+    }
+    Root = DirectoryFile->FindAttributeInRecord(TypeIndexRoot, const_cast<PWSTR>(IndexName), NULL);
+    Allocation = DirectoryFile->FindAttributeInRecord(TypeIndexAllocation, const_cast<PWSTR>(IndexName), NULL);
+    if (!Root || Root->IsNonResident || !Allocation || !Allocation->IsNonResident ||
+        ValueLength > MAXULONG - 8 - Root->Resident.DataOffset)
+    {
+        return TRUE;
+    }
+    OldLength = Root->Length;
+    NewLength = ALIGN_UP_BY(Root->Resident.DataOffset + ValueLength, sizeof(ULONGLONG));
+    if (NewLength <= OldLength)
+        return TRUE;
+    return Header->AllocatedSize - Header->ActualSize >= NewLength - OldLength + NTFS_MAPPING_GROWTH_HEADROOM;
+}
+
 NTSTATUS
 Directory::ReplaceIndexRootValue(
     _In_ PVolume DiskVolume,
@@ -1126,6 +1637,110 @@ BuildRootValueFromList(
         ListBytes);
     *ValueLength = Total;
     return STATUS_SUCCESS;
+}
+
+NTSTATUS
+Directory::ResetIndex(
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName)
+{
+    PAttribute IndexRootAttribute;
+    PAttribute BitmapAttribute;
+    IndexRootEx RootPrefix;
+    UCHAR EndList[FIELD_OFFSET(IndexEntry, IndexStream)] = {};
+    PIndexEntry End = reinterpret_cast<PIndexEntry>(EndList);
+    PUCHAR RootValue = NULL;
+    ULONG RootValueLength;
+    NTSTATUS Status;
+
+    IndexRootAttribute =
+        DirectoryFile->GetAttribute(
+            TypeIndexRoot,
+            const_cast<PWSTR>(IndexName));
+    if (!IndexRootAttribute ||
+        IndexRootAttribute->IsNonResident ||
+        IndexRootAttribute->Resident.DataLength < sizeof(IndexRootEx))
+    {
+        return STATUS_FILE_CORRUPT_ERROR;
+    }
+    RtlCopyMemory(&RootPrefix,
+                  reinterpret_cast<PUCHAR>(IndexRootAttribute) +
+                      IndexRootAttribute->Resident.DataOffset,
+                  sizeof(RootPrefix));
+
+    /* Unlink every node first, then free the blocks: a cut in between leaves
+     * blocks in use that nothing links, which the check releases, and never a
+     * root that links a free block. */
+    End->EntryLength = (USHORT)sizeof(EndList);
+    End->Flags = INDEX_ENTRY_END;
+    Status = BuildRootValueFromList(
+        &RootPrefix,
+        EndList,
+        sizeof(EndList),
+        FALSE,
+        &RootValue,
+        &RootValueLength);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = ReplaceIndexRootValue(
+        DiskVolume,
+        DirectoryFile,
+        IndexName,
+        RootValue,
+        RootValueLength);
+    delete[] RootValue;
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    BitmapAttribute =
+        DirectoryFile->GetAttribute(
+            TypeBitmap,
+            const_cast<PWSTR>(IndexName));
+    if (BitmapAttribute)
+    {
+        ULONGLONG BitmapLength =
+            GetAttributeDataSize(BitmapAttribute);
+        ULONG WriteLength = (ULONG)BitmapLength;
+        LARGE_INTEGER WriteOffset = {};
+        PUCHAR Zeros;
+
+        if (BitmapLength > MAXULONG)
+            return STATUS_FILE_CORRUPT_ERROR;
+        if (WriteLength)
+        {
+            Zeros = new(PagedPool, TAG_BTREE) UCHAR[WriteLength];
+            if (!Zeros)
+                return STATUS_INSUFFICIENT_RESOURCES;
+            RtlZeroMemory(Zeros, WriteLength);
+            Status = DirectoryFile->WriteFileData(
+                TypeBitmap,
+                const_cast<PWSTR>(IndexName),
+                Zeros,
+                &WriteLength,
+                &WriteOffset);
+            delete[] Zeros;
+            if (NT_SUCCESS(Status) && WriteLength != (ULONG)BitmapLength)
+                Status = STATUS_END_OF_FILE;
+            if (!NT_SUCCESS(Status))
+                return Status;
+        }
+
+        /* A resident bitmap lives in a record: commit it. */
+        BitmapAttribute =
+            DirectoryFile->GetAttribute(
+                TypeBitmap,
+                const_cast<PWSTR>(IndexName));
+        if (BitmapAttribute && !BitmapAttribute->IsNonResident)
+        {
+            PFileRecord BitmapOwner =
+                DirectoryFile->GetAttributeOwner(BitmapAttribute);
+
+            if (!BitmapOwner)
+                return STATUS_FILE_CORRUPT_ERROR;
+            Status = DiskVolume->MFT->WriteFileRecordToMFT(BitmapOwner);
+        }
+    }
+    return Status;
 }
 
 /*
@@ -1386,6 +2001,15 @@ Directory::PushDownRoot(
             Status = DiskVolume->MFT->
                 WriteFileRecordToMFT(RootOwner);
         }
+        /*
+         * The attribute list created above for the allocation's mapping
+         * is only needed if the mapping went to an extension record. When
+         * it still fit in the base record, every entry names the base
+         * record and no later path frees an extension record to notice:
+         * remove it now (base record first, then the list's clusters).
+         */
+        if (NT_SUCCESS(Status))
+            (void)DirectoryFile->SettleGrowthAttributeList();
         if (!NT_SUCCESS(Status))
         {
             RtlCopyMemory(
@@ -1448,6 +2072,71 @@ Directory::PushDownRoot(
             Image);
         if (!NT_SUCCESS(Status))
             goto Done;
+
+        /*
+         * The directory record is about to name this node: the $BITMAP bit
+         * below, then the root's subnode pointer. Order the record after the
+         * node so a cut cannot leave root -> Vcn over a block that never
+         * reached the disk. The root may live in another record than the
+         * bitmap; order that one too.
+         */
+        {
+            PAttribute IndexRootAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexRoot,
+                    const_cast<PWSTR>(IndexName));
+            PFileRecord RootOwner = IndexRootAttribute
+                ? DirectoryFile->GetAttributeOwner(
+                    IndexRootAttribute)
+                : NULL;
+            PAttribute AllocationAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexAllocation,
+                    const_cast<PWSTR>(IndexName));
+            PFileRecord AllocationOwner = AllocationAttribute
+                ? DirectoryFile->GetAttributeOwner(
+                    AllocationAttribute)
+                : NULL;
+
+            Status = OrderRecordAfterIndexNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                &Vcn,
+                1,
+                AllocationUnit,
+                RecordSize,
+                DirectoryFile);
+            if (NT_SUCCESS(Status) &&
+                RootOwner &&
+                RootOwner != DirectoryFile)
+            {
+                Status = OrderRecordAfterIndexNodes(
+                    DiskVolume,
+                    DirectoryFile,
+                    IndexName,
+                    &Vcn,
+                    1,
+                    AllocationUnit,
+                    RecordSize,
+                    RootOwner);
+            }
+            /*
+             * The END -> Vcn root must not land before the run list that
+             * covers Vcn when the two live in different records (the node
+             * write above may have grown the allocation).
+             */
+            if (NT_SUCCESS(Status))
+            {
+                Status = OrderRecordAfterRecord(
+                    DiskVolume,
+                    RootOwner,
+                    AllocationOwner);
+            }
+            if (!NT_SUCCESS(Status))
+                goto Done;
+        }
+
         Status = SetIndexRecordBitmapBit(
             DirectoryFile,
             IndexName,
@@ -1483,24 +2172,63 @@ Directory::PushDownRoot(
         RootValueLength);
     if (!NT_SUCCESS(Status))
     {
-        NTSTATUS CleanupStatus =
-            SetIndexRecordBitmapBit(
-                DirectoryFile,
-                IndexName,
-                RecordOrdinal,
-                FALSE);
-        if (!NT_SUCCESS(CleanupStatus))
-        {
-            DPRINT1(
-                "Index bitmap bit %llu was not "
-                "released after a failed root "
-                "switch: 0x%lx.\n",
-                RecordOrdinal,
-                CleanupStatus);
-        }
+        /*
+         * A failed root switch is no proof that the old root is what the
+         * disk holds: ReplaceIndexRootValue restores only the in-memory
+         * record, and the record write it attempted may have reached the
+         * write-back cache or the disk in part. Keep the buffer allocated
+         * (its $I30 bit stays set). If the old root stands, the buffer is a
+         * block nothing names, which the check releases; if the new root
+         * landed, the buffer it names stays valid. Releasing it here would
+         * let the next split write another subtree into a block a durable
+         * root may name.
+         */
+        DPRINT1(
+            "Root switch failed (0x%lx): index "
+            "record %llu stays allocated.\n",
+            Status,
+            RecordOrdinal);
     }
 
 Done:
+    if (NT_SUCCESS(Status))
+    {
+        /*
+         * The root's pointer set changed wholesale. The record committed
+         * before the push-down (for the pushed-down node's new VCNs)
+         * carries the OLD root; until the new one lands, a cut shows that
+         * old root over leaves that later splits rewrite as half-empty,
+         * and everything under the new node is unreachable (Lab04: 65 of
+         * 200 records reachable, in every directory). Commit the record
+         * now, in both barrier modes: one write per directory lifetime,
+         * and the old root is never on the disk after this returns. The
+         * root may live in another record than the bitmap and run list,
+         * so both are committed.
+         */
+        PAttribute RootAttribute =
+            DirectoryFile->GetAttribute(
+                TypeIndexRoot,
+                const_cast<PWSTR>(IndexName));
+        PFileRecord RootOwner = RootAttribute
+            ? DirectoryFile->GetAttributeOwner(RootAttribute)
+            : NULL;
+
+        Status = OrderPointerAfterRecord(
+            DiskVolume,
+            0,
+            0,
+            DirectoryFile);
+        if (NT_SUCCESS(Status) &&
+            RootOwner &&
+            RootOwner != DirectoryFile)
+        {
+            Status = OrderPointerAfterRecord(
+                DiskVolume,
+                0,
+                0,
+                RootOwner);
+        }
+    }
     delete[] RootValue;
     delete[] Image;
     return Status;
@@ -1689,6 +2417,21 @@ Directory::SplitAndPromote(
     ULONG Level = PathDepth;
     BOOLEAN Retarget = FALSE;
     ULONGLONG RetargetVcn = 0;
+    /* The two nodes the previous level wrote (new right node, rewritten left
+     * node); whatever names them next must be ordered after them. */
+    ULONGLONG ChildVcns[2] = { 0, 0 };
+    BOOLEAN HaveChildren = FALSE;
+    /* Whether a new node of this split grew the $INDEX_ALLOCATION: the
+     * record carrying the grown run list must then land before any node
+     * that references the new VCN (OrderPointerAfterRecord). */
+    ULONGLONG AllocationSizeAtEntry = 0;
+    BOOLEAN AllocationGrew = FALSE;
+    PFileRecord AllocationOwner = NULL;
+    /* Left halves held back until the node that links their right sibling
+     * is written (right, parent, then left); index 0 is the lowest level
+     * split, DeferredCount - 1 the highest. */
+    PDEFERRED_LEFT_NODE Deferred = NULL;
+    ULONG DeferredCount = 0;
     NTSTATUS Status;
 
     /* One node's entry list (<= RecordSize) plus one pending entry. */
@@ -1705,6 +2448,19 @@ Directory::SplitAndPromote(
         Status = STATUS_INSUFFICIENT_RESOURCES;
         goto Done;
     }
+    Deferred =
+        new(PagedPool, TAG_BTREE)
+            DEFERRED_LEFT_NODE[PathDepth != 0 ? PathDepth : 1];
+    if (!Deferred)
+    {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Done;
+    }
+    RtlZeroMemory(Deferred,
+                  sizeof(DEFERRED_LEFT_NODE) *
+                      (PathDepth != 0 ? PathDepth : 1));
+    AllocationSizeAtEntry =
+        IndexAllocationSize(DirectoryFile, IndexName);
 
     while (Level != 0)
     {
@@ -1757,6 +2513,15 @@ Directory::SplitAndPromote(
             Header->TotalIndexSize =
                 Header->IndexOffset +
                 ListBytes;
+            /*
+             * This node names the two children the level below wrote. It
+             * was ordered after the new right one, and after the record
+             * that grew the allocation, before the left one was rewritten
+             * (end of the split case below), so nothing that can fail
+             * stands between a rewritten left node and this write. Landing
+             * before the rewritten left node only duplicates the moved
+             * entries, which a walk tolerates.
+             */
             Status = WriteIndexNode(
                 DiskVolume,
                 DirectoryFile,
@@ -1765,6 +2530,21 @@ Directory::SplitAndPromote(
                 AllocationUnit,
                 RecordSize,
                 NodeImage);
+            if (NT_SUCCESS(Status))
+            {
+                /* The links are written; now the left halves may follow. */
+                Status = WriteDeferredLeftNodes(
+                    DiskVolume,
+                    DirectoryFile,
+                    IndexName,
+                    AllocationUnit,
+                    RecordSize,
+                    Deferred,
+                    DeferredCount,
+                    TRUE,
+                    NodeVcn,
+                    NULL);
+            }
             goto Done;
         }
 
@@ -1787,6 +2567,40 @@ Directory::SplitAndPromote(
             &NewOrdinal);
         if (!NT_SUCCESS(Status))
             goto Done;
+
+        /*
+         * Both halves of this split will name the children the previous
+         * level wrote, and the right half is a new block the cache does not
+         * hold yet, so no constraint can be placed on it: commit the
+         * children synchronously (PointerLength 0). A split above the leaf
+         * level is rare.
+         */
+        if (HaveChildren)
+        {
+            Status = OrderAfterIndexNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                ChildVcns,
+                2,
+                AllocationUnit,
+                RecordSize,
+                0,
+                0);
+            if (!NT_SUCCESS(Status))
+                goto Done;
+        }
+        /* Same for the record that grew the allocation for the children. */
+        if (AllocationGrew)
+        {
+            Status = OrderPointerAfterRecord(
+                DiskVolume,
+                0,
+                0,
+                AllocationOwner);
+            if (!NT_SUCCESS(Status))
+                goto Done;
+        }
 
         /*
          * Publish the right node first: until the parent link switches,
@@ -1816,11 +2630,91 @@ Directory::SplitAndPromote(
             SideImage);
         if (!NT_SUCCESS(Status))
             goto Done;
+        if (IndexAllocationSize(DirectoryFile, IndexName) >
+            AllocationSizeAtEntry)
+        {
+            PAttribute AllocationAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexAllocation,
+                    const_cast<PWSTR>(IndexName));
+
+            /* Resolved after the growth: a mapping update may have moved
+             * the run list into another record. */
+            AllocationGrew = TRUE;
+            AllocationOwner = AllocationAttribute
+                ? DirectoryFile->GetAttributeOwner(
+                    AllocationAttribute)
+                : NULL;
+        }
         Status = SetIndexRecordBitmapBit(
             DirectoryFile,
             IndexName,
             NewOrdinal,
             TRUE);
+        if (!NT_SUCCESS(Status))
+            goto Done;
+
+        /*
+         * The parent written next (the node above, or the record that owns
+         * the root) will name the new right node and, when the allocation
+         * grew for it, depends on the record carrying the grown run list.
+         * Order it after them. The parent's own block is cached (it was
+         * read on the way down), so the barrier can hold it; when the
+         * parent splits as well, or the root is pushed down, the pointer
+         * also lands in a new block and the children are committed
+         * synchronously at that point.
+         */
+        if (Level - 1 != 0)
+        {
+            Status = OrderNodeAfterIndexNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                PathVcns[Level - 2],
+                &NewVcn,
+                1,
+                AllocationUnit,
+                RecordSize);
+            if (NT_SUCCESS(Status) && AllocationGrew)
+            {
+                Status = OrderNodeAfterRecord(
+                    DiskVolume,
+                    DirectoryFile,
+                    IndexName,
+                    PathVcns[Level - 2],
+                    AllocationUnit,
+                    RecordSize,
+                    AllocationOwner);
+            }
+        }
+        else
+        {
+            PAttribute RootAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexRoot,
+                    const_cast<PWSTR>(IndexName));
+            PFileRecord RootOwner = RootAttribute
+                ? DirectoryFile->GetAttributeOwner(
+                    RootAttribute)
+                : NULL;
+
+            Status = OrderRecordAfterIndexNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                &NewVcn,
+                1,
+                AllocationUnit,
+                RecordSize,
+                RootOwner);
+            if (NT_SUCCESS(Status) && AllocationGrew)
+            {
+                Status = OrderRecordAfterRecord(
+                    DiskVolume,
+                    RootOwner,
+                    AllocationOwner);
+            }
+        }
         if (!NT_SUCCESS(Status))
             goto Done;
 
@@ -1834,8 +2728,27 @@ Directory::SplitAndPromote(
         if (!NT_SUCCESS(Status))
             goto Done;
 
+        /*
+         * The left half is held back (WriteDeferredLeftNodes): it may be
+         * written only after the node that links the new right node, else
+         * a cut that lands the left half first leaves the moved entries
+         * unreachable although every record exists. Right, parent, left.
+         */
+        if (DeferredCount >= (PathDepth != 0 ? PathDepth : 1))
+        {
+            Status = STATUS_FILE_CORRUPT_ERROR;
+            goto Done;
+        }
+        Deferred[DeferredCount].Image =
+            new(PagedPool, TAG_BTREE)
+                UCHAR[RecordSize];
+        if (!Deferred[DeferredCount].Image)
+        {
+            Status = STATUS_INSUFFICIENT_RESOURCES;
+            goto Done;
+        }
         Status = BuildIndexBufferImage(
-            SideImage,
+            Deferred[DeferredCount].Image,
             RecordSize,
             DiskVolume->BytesPerSector,
             NodeVcn,
@@ -1852,16 +2765,14 @@ Directory::SplitAndPromote(
                 : 0);
         if (!NT_SUCCESS(Status))
             goto Done;
-        Status = WriteIndexNode(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            NodeVcn,
-            AllocationUnit,
-            RecordSize,
-            SideImage);
-        if (!NT_SUCCESS(Status))
-            goto Done;
+        Deferred[DeferredCount].LeftVcn = NodeVcn;
+        Deferred[DeferredCount].RightVcn = NewVcn;
+        DeferredCount++;
+
+        /* The parent written next names these two. */
+        ChildVcns[0] = NewVcn;
+        ChildVcns[1] = NodeVcn;
+        HaveChildren = TRUE;
 
         if (Pending != FirstPending)
             NtfsFreePool(Pending);
@@ -1960,19 +2871,78 @@ Directory::SplitAndPromote(
             &RootValueLength);
         if (!NT_SUCCESS(Status))
             goto Done;
-        Status = ReplaceIndexRootValue(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            RootValue,
-            RootValueLength);
+        /*
+         * The record that owns the root names the two children the last
+         * level wrote. It was ordered after the new right one, and after
+         * the record that grew the allocation when that is another record,
+         * before the left one was rewritten (end of the split case above).
+         */
+        Status = RootGrowthKeepsListRoom(DirectoryFile, IndexName, RootValueLength)
+            ? ReplaceIndexRootValue(
+                  DiskVolume,
+                  DirectoryFile,
+                  IndexName,
+                  RootValue,
+                  RootValueLength)
+            : STATUS_BUFFER_TOO_SMALL;
         delete[] RootValue;
+        if (NT_SUCCESS(Status))
+        {
+            /* The root links the new right node; the left halves follow. */
+            IndexRootAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexRoot,
+                    const_cast<PWSTR>(IndexName));
+            Status = WriteDeferredLeftNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                AllocationUnit,
+                RecordSize,
+                Deferred,
+                DeferredCount,
+                FALSE,
+                0,
+                IndexRootAttribute
+                    ? DirectoryFile->GetAttributeOwner(
+                        IndexRootAttribute)
+                    : NULL);
+        }
         if (Status == STATUS_BUFFER_TOO_SMALL)
         {
             /*
              * The root record itself is full: push the composed root
-             * list one level down and re-point the root at it.
+             * list one level down and re-point the root at it. The node
+             * PushDownRoot writes is a new block that will name the
+             * children, and the cache does not hold it yet, so the
+             * children are committed synchronously first.
              */
+            if (HaveChildren)
+            {
+                Status = OrderAfterIndexNodes(
+                    DiskVolume,
+                    DirectoryFile,
+                    IndexName,
+                    ChildVcns,
+                    2,
+                    AllocationUnit,
+                    RecordSize,
+                    0,
+                    0);
+                if (!NT_SUCCESS(Status))
+                    goto Done;
+            }
+            /* The pushed-down node will reference the new VCNs too. */
+            if (AllocationGrew)
+            {
+                Status = OrderPointerAfterRecord(
+                    DiskVolume,
+                    0,
+                    0,
+                    AllocationOwner);
+                if (!NT_SUCCESS(Status))
+                    goto Done;
+            }
             Status = PushDownRoot(
                 DiskVolume,
                 DirectoryFile,
@@ -1983,6 +2953,29 @@ Directory::SplitAndPromote(
                 TRUE,
                 RecordSize,
                 AllocationUnit);
+            if (NT_SUCCESS(Status))
+            {
+                /* The pushed-down node and the record that points at it
+                 * are written (and committed); the left halves follow. */
+                IndexRootAttribute =
+                    DirectoryFile->GetAttribute(
+                        TypeIndexRoot,
+                        const_cast<PWSTR>(IndexName));
+                Status = WriteDeferredLeftNodes(
+                    DiskVolume,
+                    DirectoryFile,
+                    IndexName,
+                    AllocationUnit,
+                    RecordSize,
+                    Deferred,
+                    DeferredCount,
+                    FALSE,
+                    0,
+                    IndexRootAttribute
+                        ? DirectoryFile->GetAttributeOwner(
+                            IndexRootAttribute)
+                        : NULL);
+            }
         }
     }
 
@@ -1991,6 +2984,12 @@ Done:
         NtfsFreePool(Pending);
     if (Promoted)
         NtfsFreePool(Promoted);
+    if (Deferred)
+    {
+        for (ULONG Index = 0; Index < DeferredCount; Index++)
+            delete[] Deferred[Index].Image;
+        delete[] Deferred;
+    }
     delete[] SideImage;
     delete[] Scratch;
     return Status;
@@ -2045,7 +3044,6 @@ Directory::PushDownResidentRoot(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    DiskVolume->IndexWorkBufferValid = FALSE;
 
     IndexRootAttribute =
         DirectoryFile->GetAttribute(
@@ -2156,6 +3154,22 @@ Directory::AddIndexEntry(
     _In_ PIndexEntry NewEntry,
     _In_ ULONG EntryLength)
 {
+    NTSTATUS Status = AddIndexEntryInner(DirectoryFile, IndexName, IndexedAttributeType,
+                                         Key, NewEntry, EntryLength);
+
+    NTFS_VERIFY_SHAPE_AFTER(Status, DiskVolume, DirectoryFile->RecordNumber, IndexName);
+    return Status;
+}
+
+NTSTATUS
+Directory::AddIndexEntryInner(
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONG IndexedAttributeType,
+    _In_ const IndexSearchKey* Key,
+    _In_ PIndexEntry NewEntry,
+    _In_ ULONG EntryLength)
+{
     PAttribute IndexRootAttribute;
     PAttribute IndexAllocationAttribute;
     PAttribute BitmapAttribute;
@@ -2181,7 +3195,6 @@ Directory::AddIndexEntry(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    DiskVolume->IndexWorkBufferValid = FALSE;
 
     IndexRootAttribute =
         DirectoryFile->GetAttribute(
@@ -2299,12 +3312,14 @@ Directory::AddIndexEntry(
             EntryLength);
         NewHeader->AllocatedSize = NewTotal;
 
-        Status = ReplaceIndexRootValue(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            NewRootData,
-            NewRootDataLength);
+        Status = RootGrowthKeepsListRoom(DirectoryFile, IndexName, NewRootDataLength)
+            ? ReplaceIndexRootValue(
+                  DiskVolume,
+                  DirectoryFile,
+                  IndexName,
+                  NewRootData,
+                  NewRootDataLength)
+            : STATUS_BUFFER_TOO_SMALL;
         if (Status == STATUS_BUFFER_TOO_SMALL)
         {
             /*
@@ -2751,7 +3766,8 @@ RemoveMaxFromSubtree(
         PIndexEntry* KeyEntry,
     _Out_ PULONG KeyLength,
     _Out_ PBOOLEAN Found,
-    _Out_ PBOOLEAN LeafEmptied)
+    _Out_ PBOOLEAN LeafEmptied,
+    _Inout_ PDEFERRED_INDEX_WRITE Deferred)
 {
     PIndexBuffer NodeBuffer;
     PIndexEntry Entry;
@@ -2850,7 +3866,8 @@ RemoveMaxFromSubtree(
             KeyEntry,
             KeyLength,
             Found,
-            LeafEmptied);
+            LeafEmptied,
+            Deferred);
         if (!NT_SUCCESS(Status) || *Found)
             goto Done;
 
@@ -2861,19 +3878,14 @@ RemoveMaxFromSubtree(
         }
 
         /*
-         * The rightmost subtree is a bare END chain: free it, donate the
-         * last entry's key upward, and let its child become the new
-         * rightmost subtree.
+         * The rightmost subtree is a bare END chain. Donate the last
+         * entry's key upward and let its child become the new rightmost
+         * subtree. The node image is handed to the caller (Deferred): it
+         * must not reach the disk before the ancestor that takes the key,
+         * and the chain's bits are released only once that node write is
+         * durable, so a reused block can never be reached through a stale
+         * pointer on the disk.
          */
-        Status = ReleaseEndOnlyChain(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            RecordSize,
-            AllocationUnit,
-            RightVcn);
-        if (!NT_SUCCESS(Status))
-            goto Done;
         Status = BuildKeyOnlyEntry(
             LastReal,
             KeyEntry,
@@ -2904,16 +3916,12 @@ RemoveMaxFromSubtree(
             *GetSubnodeVCN(EndEntry) =
                 DonatedChild;
         }
-        Status = WriteIndexNode(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            Vcn,
-            AllocationUnit,
-            RecordSize,
-            Image);
-        if (NT_SUCCESS(Status))
-            *Found = TRUE;
+        RtlCopyMemory(Deferred->Image, Image, RecordSize);
+        Deferred->Vcn = Vcn;
+        Deferred->Valid = TRUE;
+        Deferred->ChainVcn = RightVcn;
+        Deferred->ChainValid = TRUE;
+        *Found = TRUE;
         goto Done;
     }
 
@@ -2932,16 +3940,15 @@ RemoveMaxFromSubtree(
     *LeafEmptied =
         LastRealOffset ==
             NodeBuffer->IndexHeader.IndexOffset;
-    Status = WriteIndexNode(
-        DiskVolume,
-        DirectoryFile,
-        IndexName,
-        Vcn,
-        AllocationUnit,
-        RecordSize,
-        Image);
-    if (NT_SUCCESS(Status))
-        *Found = TRUE;
+    /*
+     * The leaf gives up its maximum; the caller writes it into an ancestor
+     * first and this image after, ordered behind it (Deferred), so a cut
+     * can duplicate the key but never lose it.
+     */
+    RtlCopyMemory(Deferred->Image, Image, RecordSize);
+    Deferred->Vcn = Vcn;
+    Deferred->Valid = TRUE;
+    *Found = TRUE;
 
 Done:
     if (!NT_SUCCESS(Status) || !*Found)
@@ -2955,44 +3962,6 @@ Done:
     }
     delete[] Image;
     return Status;
-}
-
-static NTSTATUS
-BuildChildlessEntry(
-    _In_ PIndexEntry Source,
-    _Outptr_result_bytebuffer_(*EntryLength)
-        PIndexEntry* NewEntry,
-    _Out_ PULONG EntryLength)
-{
-    PIndexEntry Entry;
-    ULONG Length = Source->EntryLength;
-
-    *NewEntry = NULL;
-    *EntryLength = 0;
-    if (Source->Flags & INDEX_ENTRY_NODE)
-    {
-        if (Length <
-            FIELD_OFFSET(IndexEntry, IndexStream) +
-                sizeof(ULONGLONG))
-        {
-            return STATUS_FILE_CORRUPT_ERROR;
-        }
-        Length -= sizeof(ULONGLONG);
-    }
-    Entry =
-        reinterpret_cast<PIndexEntry>(
-            NtfsAllocatePoolWithTag(
-                PagedPool,
-                Length,
-                TAG_BTREE));
-    if (!Entry)
-        return STATUS_INSUFFICIENT_RESOURCES;
-    RtlCopyMemory(Entry, Source, Length);
-    Entry->EntryLength = (USHORT)Length;
-    Entry->Flags &= ~INDEX_ENTRY_NODE;
-    *NewEntry = Entry;
-    *EntryLength = Length;
-    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -3100,8 +4069,6 @@ Directory::ReleaseEmptyIndexNode(
     const BOOLEAN ViewIndex =
         PathKey->CollationRule !=
             ATTRDEF_COLLATION_FILENAME;
-    IndexSearchKey ReinsertKey;
-    UNICODE_STRING ReinsertName;
     PAttribute RootAttribute;
     PIndexRootEx IndexRoot;
     PIndexNodeHeader ParentHeader;
@@ -3109,9 +4076,7 @@ Directory::ReleaseEmptyIndexNode(
     PIndexEntry Link;
     PIndexEntry LastReal;
     PIndexEntry EndEntry;
-    PIndexEntry Reinsert = NULL;
     PUCHAR NodeImage = NULL;
-    PUCHAR ParentBackup = NULL;
     PUCHAR RootValue = NULL;
     PUCHAR RootBackup = NULL;
     ULONGLONG Path[64];
@@ -3119,7 +4084,6 @@ Directory::ReleaseEmptyIndexNode(
     ULONG PathCount = 0;
     ULONG Level;
     ULONG LinkOffset;
-    ULONG ReinsertLength = 0;
     ULONG RootBackupLength = 0;
     BOOLEAN Descend;
     BOOLEAN FoundExact;
@@ -3127,6 +4091,9 @@ Directory::ReleaseEmptyIndexNode(
     BOOLEAN ParentIsRoot;
     NTSTATUS BitmapStatus;
     NTSTATUS Status;
+
+    /* Kept for the callers; the reinsert that used it is gone. */
+    (void)IndexedAttributeType;
 
     RootAttribute =
         DirectoryFile->GetAttribute(
@@ -3360,71 +4327,31 @@ Directory::ReleaseEmptyIndexNode(
         Level--;
     }
 
-    if (!ParentIsRoot)
+    if (!(Link->Flags & INDEX_ENTRY_END) || LastReal)
     {
-        ParentBackup =
-            new(PagedPool, TAG_BTREE)
-                UCHAR[IndexRecordSize];
-        if (!ParentBackup)
-        {
-            Status = STATUS_INSUFFICIENT_RESOURCES;
-            goto Done;
-        }
-        RtlCopyMemory(ParentBackup,
-                      NodeImage,
-                      IndexRecordSize);
+        /*
+         * Releasing the chain here would take a key out of the parent
+         * (the link's own key, or the last entry whose child the END link
+         * would adopt) and put it back through a fresh insert: two held-
+         * back writes the cache may land in either order, and a cut
+         * between them loses a live name from a tree that looks valid.
+         * Leave the empty leaf and its END-only chain in place instead:
+         * linked, bits set, no keys, a valid shape that the next insert in
+         * its key range reuses and that is freed when its link key is
+         * removed (RemoveIndexEntry). Only a chain that reaches the root
+         * with no key left is released, below.
+         */
+        Status = STATUS_SUCCESS;
+        goto Done;
     }
 
-    if (!(Link->Flags & INDEX_ENTRY_END))
-    {
-        Status = BuildChildlessEntry(
-            Link,
-            &Reinsert,
-            &ReinsertLength);
-        if (!NT_SUCCESS(Status))
-            goto Done;
-        CutEntryInNodeHeader(ParentHeader,
-                             LinkOffset,
-                             Link->EntryLength);
-    }
-    else if (LastReal)
-    {
-        ULONGLONG DonatedChild =
-            *GetSubnodeVCN(LastReal);
-
-        Status = BuildChildlessEntry(
-            LastReal,
-            &Reinsert,
-            &ReinsertLength);
-        if (!NT_SUCCESS(Status))
-            goto Done;
-        CutEntryInNodeHeader(
-            ParentHeader,
-            (ULONG)(
-                reinterpret_cast<PUCHAR>(LastReal) -
-                reinterpret_cast<PUCHAR>(
-                    ParentHeader)),
-            LastReal->EntryLength);
-        EndEntry =
-            reinterpret_cast<PIndexEntry>(
-                reinterpret_cast<PUCHAR>(
-                    ParentHeader) +
-                ParentHeader->TotalIndexSize -
-                (FIELD_OFFSET(IndexEntry,
-                              IndexStream) +
-                 sizeof(ULONGLONG)));
-        *GetSubnodeVCN(EndEntry) = DonatedChild;
-    }
-    else
-    {
-        EndEntry->EntryLength =
-            FIELD_OFFSET(IndexEntry, IndexStream);
-        EndEntry->Flags = INDEX_ENTRY_END;
-        ParentHeader->TotalIndexSize -=
-            sizeof(ULONGLONG);
-        ParentHeader->Flags &=
-            ~NTFS_INDEX_HEADER_LARGE;
-    }
+    EndEntry->EntryLength =
+        FIELD_OFFSET(IndexEntry, IndexStream);
+    EndEntry->Flags = INDEX_ENTRY_END;
+    ParentHeader->TotalIndexSize -=
+        sizeof(ULONGLONG);
+    ParentHeader->Flags &=
+        ~NTFS_INDEX_HEADER_LARGE;
 
     if (ParentIsRoot)
     {
@@ -3452,6 +4379,46 @@ Directory::ReleaseEmptyIndexNode(
     if (!NT_SUCCESS(Status))
         goto Done;
 
+    /*
+     * The pointer to the freed chain is gone from the parent in memory.
+     * Make that write durable before the bits are cleared
+     * (CommitIndexPointerHolder): a cleared bit lets the next split reuse
+     * a block at once, and a stale parent on the disk would then point
+     * into a foreign subtree after a cut. Failing here leaks the blocks,
+     * which is the safe side.
+     */
+    if (ParentIsRoot)
+    {
+        RootAttribute =
+            DirectoryFile->GetAttribute(
+                TypeIndexRoot,
+                const_cast<PWSTR>(IndexName));
+        Status = CommitIndexPointerHolder(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            AllocationUnit,
+            IndexRecordSize,
+            RootAttribute
+                ? DirectoryFile->GetAttributeOwner(
+                    RootAttribute)
+                : NULL,
+            0);
+    }
+    else
+    {
+        Status = CommitIndexPointerHolder(
+            DiskVolume,
+            DirectoryFile,
+            IndexName,
+            AllocationUnit,
+            IndexRecordSize,
+            NULL,
+            Path[Level - 1]);
+    }
+    if (!NT_SUCCESS(Status))
+        goto Done;
+
     BitmapStatus = STATUS_SUCCESS;
     for (ULONG Index = Level;
          Index < PathCount;
@@ -3468,65 +4435,11 @@ Directory::ReleaseEmptyIndexNode(
         if (!NT_SUCCESS(ClearStatus))
             BitmapStatus = ClearStatus;
     }
-
-    if (Reinsert)
-    {
-        MakeEntrySearchKey(PathKey->CollationRule,
-                           Reinsert,
-                           &ReinsertName,
-                           &ReinsertKey);
-        ReinsertKey.CaseSensitive = PathKey->CaseSensitive;
-        Status = AddIndexEntry(
-            DirectoryFile,
-            IndexName,
-            IndexedAttributeType,
-            &ReinsertKey,
-            Reinsert,
-            ReinsertLength);
-        if (!NT_SUCCESS(Status))
-        {
-            for (ULONG Index = Level;
-                 Index < PathCount;
-                 Index++)
-            {
-                (void)SetIndexRecordBitmapBit(
-                    DirectoryFile,
-                    IndexName,
-                    (Path[Index] * AllocationUnit) /
-                        IndexRecordSize,
-                    TRUE);
-            }
-            if (ParentIsRoot)
-            {
-                (void)ReplaceIndexRootValue(
-                    DiskVolume,
-                    DirectoryFile,
-                    IndexName,
-                    RootBackup,
-                    RootBackupLength);
-            }
-            else
-            {
-                (void)WriteIndexNode(
-                    DiskVolume,
-                    DirectoryFile,
-                    IndexName,
-                    Path[Level - 1],
-                    AllocationUnit,
-                    IndexRecordSize,
-                    ParentBackup);
-            }
-            goto Done;
-        }
-    }
     Status = BitmapStatus;
 
 Done:
-    if (Reinsert)
-        NtfsFreePool(Reinsert);
     delete[] RootBackup;
     delete[] RootValue;
-    delete[] ParentBackup;
     delete[] NodeImage;
     return Status;
 }
@@ -3561,6 +4474,21 @@ Directory::RemoveIndexEntry(
     _In_ const IndexSearchKey* SearchKey,
     _In_ ULONGLONG FileReference)
 {
+    NTSTATUS Status = RemoveIndexEntryInner(DirectoryFile, IndexName, IndexedAttributeType,
+                                            SearchKey, FileReference);
+
+    NTFS_VERIFY_SHAPE_AFTER(Status, DiskVolume, DirectoryFile->RecordNumber, IndexName);
+    return Status;
+}
+
+NTSTATUS
+Directory::RemoveIndexEntryInner(
+    _In_ PFileRecord DirectoryFile,
+    _In_ PCWSTR IndexName,
+    _In_ ULONG IndexedAttributeType,
+    _In_ const IndexSearchKey* SearchKey,
+    _In_ ULONGLONG FileReference)
+{
     IndexSearchKey Key = *SearchKey;
     IndexSearchKey MaxSearchKey;
     const IndexSearchKey* ReleaseKey = NULL;
@@ -3589,6 +4517,15 @@ Directory::RemoveIndexEntry(
     BOOLEAN MaxFound = FALSE;
     BOOLEAN LeafEmptied = FALSE;
     BOOLEAN EntryCommitted = FALSE;
+    /* A keyless subtree under the removed entry: its blocks are released
+     * only after the write that dropped the pointer to it is durable. */
+    BOOLEAN ReleaseChain = FALSE;
+    /* The pointer removal went through a root push-down or a split, so
+     * it is spread over new blocks; a full flush makes it durable. */
+    BOOLEAN CompoundWrite = FALSE;
+    /* The node that gave up the replacement key, written after the
+     * ancestor that took it (RemoveMaxFromSubtree). */
+    DEFERRED_INDEX_WRITE Deferred = {};
     NTSTATUS TimestampStatus;
     NTSTATUS ReleaseStatus;
     NTSTATUS Status;
@@ -3600,7 +4537,6 @@ Directory::RemoveIndexEntry(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    DiskVolume->IndexWorkBufferValid = FALSE;
 
     IndexRootAttribute =
         DirectoryFile->GetAttribute(
@@ -3661,6 +4597,14 @@ Directory::RemoveIndexEntry(
             UCHAR[IndexRecordSize];
     if (!NodeImage)
         return STATUS_INSUFFICIENT_RESOURCES;
+    Deferred.Image =
+        new(PagedPool, TAG_BTREE)
+            UCHAR[IndexRecordSize];
+    if (!Deferred.Image)
+    {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Done;
+    }
 
     while (!FoundExact)
     {
@@ -3836,7 +4780,8 @@ Directory::RemoveIndexEntry(
         &MaxKey,
         &MaxKeyLength,
         &MaxFound,
-        &LeafEmptied);
+        &LeafEmptied,
+        &Deferred);
     if (!NT_SUCCESS(Status))
         goto Done;
     if (MaxFound)
@@ -3862,15 +4807,12 @@ Directory::RemoveIndexEntry(
     }
     else
     {
-        Status = ReleaseEndOnlyChain(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            IndexRecordSize,
-            AllocationUnit,
-            RemovedChild);
-        if (!NT_SUCCESS(Status))
-            goto Done;
+        /*
+         * The subtree holds no key: the entry simply disappears below,
+         * and the chain's bits are released once that write is durable
+         * (see ReleaseChain before EntryCommitted).
+         */
+        ReleaseChain = TRUE;
         ReleaseKey = &Key;
     }
 
@@ -3975,12 +4917,14 @@ Directory::RemoveIndexEntry(
             &ReplacementLength /* reused */);
         if (!NT_SUCCESS(Status))
             goto Done;
-        Status = ReplaceIndexRootValue(
-            DiskVolume,
-            DirectoryFile,
-            IndexName,
-            RootValue,
-            ReplacementLength);
+        Status = RootGrowthKeepsListRoom(DirectoryFile, IndexName, ReplacementLength)
+            ? ReplaceIndexRootValue(
+                  DiskVolume,
+                  DirectoryFile,
+                  IndexName,
+                  RootValue,
+                  ReplacementLength)
+            : STATUS_BUFFER_TOO_SMALL;
         if (Status == STATUS_BUFFER_TOO_SMALL)
         {
             Status = PushDownRoot(
@@ -3993,6 +4937,7 @@ Directory::RemoveIndexEntry(
                 TRUE,
                 IndexRecordSize,
                 AllocationUnit);
+            CompoundWrite = TRUE;
         }
         if (!NT_SUCCESS(Status))
             goto Done;
@@ -4022,6 +4967,7 @@ Directory::RemoveIndexEntry(
                 MatchOffset,
                 Replacement,
                 ReplacementLength);
+            CompoundWrite = TRUE;
         }
         else
         {
@@ -4037,11 +4983,163 @@ Directory::RemoveIndexEntry(
         if (!NT_SUCCESS(Status))
             goto Done;
     }
+
+    /*
+     * The ancestor now carries the replacement key. Write the node that
+     * gave it up, ordered after the ancestor (a compound write spread the
+     * ancestor over new blocks: full flush), so a cut can duplicate the
+     * key but never lose it.
+     */
+    if (Deferred.Valid)
+    {
+        if (CompoundWrite)
+        {
+            Status = DiskVolume->FlushVolume();
+        }
+        else if (MatchedInRoot)
+        {
+            IndexRootAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexRoot,
+                    const_cast<PWSTR>(IndexName));
+            Status = OrderNodeAfterRecord(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                Deferred.Vcn,
+                AllocationUnit,
+                IndexRecordSize,
+                IndexRootAttribute
+                    ? DirectoryFile->GetAttributeOwner(
+                        IndexRootAttribute)
+                    : NULL);
+        }
+        else
+        {
+            Status = OrderNodeAfterIndexNodes(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                Deferred.Vcn,
+                &VisitedVcns[VisitedCount - 1],
+                1,
+                AllocationUnit,
+                IndexRecordSize);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = WriteIndexNode(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                Deferred.Vcn,
+                AllocationUnit,
+                IndexRecordSize,
+                Deferred.Image);
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            /*
+             * The ancestor already carries the key: a duplicate at worst,
+             * never a loss. The node still links its chain, so that stays
+             * allocated.
+             */
+            NoteIndexDamage(
+                DiskVolume,
+                "deferred node write",
+                Deferred.Vcn,
+                Status);
+            Deferred.ChainValid = FALSE;
+            Status = STATUS_SUCCESS;
+        }
+    }
+
+    /*
+     * A keyless END-only chain was taken out of the tree above, either by
+     * the entry removal itself (ReleaseChain) or by the node that donated
+     * its key (Deferred.ChainValid). The write that dropped the pointer to
+     * it is in memory; make it durable before the chain's bits are cleared
+     * (CommitIndexPointerHolder), since a cleared bit lets the next split
+     * reuse a block at once. A failure leaves blocks whose bits stayed set,
+     * a leak the next check repairs (NoteIndexDamage); the removal itself
+     * has happened and stays successful.
+     */
+    if (ReleaseChain || Deferred.ChainValid)
+    {
+        if (Deferred.ChainValid)
+        {
+            Status = CommitIndexPointerHolder(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                AllocationUnit,
+                IndexRecordSize,
+                NULL,
+                Deferred.Vcn);
+        }
+        else if (CompoundWrite)
+        {
+            Status = DiskVolume->FlushVolume();
+        }
+        else if (MatchedInRoot)
+        {
+            IndexRootAttribute =
+                DirectoryFile->GetAttribute(
+                    TypeIndexRoot,
+                    const_cast<PWSTR>(IndexName));
+            Status = CommitIndexPointerHolder(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                AllocationUnit,
+                IndexRecordSize,
+                IndexRootAttribute
+                    ? DirectoryFile->GetAttributeOwner(
+                        IndexRootAttribute)
+                    : NULL,
+                0);
+        }
+        else
+        {
+            Status = CommitIndexPointerHolder(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                AllocationUnit,
+                IndexRecordSize,
+                NULL,
+                VisitedVcns[VisitedCount - 1]);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ReleaseEndOnlyChain(
+                DiskVolume,
+                DirectoryFile,
+                IndexName,
+                IndexRecordSize,
+                AllocationUnit,
+                Deferred.ChainValid
+                    ? Deferred.ChainVcn
+                    : RemovedChild);
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            NoteIndexDamage(
+                DiskVolume,
+                "chain release",
+                Deferred.ChainValid
+                    ? Deferred.ChainVcn
+                    : RemovedChild,
+                Status);
+            Status = STATUS_SUCCESS;
+        }
+    }
     EntryCommitted = TRUE;
 
 TouchDirectory:
     if (EntryCommitted)
     {
+        ReleaseStatus = STATUS_SUCCESS;
         if (ReleaseKey)
         {
             ReleaseStatus = ReleaseEmptyIndexNode(
@@ -4071,6 +5169,19 @@ TouchDirectory:
                 "timestamp update failed: 0x%lx.\n",
                 TimestampStatus);
         }
+        /*
+         * The entry is gone from the index either way; the caller must see
+         * success, or it aborts a removal that has already happened. A
+         * failed release is reported through the dirty flag instead.
+         */
+        if (!NT_SUCCESS(ReleaseStatus))
+        {
+            NoteIndexDamage(
+                DiskVolume,
+                "empty node release",
+                0,
+                ReleaseStatus);
+        }
         Status = STATUS_SUCCESS;
     }
 
@@ -4081,6 +5192,7 @@ Done:
         NtfsFreePool(Replacement);
     delete[] Scratch;
     delete[] RootValue;
+    delete[] Deferred.Image;
     delete[] NodeImage;
     return Status;
 }

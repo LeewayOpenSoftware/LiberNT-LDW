@@ -1211,6 +1211,7 @@ FileRecord::ReplaceListedExtendedAttributes(
                 (void)DiskVolume->MFT->
                     DeallocateExtensionFileRecord(
                         OldOwner);
+                (void)CollapseUnneededAttributeList();
             }
         }
     }

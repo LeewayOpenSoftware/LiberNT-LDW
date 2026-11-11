@@ -1,0 +1,10 @@
+#pragma once
+
+#define IDD_SHOT_PAGE1 101
+#define IDD_SHOT_PAGE2 102
+#define IDD_SHOT_PAGE3 103
+
+#define IDC_SHOT_PROGRESS   1001
+#define IDC_SHOT_OPT_AUTO   1002
+#define IDC_SHOT_OPT_BROWSE 1003
+#define IDC_SHOT_OPT_SKIP   1004

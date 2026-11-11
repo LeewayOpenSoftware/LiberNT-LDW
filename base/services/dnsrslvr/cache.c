@@ -195,6 +195,23 @@ DnsIntCacheGetEntryByName(
     {
         *Record = DnsRecordSetCopyEx(CacheEntry->Record, DnsCharSetUnicode, DnsCharSetUnicode);
         Status = *Record ? ERROR_SUCCESS : ERROR_OUTOFMEMORY;
+
+        /*
+         * The entry matches the name without regard to case, but it carries the
+         * spelling of whoever cached it first. Answer with the spelling that was
+         * asked for, like a fresh lookup does. Equal without case means equal
+         * length, so the name is overwritten in place.
+         */
+        if (*Record)
+        {
+            PDNS_RECORDW Answer;
+
+            for (Answer = *Record; Answer != NULL; Answer = Answer->pNext)
+            {
+                if (Answer->pName != NULL && _wcsicmp(Answer->pName, Name) == 0)
+                    wcscpy(Answer->pName, Name);
+            }
+        }
     }
 
     DnsCacheUnlock();

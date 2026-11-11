@@ -3,14 +3,18 @@
 #include <apitest.h>
 
 extern void func_CertControlStore(void);
+extern void func_CertCreateChainEngine(void);
 extern void func_CertEnumSystemStoreLocation(void);
+extern void func_CertOpenSystemStore(void);
 extern void func_CertUpdateStore(void);
 extern void func_CryptProtectMemory(void);
 
 const struct test winetest_testlist[] =
 {
     { "CertControlStore", func_CertControlStore },
+    { "CertCreateChainEngine", func_CertCreateChainEngine },
     { "CertEnumSystemStoreLocation", func_CertEnumSystemStoreLocation },
+    { "CertOpenSystemStore", func_CertOpenSystemStore },
     { "CertUpdateStore", func_CertUpdateStore },
     { "CryptProtectMemory", func_CryptProtectMemory },
 

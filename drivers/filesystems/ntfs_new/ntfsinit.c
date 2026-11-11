@@ -112,6 +112,9 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
     // Get global driver settings from registry
     GetGlobalSettingsFromRegistry();
 
+    // Read the library's settings now, never later under a volume lock
+    NtfsDiskReadSettingsKm();
+
     // Global mounted-volume list for the shutdown data-flush sweep.
     InitializeListHead(&NtfsGlobalVolumeList);
     Status = ExInitializeResourceLite(&NtfsGlobalVolumeListResource);
@@ -653,6 +656,7 @@ NtfsFinalizePendingDelete(_In_ PVolumeContextBlock VolCB,
             PStreamContextBlock Stream = DeleteStreams[StreamIndex];
 
             ExAcquireResourceExclusiveLite(&Stream->PagingIoResource, TRUE);
+            NtfsDropPagingExtent(Stream);
             Stream->Deleted = TRUE;
             Stream->SizePending = FALSE;
             ExReleaseResourceLite(&Stream->PagingIoResource);
@@ -855,6 +859,7 @@ DeleteDone:
         if (!RecordDeleted && !StreamDeleted)
         {
             ExAcquireResourceExclusiveLite(&Stream->PagingIoResource, TRUE);
+            NtfsDropPagingExtent(Stream);
             Stream->Deleted = FALSE;
             ExReleaseResourceLite(&Stream->PagingIoResource);
         }

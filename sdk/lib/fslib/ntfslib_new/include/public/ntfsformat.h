@@ -47,11 +47,12 @@ typedef BOOLEAN
 #define NTFS_FORMAT_DEFAULT_INDEX_RECORD_SIZE 4096
 
 /*
- * Records marked in use in the $MFT bitmap. NTFS reserves everything up to
- * NTFS_LAST_RESERVED_FILE_RECORD for metadata and hides it from directory
- * enumeration, so those slots must never be handed out to user files.
+ * Records marked in use in the $MFT bitmap. NTFS reserves everything below
+ * NTFS_FIRST_USER_FILE_RECORD: 0 to 15 for metadata, hidden from directory
+ * enumeration, and 16 to 23 that Windows keeps for its own use. None of
+ * those slots is handed out to user files.
  */
-#define NTFS_FORMAT_RESERVED_RECORDS (NTFS_LAST_RESERVED_FILE_RECORD + 1)
+#define NTFS_FORMAT_RESERVED_RECORDS NTFS_FIRST_USER_FILE_RECORD
 
 /* Records the formatter lays down a valid FILE header for. */
 #define NTFS_FORMAT_INITIAL_RECORDS 64

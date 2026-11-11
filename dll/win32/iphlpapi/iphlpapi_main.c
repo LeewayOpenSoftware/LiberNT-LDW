@@ -4442,14 +4442,12 @@ DWORD WINAPI NotifyRouteChange2(ADDRESS_FAMILY family, PIPFORWARD_CHANGE_CALLBAC
  * RETURNS
  *  Success: NO_ERROR
  *  Failure: error code from winerror.h
- *
- * FIXME
- *  Stub, returns ERROR_NOT_SUPPORTED.
  */
 DWORD WINAPI NotifyRouteChange(PHANDLE Handle, LPOVERLAPPED overlapped)
 {
-  FIXME("(Handle %p, overlapped %p): stub\n", Handle, overlapped);
-  return ERROR_NOT_SUPPORTED;
+    TRACE("Handle %p, overlapped %p.\n", Handle, overlapped);
+
+    return NsiRequestChangeNotification(0, &NPI_MS_IPV4_MODULEID, NSI_IP_FORWARD_TABLE, overlapped, Handle);
 }
 
 

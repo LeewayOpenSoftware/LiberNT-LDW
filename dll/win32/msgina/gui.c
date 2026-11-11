@@ -112,7 +112,10 @@ GUIDisplayStatusMessage(
     if (LogonUiCoverShown())
         return TRUE;
 
-    if (!pgContext->hStatusWindow && !LogonUiEverShown())
+    /* Until a window is shown, the boot screen owns the display and draws this
+     * text in its status band. Once the LogonUI or a user shell has been shown,
+     * the boot screen is gone and NtDisplayString text would not be seen. */
+    if (!pgContext->hStatusWindow && !LogonUiEverShown() && !pgContext->bUserShellStarted)
     {
         UNICODE_STRING String;
         WCHAR Text[256];

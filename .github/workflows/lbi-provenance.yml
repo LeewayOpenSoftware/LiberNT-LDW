@@ -1,0 +1,42 @@
+name: LBI Provenance (experimental WS-C)
+
+on:
+  push:
+    branches: [leeway/lbi-wsc-manifest]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Source checkout (full mirror)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream for ancestry claims
+        run: |
+          git remote add upstream https://github.com/LiberNT/LiberNT.git
+          git fetch upstream main main-nt10
+
+      - name: Generate provenance manifest
+        run: |
+          python3 -I tools/lbi/lbi-provenance.py \
+            --repo . \
+            --source-ref "refs/heads/${GITHUB_REF_NAME}" \
+            --upstream-ref upstream/main-nt10 \
+            --require-full-mirror \
+            --generator-ref "$(git rev-parse HEAD:tools/lbi/lbi-provenance.py)" \
+            --output lbi-provenance-manifest.json
+
+      - name: Validate against schema 1.0
+        run: python3 -I tools/lbi/lbi-provenance.py --check lbi-provenance-manifest.json
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: lbi-provenance-manifest
+          path: lbi-provenance-manifest.json

@@ -279,10 +279,74 @@ NtfsDirectoryStoreInfo(
     _Inout_ PULONG BufferLength,
     _Out_ PULONG EntrySize);
 
+/*
+ * Shared data built on first use (the $UpCase table, the run list and
+ * attribute list of $MFT's own record) is published once: the builder fills
+ * a private copy and installs it with a compare-exchange, and readers load
+ * the pointer with acquire order, so no reader sees a pointer before the data
+ * behind it. A builder that loses the race frees its copy. A published
+ * pointer is only replaced or freed under the exclusive metadata lock.
+ */
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#endif
+
+static inline PVOID
+NtfsLoadPublished(_In_ PVOID const volatile* Slot)
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+    PVOID Value = *Slot;
+    _ReadWriteBarrier();
+    return Value;
+#else
+    return __atomic_load_n(const_cast<PVOID*>(Slot), __ATOMIC_ACQUIRE);
+#endif
+}
+
+/* Installs Value if Slot is still NULL. Returns the pointer Slot holds now:
+ * Value if it was installed, the earlier one if another builder won. */
+static inline PVOID
+NtfsPublishOnce(_Inout_ PVOID volatile* Slot, _In_ PVOID Value)
+{
+    PVOID Previous;
+
+#if defined(_MSC_VER) && !defined(__clang__)
+    Previous = _InterlockedCompareExchangePointer(Slot, Value, NULL);
+#else
+    Previous = NULL;
+    __atomic_compare_exchange_n(const_cast<PVOID*>(Slot), &Previous, Value, false,
+                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+#endif
+    return Previous ? Previous : Value;
+}
+
+/* Installs Value if Slot still holds Expected. Returns what Slot held, so
+ * the caller succeeded if and only if that is Expected. Used to prepend to
+ * lists that readers walk without a lock and only writers under the
+ * exclusive metadata lock ever shorten. */
+static inline PVOID
+NtfsCompareExchangePublished(_Inout_ PVOID volatile* Slot,
+                             _In_ PVOID Value,
+                             _In_opt_ PVOID Expected)
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+    return _InterlockedCompareExchangePointer(Slot, Value, Expected);
+#else
+    PVOID Previous = Expected;
+
+    __atomic_compare_exchange_n(const_cast<PVOID*>(Slot), &Previous, Value, false,
+                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return Previous;
+#endif
+}
+
+/* $MFTMirr holds the first cluster of $MFT, and at least 4 records. Fully
+ * parenthesized: "!IsFileRecordInMFTMirr(n)" and "x && IsFileRecordInMFTMirr(n)"
+ * must apply to the whole test. */
 #define IsFileRecordInMFTMirr(FileRecordNumber) \
-((DiskVolume->SectorsPerCluster * DiskVolume->BytesPerSector) > (FileRecordSize << 2)) ? \
-FileRecordNumber < ((DiskVolume->SectorsPerCluster * DiskVolume->BytesPerSector) / FileRecordSize) \
-: FileRecordNumber < 4
+((((DiskVolume->SectorsPerCluster * DiskVolume->BytesPerSector) > (FileRecordSize << 2)) ? \
+  ((FileRecordNumber) < ((DiskVolume->SectorsPerCluster * DiskVolume->BytesPerSector) / FileRecordSize)) : \
+  ((FileRecordNumber) < 4)))
 
 #define LONGLONG_SIGN_EXTEND(Number, Bytes) \
 (((Number) << ((sizeof(LONGLONG) - (Bytes)) * 8)) >> ((sizeof(LONGLONG) - (Bytes)) * 8))
@@ -297,7 +361,9 @@ FileRecordNumber < ((DiskVolume->SectorsPerCluster * DiskVolume->BytesPerSector)
 
 #define MFTDiskOffset (MFTLCN * BytesPerCluster(DiskVolume))
 #define MFTMirrDiskOffset (MFTMirrLCN * BytesPerCluster(DiskVolume))
-#define FileRecordOffset(FileRecordNumber) (FileRecordNumber * FileRecordSize)
+/* In 64 bits: both operands are ULONGs, and with 1 KB records their 32-bit
+ * product wraps from record 4194304 (4 GB into $MFT) on. */
+#define FileRecordOffset(FileRecordNumber) ((ULONGLONG)(FileRecordNumber) * FileRecordSize)
 
 #define GetOffset(LCN) (LCN * BytesPerCluster(DiskVolume))
 #define GetRunSize(Run) (Run->Length * BytesPerCluster(DiskVolume))
@@ -598,6 +664,9 @@ public:
      * dismount clears it. DirtyRetained means it was already dirty at mount, or
      * a user asked for it (FSCTL): MarkClean then leaves the flag alone. */
     BOOLEAN DirtyTracking = FALSE;
+    /* Nonzero while the volume check runs: it repairs damage the shape
+     * verifier would report on every change it makes. */
+    ULONG ShapeVerifySuppressed = 0;
     BOOLEAN DirtyMarked = FALSE;
     BOOLEAN DirtyRetained = FALSE;
     /* Set after a clean shutdown cleared the flag; makes a later re-dirty logged. */
@@ -630,13 +699,11 @@ public:
      * under the caller's metadata serialization. */
     PUCHAR BitmapWorkBuffer = NULL;
 
-    /* Scratch for index-block reads during lookups; a pool allocation per
-     * name resolution was a fifth of the lookup. Descents never nest. */
+    /* Scratch for index-block reads while a directory index is edited
+     * (editdir.cpp). Editing runs under the exclusive metadata lock; lookups
+     * and enumerations no longer use it (IndexPool, Directory). */
     PUCHAR IndexWorkBuffer = NULL;
     ULONG IndexWorkBufferSize = 0;
-    ULONGLONG IndexWorkFileReference = 0;
-    ULONGLONG IndexWorkVCN = 0;
-    BOOLEAN IndexWorkBufferValid = FALSE;
 
     /* Write-ordering barrier for a directory name insert (barrier mode only).
      * While AddFileToDirectory is adding a file, this holds the disk offset of
@@ -655,6 +722,22 @@ public:
     PUCHAR RecordPoolHead = NULL;
     ULONG RecordPoolCount = 0;
     ULONG RecordPoolBufferSize = 0;
+
+    /* Free list of index-block-sized buffers for name lookups, under
+     * RecordPoolMutex. Each lookup takes its own buffer: a pool allocation
+     * per name resolution was a fifth of the lookup, and one shared buffer
+     * let a lookup parse a block another one was reading
+     * (fs-review/NTFS-LOOKUP-CONCURRENCY.md, L1). */
+    PUCHAR IndexPoolHead = NULL;
+    ULONG IndexPoolCount = 0;
+    ULONG IndexPoolBufferSize = 0;
+
+    PUCHAR
+    AcquireIndexScratch(_In_ ULONG Size);
+
+    void
+    ReleaseIndexScratch(_In_opt_ PUCHAR Buffer,
+                        _In_ ULONG Size);
 
     FAST_MUTEX SecurityCacheMutex;
     ULONG SecurityCacheId[NTFS_SECURITY_CACHE_ENTRIES] = {};
@@ -766,11 +849,22 @@ public:
                      _In_  BOOLEAN CaseSensitive,
                      _Out_ LONG* Result);
 
+    /* The $UpCase table for callers that index it with any WCHAR
+     * (NtfsIsNameInExpression): NULL unless it is loaded and complete, and
+     * those callers then fall back to RtlUpcaseUnicodeChar. */
     PWSTR
     GetUpcaseTable()
     {
-        return UpcaseTable;
+        PWSTR Table = static_cast<PWSTR>(
+            NtfsLoadPublished(reinterpret_cast<PVOID const volatile*>(&UpcaseTable)));
+
+        return Table && UpcaseTableLength >= 0x10000 ? Table : NULL;
     }
+
+    /* The $UpCase table and its length in WCHARs, loaded on first use. */
+    NTSTATUS
+    GetUpcase(_Out_ PWSTR* Table,
+              _Out_ PULONG Length);
 
     /**
      * Gets the volume label as a 16-bit string and its length in bytes.
@@ -892,6 +986,21 @@ public:
     /* TRUE when the barrier is selected instead of the synchronous CommitRange. */
     BOOLEAN WriteBarrierEnabled();
 
+    /* Pointer-after-pointee ordering for metadata that names bytes written in
+     * the same operation: a directory record after the INDX block its root or
+     * bitmap names, a parent node after the children it names, a record after
+     * the content of an attribute it has just made non-resident or extended.
+     * Call it BEFORE writing the Pointer range. Barrier OFF: the Pointee range
+     * is committed synchronously and the pointer may then be written in any
+     * order. Barrier ON: BarrierAfter(Pointer, Pointee) is installed, and when
+     * it cannot be (pointer block not cached, cycle, unsupported range) the
+     * Pointee is committed synchronously instead. PointerLength 0 means the
+     * pointer's block is unknown or is several blocks: the Pointee is committed
+     * synchronously in both modes. A Pointee that is already durable costs a
+     * probe per block. Nothing is ever ordered silently. */
+    NTSTATUS OrderAfter(_In_ ULONGLONG PointerOffset, _In_ ULONG PointerLength,
+                        _In_ ULONGLONG PointeeOffset, _In_ ULONG PointeeLength);
+
     NTSTATUS
     Initialize(_In_ PUCHAR BootSectorData,
                _In_opt_ void* Context);
@@ -937,7 +1046,10 @@ private:
     USHORT VolumeLabelCacheLength = 0;
     BOOLEAN VolumeLabelCached = FALSE;
 
-    /* $UpCase table, read from disk on first use by UpcaseWideString(). */
+    /* $UpCase table, read at mount (Initialize) or on first use, and
+     * published with NtfsPublishOnce: UpcaseTableLength is stored before the
+     * pointer, and every loader stores the same value ($UpCase never
+     * changes). Read the pair through GetUpcase(). */
     PWSTR UpcaseTable = NULL;
     ULONG UpcaseTableLength = 0; // In WCHARs
 
@@ -965,6 +1077,10 @@ public:
     PFileRecordHeader Header;
     PUCHAR Data = NULL;
     ULONG RecordNumber = MAXULONG;
+    /* An append at EOF grew the unnamed data stream past what it needed
+     * (ExtendNonResidentData); TrimSpeculativeAllocation gives it back. Kept
+     * on the object that owns the data attribute, never on disk. */
+    BOOLEAN SpeculativeAllocation = FALSE;
 
     // ./filerecord.cpp
     FileRecord(_In_ PVolume DiskVolume,
@@ -1029,6 +1145,51 @@ public:
         _Out_ PULONG DroppedNames,
         _Out_ PBOOLEAN DroppedUnnamedData);
 
+    /* Removes the $ATTRIBUTE_LIST of a base record whose attributes all live
+     * in that record, and commits the record. The caller makes sure no
+     * extension record belongs to it; the list clusters are left for the
+     * bitmap check to free. */
+    NTSTATUS
+    RemoveAttributeList();
+
+    NTSTATUS
+    DropUnneededAttributeList(
+        _In_ BOOLEAN Commit,
+        _Out_ PBOOLEAN Unneeded);
+
+    NTSTATUS
+    CollapseUnneededAttributeList();
+
+    /* Checked builds: the shape invariants of this file after a mutation
+     * that returned Status (src/verify/shape.cpp). */
+    void
+    VerifyShapeAfterMutation(_In_ NTSTATUS Status);
+
+    /* After a mapping growth that created the attribute list: collapse a
+     * list that names only the base record, unless removing it would leave
+     * the base record too full to create a list for the next growth. Then
+     * part of the largest mapping moves to an extension record instead, so
+     * the list is kept and names it. */
+    NTSTATUS
+    SettleGrowthAttributeList();
+
+    /* After any mapping update: drop a list that names only the base
+     * record, unless that would leave the base record without the room to
+     * create a list for the next growth; then part of the largest mapping
+     * moves to an extension record instead, which the list names. */
+    NTSTATUS
+    SettleUnneededAttributeList();
+
+    /* Rewrites an unreadable $ATTRIBUTE_LIST of a base record from the
+     * attributes of the record itself and of every extension record that
+     * names it, and commits the record. The caller passes ALL of those
+     * extension records. The list keeps its clusters: a list that would need
+     * more than it has is not written. */
+    NTSTATUS
+    RebuildAttributeList(
+        _In_reads_(ExtensionCount) FileRecord* const* Extensions,
+        _In_ ULONG ExtensionCount);
+
     NTSTATUS ReadSecurityDescriptor(
         _In_opt_ PUCHAR Buffer,
         _Inout_ PULONG BufferLength);
@@ -1088,6 +1249,9 @@ public:
         _In_ AttributeType AttrType,
         _In_opt_ PWSTR StreamName,
         _In_ ULONGLONG NewAllocationSize);
+
+    NTSTATUS
+    TrimSpeculativeAllocation();
 
     NTSTATUS
     SetCompression(_In_opt_ PWSTR StreamName,
@@ -1169,6 +1333,7 @@ private:
     PFileRecordExtentCacheEntry ExtentCache = NULL;
     FileRecord* BaseRecordOwner = NULL;
     ULONG MappingReserve = 0;
+    BOOLEAN ReleasingBaseRecordSpace = FALSE;
     PUCHAR AttributeListData = NULL;
     ULONG AttributeListLength = 0;
     UINT32 AutomaticTimestampMask =
@@ -1622,6 +1787,14 @@ public:
         _In_ ULONGLONG FileReference,
         _In_ PUNICODE_STRING Name);
 
+    /* Empties an index whose tree cannot be walked: the root becomes an
+     * END-only leaf and every bitmap bit is cleared. The allocation is kept
+     * for reuse. Used by the volume check before it relinks the names. */
+    NTSTATUS
+    ResetIndex(
+        _In_ PFileRecord DirectoryFile,
+        _In_ PCWSTR IndexName);
+
     NTSTATUS
     RemoveIndexEntry(
         _In_ PFileRecord DirectoryFile,
@@ -1629,6 +1802,21 @@ public:
         _In_ ULONG IndexedAttributeType,
         _In_ const IndexSearchKey* SearchKey,
         _In_ ULONGLONG FileReference);
+    NTSTATUS
+    RemoveIndexEntryInner(
+        _In_ PFileRecord DirectoryFile,
+        _In_ PCWSTR IndexName,
+        _In_ ULONG IndexedAttributeType,
+        _In_ const IndexSearchKey* SearchKey,
+        _In_ ULONGLONG FileReference);
+    NTSTATUS
+    AddIndexEntryInner(
+        _In_ PFileRecord DirectoryFile,
+        _In_ PCWSTR IndexName,
+        _In_ ULONG IndexedAttributeType,
+        _In_ const IndexSearchKey* Key,
+        _In_ PIndexEntry NewEntry,
+        _In_ ULONG EntryLength);
 
     NTSTATUS
     PushDownResidentRoot(
@@ -1666,9 +1854,23 @@ private:
     ULONG EnumerationDepth = 0;
     LONG EnumerationLoadedDepth = -1;
     ULONGLONG EnumerationLoadedVCN = ~(ULONGLONG)0;
+    /* The index block EnumerationLoaded* names; owned by this directory. */
+    PUCHAR EnumerationBuffer = NULL;
+    ULONG EnumerationBufferSize = 0;
     BOOLEAN DirectEnumeration = FALSE;
 
     // ./editdir.cpp
+    /* Free bytes the base record of a large index keeps while it has no
+     * attribute list, so a mapping growth can still create one (the list
+     * needs about 0x50; a growth creates it up front below this). */
+#define NTFS_MAPPING_GROWTH_HEADROOM 0x110
+
+    static BOOLEAN
+    RootGrowthKeepsListRoom(
+        _In_ PFileRecord DirectoryFile,
+        _In_ PCWSTR IndexName,
+        _In_ ULONG ValueLength);
+
     static NTSTATUS
     ReplaceIndexRootValue(
         _In_ PVolume DiskVolume,
@@ -2499,6 +2701,30 @@ private:
         return FALSE;
     }
 } *PLogFileService;
+
+/*
+ * Shape invariants after each successful mutation (src/verify/shape.cpp):
+ * on in checked builds, and in portable builds with NTFSLIB_VERIFY_SHAPE.
+ */
+#if !defined(NTFSLIB_VERIFY_SHAPE) && !defined(NTFSLIB_PORTABLE) && DBG
+#define NTFSLIB_VERIFY_SHAPE 1
+#endif
+
+void
+NtfsVerifyShapeAfterMutation(
+    _In_ PVolume DiskVolume,
+    _In_ ULONGLONG FileRecord,
+    _In_opt_ PCWSTR IndexName);
+
+#ifdef NTFSLIB_VERIFY_SHAPE
+#define NTFS_VERIFY_SHAPE_AFTER(Status, Volume, File, IndexName) \
+    do { \
+        if (NT_SUCCESS(Status)) \
+            NtfsVerifyShapeAfterMutation((Volume), (File), (IndexName)); \
+    } while (0)
+#else
+#define NTFS_VERIFY_SHAPE_AFTER(Status, Volume, File, IndexName) ((void)0)
+#endif
 
 #endif // __cplusplus
 

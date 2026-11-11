@@ -433,3 +433,45 @@ ShellDrawTrayGlyph(IN HDC hdc, IN const RECT *prc, IN UINT nIconId)
     else
         DrawIconEx(hdc, x, y, hIcon, cx, cy, 0, NULL, DI_NORMAL);
 }
+
+UINT g_ShellDpi = 0;
+
+UINT
+ShellQueryDpi(VOID)
+{
+    UINT dpi = 96;
+    HDC hdc = GetDC(NULL);
+
+    if (hdc)
+    {
+        INT value = GetDeviceCaps(hdc, LOGPIXELSY);
+        ReleaseDC(NULL, hdc);
+        if (value > 0)
+            dpi = (UINT)value;
+    }
+    return dpi;
+}
+
+UINT
+ShellGetDpiForWindow(HWND hWnd)
+{
+    typedef UINT (WINAPI *PFN_GETDPIFORWINDOW)(HWND);
+    static PFN_GETDPIFORWINDOW pfn = NULL;
+    static BOOL bResolved = FALSE;
+
+    if (!bResolved)
+    {
+        HMODULE hUser = GetModuleHandleW(L"user32.dll");
+        if (hUser)
+            pfn = (PFN_GETDPIFORWINDOW)GetProcAddress(hUser, "GetDpiForWindow");
+        bResolved = TRUE;
+    }
+
+    if (pfn && hWnd)
+    {
+        UINT dpi = pfn(hWnd);
+        if (dpi)
+            return dpi;
+    }
+    return ShellGetDpi();
+}

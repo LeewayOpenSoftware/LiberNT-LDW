@@ -754,6 +754,33 @@ co_MsqInsertMouseMessage(MSG* Msg, DWORD flags, ULONG_PTR dwExtraInfo, BOOL Hook
    hdcScreen = IntGetScreenDC();
    CurInfo = IntGetSysCursorInfo();
 
+#if DBG
+   /* DIAG [F1]: a press in the last two screen rows */
+   if ((Msg->message == WM_LBUTTONDOWN || Msg->message == WM_RBUTTONDOWN) &&
+       Msg->pt.y >= UserGetSystemMetrics(SM_CYSCREEN) - 2)
+   {
+       ERR("[F1] press (%d,%d) screen %dx%d capture %p top-level %p desktop rcWindow (%d,%d)-(%d,%d) rcClient (%d,%d)-(%d,%d)\n",
+           Msg->pt.x, Msg->pt.y, UserGetSystemMetrics(SM_CXSCREEN), UserGetSystemMetrics(SM_CYSCREEN),
+           IntGetCaptureWindow(), Msg->hwnd,
+           pwndDesktop->rcWindow.left, pwndDesktop->rcWindow.top, pwndDesktop->rcWindow.right, pwndDesktop->rcWindow.bottom,
+           pwndDesktop->rcClient.left, pwndDesktop->rcClient.top, pwndDesktop->rcClient.right, pwndDesktop->rcClient.bottom);
+       if (pwnd)
+       {
+           PWND pw;
+           ERR("[F1]  target %p style %08lx ex %08lx rcWindow (%d,%d)-(%d,%d) rcClient (%d,%d)-(%d,%d) hrgnClip %p\n",
+               Msg->hwnd, pwnd->style, pwnd->ExStyle,
+               pwnd->rcWindow.left, pwnd->rcWindow.top, pwnd->rcWindow.right, pwnd->rcWindow.bottom,
+               pwnd->rcClient.left, pwnd->rcClient.top, pwnd->rcClient.right, pwnd->rcClient.bottom, pwnd->hrgnClip);
+           for (pw = pwndDesktop->spwndChild; pw; pw = pw->spwndNext)
+           {
+               if ((pw->style & WS_VISIBLE) && IntPtInWindow(pw, Msg->pt.x, Msg->pt.y))
+                   ERR("[F1]  z-order hit %p ex %08lx rc (%d,%d)-(%d,%d)\n", UserHMGetHandle(pw), pw->ExStyle,
+                       pw->rcWindow.left, pw->rcWindow.top, pw->rcWindow.right, pw->rcWindow.bottom);
+           }
+       }
+   }
+#endif
+
    /* Check if we found a window */
    if (Msg->hwnd != NULL && pwnd != NULL)
    {
@@ -1780,6 +1807,12 @@ BOOL co_IntProcessMouseMessage(MSG* msg, BOOL* RemoveMessages, BOOL* NotForUs, L
     }
 
     msg->hwnd = UserHMGetHandle(pwndMsg);
+
+#if DBG
+    if ((msg->message == WM_LBUTTONDOWN || msg->message == WM_RBUTTONDOWN) &&
+        msg->pt.y >= UserGetSystemMetrics(SM_CYSCREEN) - 2)
+        ERR("[F1] process: pt (%d,%d) hwnd %p hittest %d\n", msg->pt.x, msg->pt.y, msg->hwnd, (int)hittest);
+#endif
 
     pt = msg->pt;
     message = msg->message;

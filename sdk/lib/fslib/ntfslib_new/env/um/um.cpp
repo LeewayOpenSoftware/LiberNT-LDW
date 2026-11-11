@@ -40,6 +40,9 @@ BOOLEAN NtfsIsNameInExpressionFallback(
 
 HANDLE VolumeHandle = NULL;
 ULONG SectorSize = 0;
+/* Successful writes to the volume since NtfsDiskInitializeUm (chkdsk uses it
+ * to tell whether a check changed the volume). */
+static ULONG NtfsUmWriteCount = 0;
 static PRtlIsNameInExpression pRtlIsNameInExpression;
 static NTSTATUS (NTAPI *pRtlGenerate8dot3Name)(PCUNICODE_STRING,
                                             BOOLEAN,
@@ -60,6 +63,7 @@ NtfsDiskInitializeUm(
     PVOID Routine;
     NTSTATUS Status;
     VolumeHandle = FileHandle;
+    NtfsUmWriteCount = 0;
 
     if (!VolumeHandle || VolumeHandle == INVALID_HANDLE_VALUE)
         return STATUS_INVALID_PARAMETER;
@@ -262,7 +266,17 @@ NtfsWriteVolume(_In_    ULONGLONG Offset,
                 _In_    ULONG Length,
                 _Inout_ PUCHAR Buffer)
 {
-    return NtfsAlignedVolumeIo(TRUE, Offset, Length, Buffer);
+    NTSTATUS Status = NtfsAlignedVolumeIo(TRUE, Offset, Length, Buffer);
+
+    if (NT_SUCCESS(Status) && Length != 0)
+        NtfsUmWriteCount++;
+    return Status;
+}
+
+ULONG
+NtfsDiskWriteCountUm(VOID)
+{
+    return NtfsUmWriteCount;
 }
 
 NTSTATUS

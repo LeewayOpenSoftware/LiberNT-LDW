@@ -1009,7 +1009,8 @@ NTSTATUS FileCloseAddress(
       LockObject(AddrFile);
       if (AddrFile->Port)
       {
-          TCPFreePort(AddrFile->Port);
+          /* The port came from the set of this address's family. */
+          TCPFreePortForAddress(&AddrFile->Address, AddrFile->Port);
           AddrFile->Port = 0;
       }
       UnlockObject(AddrFile);

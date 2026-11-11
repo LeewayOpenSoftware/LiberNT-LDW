@@ -27,6 +27,11 @@ NtfsDiskReleaseKm(_In_ PDEVICE_OBJECT DeviceObject);
 NTSTATUS
 NtfsDiskFlushKm(VOID);
 
+/* Reads the environment's registry settings; call from DriverEntry, with no
+ * file system lock held. */
+VOID
+NtfsDiskReadSettingsKm(VOID);
+
 NTSTATUS
 NtfsDiskUnloadKm(VOID);
 

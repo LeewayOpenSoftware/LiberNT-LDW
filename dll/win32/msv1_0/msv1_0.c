@@ -762,6 +762,7 @@ MsvpEnumerateUsers(
     PLUID LuidPtr;
     PULONG EnumPtr;
     NTSTATUS Status = STATUS_SUCCESS;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
 
     TRACE("MsvpEnumerateUsers()\n");
 
@@ -1022,6 +1023,7 @@ MsvpLm20ChallengeRequest(
     PVOID ClientBaseAddress = NULL;
     ULONG BufferLength;
     NTSTATUS Status = STATUS_SUCCESS;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(RequestBuffer);
 
     TRACE("MsvpLm20ChallengeRequest()\n");
 

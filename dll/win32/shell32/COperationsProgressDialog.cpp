@@ -276,6 +276,31 @@ void COperationsProgressDialog::Pause(BOOL paused)
     m_TimerPaused = paused;
 }
 
+// As on Windows 10, the dialog is owned by the top-level window that started the
+// operation: it then has no taskbar button of its own, and the taskbar shows its
+// progress on that window's button. A paste can arrive with no site window, so the
+// foreground window of this process stands in. Without a usable owner (none, the
+// desktop, the taskbar or a hidden window) the dialog stays unowned and keeps its
+// own button, with the progress on it.
+static HWND ProgressDialogOwner(HWND owner)
+{
+    HWND root = (owner && IsWindow(owner)) ? GetAncestor(owner, GA_ROOT) : NULL;
+    WCHAR className[32];
+
+    if (!root)
+    {
+        HWND foreground = GetForegroundWindow();
+        DWORD pid = 0;
+        if (foreground && GetWindowThreadProcessId(foreground, &pid) && pid == GetCurrentProcessId())
+            root = GetAncestor(foreground, GA_ROOT);
+    }
+    if (root && (root == GetShellWindow() || root == GetDesktopWindow() || !IsWindowVisible(root)))
+        root = NULL;
+    if (root && GetClassNameW(root, className, _countof(className)) && !wcscmp(className, L"Shell_TrayWnd"))
+        root = NULL;
+    return root;
+}
+
 HRESULT COperationsProgressDialog::Start(HWND owner, DWORD flags, BOOL modern)
 {
     ProgressLock lifecycle(&m_Lifecycle);
@@ -283,7 +308,7 @@ HRESULT COperationsProgressDialog::Start(HWND owner, DWORD flags, BOOL modern)
         ProgressLock lock(&m_Lock);
         if (m_ModernStarted) return E_UNEXPECTED;
         if (m_Window) return S_OK;
-        m_Owner = owner;
+        m_Owner = ProgressDialogOwner(owner);
         m_Flags = flags;
         m_Modern = modern;
         m_Cancelled = FALSE;
@@ -1012,7 +1037,8 @@ INT_PTR CALLBACK COperationsProgressDialog::DialogProc(HWND window, UINT message
         if (self->m_Taskbar)
         {
             self->m_Taskbar->SetProgressState(window, state);
-            if (total) self->m_Taskbar->SetProgressValue(window, min(points, total), total);
+            // A value switches an indeterminate button back to normal: send none then.
+            if (total && state != TBPF_INDETERMINATE) self->m_Taskbar->SetProgressValue(window, min(points, total), total);
         }
         return TRUE;
     }

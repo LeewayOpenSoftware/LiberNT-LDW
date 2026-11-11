@@ -192,6 +192,7 @@ Return Value:
     PSHARE_ACCESS ShareAccess;
 
     PLARGE_INTEGER TruncateSize = NULL;
+    BOOLEAN FatBadTeardown = FALSE;
     LARGE_INTEGER LocalTruncateSize;
 
     BOOLEAN AcquiredVcb = FALSE;
@@ -1013,6 +1014,48 @@ Return Value:
             }
 
             //
+            //  LiberNT: the backing device was surprise-removed (VcbBad). A cached
+            //  handle whose dirty pages can never be flushed would otherwise leave
+            //  its data section - and the stream file object that section keeps on
+            //  the Partition PDO - alive forever (the CcUninitializeCacheMap below is
+            //  lazy and will not tear down a section that still holds modified pages),
+            //  so the device never reaches REMOVE / Safe removal. Give the cached
+            //  handle the same device-gone teardown the non-cached path above uses:
+            //  drain the (now NO_DEVICE-completed) paging write by taking PagingIo
+            //  exclusive, discard the unwritable pages, and trash the rest via the
+            //  truncate. usbstor completes the gone transfer NO_DEVICE so PagingIo is
+            //  free (no deadlock; same acquire/purge pattern as the block above).
+            //  Gated on VcbBad so healthy volumes are untouched.
+            //
+
+            FatBadTeardown = (BOOLEAN)((Vcb->VcbCondition == VcbBad) &&
+                                       FlagOn( FileObject->Flags, FO_CACHE_SUPPORTED ) &&
+                                       (Fcb->UncleanCount == 1) &&
+                                       (Fcb->NonPaged->SectionObjectPointers.DataSectionObject != NULL));
+            if (FatBadTeardown) {
+
+                PVOID FatBadDataSectionBefore =
+                    Fcb->NonPaged->SectionObjectPointers.DataSectionObject;
+
+                if (Fcb->Header.PagingIoResource != NULL) {
+                    (VOID)ExAcquireResourceExclusiveLite( Fcb->Header.PagingIoResource, TRUE );
+                    ExReleaseResourceLite( Fcb->Header.PagingIoResource );
+                }
+
+                (VOID)CcPurgeCacheSection( &Fcb->NonPaged->SectionObjectPointers,
+                                          NULL,
+                                          0,
+                                          FALSE );
+
+                TruncateSize = &FatLargeZero;
+
+                DbgPrint("PNPDIAG fatclnup fcb %p vcbbad purge datasec before %p afterpurge %p unclean %lu open %lu\n",
+                         Fcb, FatBadDataSectionBefore,
+                         Fcb->NonPaged->SectionObjectPointers.DataSectionObject,
+                         (ULONG)Fcb->UncleanCount, (ULONG)Fcb->OpenCount);
+            }
+
+            //
             //  If the file is invalid, hint to the cache that we should throw everything out.
             //
 
@@ -1026,6 +1069,13 @@ Return Value:
             //
 
             CcUninitializeCacheMap( FileObject, TruncateSize, NULL );
+
+            if (FatBadTeardown) {
+                DbgPrint("PNPDIAG fatclnup fcb %p vcbbad afteruninit datasec %p image %p open %lu\n",
+                         Fcb, Fcb->NonPaged->SectionObjectPointers.DataSectionObject,
+                         Fcb->NonPaged->SectionObjectPointers.ImageSectionObject,
+                         (ULONG)Fcb->OpenCount);
+            }
 
             break;
 

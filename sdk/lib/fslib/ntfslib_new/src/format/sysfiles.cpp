@@ -1011,14 +1011,17 @@ FormatWriteEmptyViewFile(_In_ PFormatContext Ctx,
 }
 
 /*
- * Records past $Extend up to NTFS_LAST_RESERVED_FILE_RECORD are reserved by
- * NTFS. They are marked in use in the $MFT bitmap, so they must be readable
- * records; like the reserved records Windows creates they carry only
- * $STANDARD_INFORMATION and an empty $DATA and are linked into no directory.
+ * Records past $Extend up to NTFS_FIRST_USER_FILE_RECORD - 1 (23) are
+ * reserved by NTFS. They are marked in use in the $MFT bitmap, so they must
+ * be readable records; like the reserved records Windows creates they carry
+ * only $STANDARD_INFORMATION and an empty $DATA and are linked into no
+ * directory.
  *
- * Reserving the whole range matters: readers hide records at or below
+ * Reserving the whole range matters twice: readers hide records at or below
  * NTFS_LAST_RESERVED_FILE_RECORD from directory enumeration, so a user file
- * allocated there would be invisible.
+ * allocated there would be invisible; and Windows keeps 16 to 23 for its
+ * own use, so a file there is a shape it never produces (Lab03 L2: user
+ * files landed in records 0x16 and 0x17 of a fresh volume).
  *
  * Everything above that gets a valid but free FILE header, which keeps the
  * MFT uniformly parseable.

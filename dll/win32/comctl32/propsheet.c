@@ -135,6 +135,7 @@ typedef struct tagPropSheetInfo
   int height;
   HIMAGELIST hImageList;
   BOOL ended;
+  BOOL aeroChrome;
   INT result;
 } PropSheetInfo;
 
@@ -154,11 +155,26 @@ static const WCHAR PropSheetInfoStr[] = L"PropertySheetInfo";
 #define MAX_TABTEXT_LENGTH 255
 #define MAX_BUTTONTEXT_LENGTH 64
 
-#define INTRNL_ANY_WIZARD (PSH_WIZARD | PSH_WIZARD97_OLD | PSH_WIZARD97_NEW | PSH_WIZARD_LITE)
+#define INTRNL_ANY_WIZARD (PSH_WIZARD | PSH_WIZARD97_OLD | PSH_WIZARD97_NEW | PSH_WIZARD_LITE | PSH_AEROWIZARD)
 
 /* Wizard metrics specified in DLUs */
 #define WIZARD_PADDING 7
 #define WIZARD_HEADER_HEIGHT 36
+
+/* Aero wizard metrics specified in DLUs of the sheet dialog */
+#define AERO_SIDE_MARGIN     6
+#define AERO_HEADER_TOP      7
+#define AERO_TITLE_HEIGHT    12
+#define AERO_SUBTITLE_TOP    (AERO_HEADER_TOP + AERO_TITLE_HEIGHT + 2)
+#define AERO_SUBTITLE_HEIGHT 11
+#define AERO_PAGE_TOP        (AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT + 4)
+#define AERO_COMMAND_HEIGHT  22
+#define AERO_BUTTON_GAP      3
+#define AERO_BACK_LEFT       1
+#define AERO_BACK_TOP        5
+#define AERO_BACK_WIDTH      16
+#define AERO_BACK_HEIGHT     12
+#define AERO_BACK_GAP        3
                          	
 /******************************************************************************
  * Prototypes
@@ -174,6 +190,7 @@ static int PROPSHEET_GetPageIndex(HPROPSHEETPAGE hpage, const PropSheetInfo* psI
 static PADDING_INFO PROPSHEET_GetPaddingInfoWizard(HWND hwndDlg, const PropSheetInfo* psInfo);
 static BOOL PROPSHEET_DoCommand(HWND hwnd, WORD wID);
 static BOOL PROPSHEET_RemovePage(HWND hwndDlg, int index, HPROPSHEETPAGE hpage);
+static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo);
 
 static INT_PTR CALLBACK
 PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -618,7 +635,14 @@ static VOID PROPSHEET_UnImplementedFlags(DWORD dwFlags)
    *  PSH_RTLREADING         0x00000800
    *  PSH_STRETCHWATERMARK   0x00040000
    *  PSH_USEPAGELANG        0x00200000
+   *
+   * recognised but unused by the aero wizard (M0):
+   *  PSH_RESIZABLE          0x04000000
+   *  PSH_HEADERBITMAP       0x08000000
+   *  PSH_NOMARGIN           0x10000000
    */
+
+    dwFlags &= ~(PSH_RESIZABLE | PSH_HEADERBITMAP | PSH_NOMARGIN);
 
     add_flag(PSH_RTLREADING);
     add_flag(PSH_STRETCHWATERMARK);
@@ -636,9 +660,19 @@ static VOID PROPSHEET_UnImplementedFlags(DWORD dwFlags)
 static void PROPSHEET_GetPageRect(const PropSheetInfo * psInfo, HWND hwndDlg,
                                   RECT *rc, HPROPSHEETPAGE hpsp)
 {
-    if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) {     
+    if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) {
         HWND hwndChild;
         RECT r;
+
+        if (psInfo->aeroChrome)
+        {
+            rc->left = AERO_SIDE_MARGIN;
+            rc->top = AERO_PAGE_TOP;
+            rc->right = rc->left + psInfo->width;
+            rc->bottom = rc->top + psInfo->height;
+            MapDialogRect(hwndDlg, rc);
+            return;
+        }
 
         if (((psInfo->ppshheader.dwFlags & (PSH_WIZARD97_NEW | PSH_WIZARD97_OLD)) &&
              (psInfo->ppshheader.dwFlags & PSH_HEADER) &&
@@ -731,7 +765,7 @@ static void PROPSHEET_CollectSheetInfoA(LPCPROPSHEETHEADERA lppsh,
 	lppsh->dwSize, lppsh->dwFlags, lppsh->hwndParent, lppsh->hInstance,
 	debugstr_a(lppsh->pszCaption), lppsh->nPages, lppsh->pfnCallback);
 
-  if (lppsh->dwFlags & INTRNL_ANY_WIZARD)
+  if ((lppsh->dwFlags & INTRNL_ANY_WIZARD) && !(lppsh->dwFlags & PSH_AEROWIZARD))
      psInfo->ppshheader.pszCaption = NULL;
   else
   {
@@ -774,7 +808,7 @@ static void PROPSHEET_CollectSheetInfoW(LPCPROPSHEETHEADERW lppsh,
   TRACE("\n** PROPSHEETHEADER **\ndwSize\t\t%ld\ndwFlags\t\t%#lx\nhwndParent\t%p\nhInstance\t%p\npszCaption\t%s\nnPages\t\t%d\npfnCallback\t%p\n",
       lppsh->dwSize, lppsh->dwFlags, lppsh->hwndParent, lppsh->hInstance, debugstr_w(lppsh->pszCaption), lppsh->nPages, lppsh->pfnCallback);
 
-  if (lppsh->dwFlags & INTRNL_ANY_WIZARD)
+  if ((lppsh->dwFlags & INTRNL_ANY_WIZARD) && !(lppsh->dwFlags & PSH_AEROWIZARD))
      psInfo->ppshheader.pszCaption = NULL;
   else
   {
@@ -1177,11 +1211,25 @@ static BOOL PROPSHEET_AdjustSizeWizard(HWND hwndDlg, const PropSheetInfo* psInfo
 
   TRACE("Biggest page %s\n", wine_dbgstr_rect(&rc));
 
-  /* Add space for the buttons row */
-  GetWindowRect(hwndLine, &lineRect);
-  MapWindowPoints(NULL, hwndDlg, (LPPOINT)&lineRect, 2);
-  GetClientRect(hwndDlg, &dialogRect);
-  rc.bottom += dialogRect.bottom - lineRect.top - 1;
+  if (psInfo->aeroChrome)
+  {
+    RECT margins;
+
+    SetRect(&margins, AERO_SIDE_MARGIN, AERO_PAGE_TOP,
+            AERO_SIDE_MARGIN, AERO_COMMAND_HEIGHT);
+    MapDialogRect(hwndDlg, &margins);
+
+    rc.right += margins.left + margins.right;
+    rc.bottom += margins.top + margins.bottom;
+  }
+  else
+  {
+    /* Add space for the buttons row */
+    GetWindowRect(hwndLine, &lineRect);
+    MapWindowPoints(NULL, hwndDlg, (LPPOINT)&lineRect, 2);
+    GetClientRect(hwndDlg, &dialogRect);
+    rc.bottom += dialogRect.bottom - lineRect.top - 1;
+  }
 
   /* Convert the client coordinates to window coordinates */
   AdjustWindowRect(&rc, GetWindowLongW(hwndDlg, GWL_STYLE), FALSE);
@@ -1299,6 +1347,44 @@ static BOOL PROPSHEET_AdjustButtonsWizard(HWND hwndParent,
   int num_buttons = 3;
   int buttonWidth, buttonHeight, lineHeight, lineWidth;
   PADDING_INFO padding = PROPSHEET_GetPaddingInfoWizard(hwndParent, psInfo);
+
+  if (psInfo->aeroChrome)
+  {
+    RECT rcPad;
+
+    /* Lay Next/Finish/Cancel out over the command area as direct children
+     * of the sheet so GetDlgItem(hwndSheet, id) finds them. Back stays in
+     * the header as the owner-drawn aero arrow (IDC_BACK_BUTTON). */
+    GetClientRect(hwndButton, &rcSheet);
+    buttonWidth = rcSheet.right;
+    buttonHeight = rcSheet.bottom;
+
+    GetClientRect(hwndParent, &rcSheet);
+
+    SetRect(&rcPad, AERO_SIDE_MARGIN, 0, AERO_BUTTON_GAP, AERO_COMMAND_HEIGHT);
+    MapDialogRect(hwndParent, &rcPad);
+
+    y = rcSheet.bottom - rcPad.bottom + ((rcPad.bottom - buttonHeight) / 2);
+
+    /* Cancel at the far right. */
+    x = rcSheet.right - rcPad.left - buttonWidth;
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    /* Finish immediately to the left of Cancel. */
+    x -= rcPad.right + buttonWidth;
+    hwndButton = GetDlgItem(hwndParent, IDC_FINISH_BUTTON);
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    /* Next immediately to the left of Finish. */
+    x -= rcPad.right + buttonWidth;
+    hwndButton = GetDlgItem(hwndParent, IDC_NEXT_BUTTON);
+    SetWindowPos(hwndButton, 0, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    return TRUE;
+  }
 
   if (psInfo->hasHelp)
     num_buttons++;
@@ -1566,6 +1652,31 @@ PROPSHEET_WizardSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 }
 
 /******************************************************************************
+ *            PROPSHEET_AeroPageSubclassProc
+ *
+ * Flat background for aero wizard pages: the page dialog and its static
+ * children paint the window colour instead of the dialog grey, so the
+ * content area below the header is white on both comctl32 builds.
+ */
+static LRESULT CALLBACK
+PROPSHEET_AeroPageSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uID, DWORD_PTR dwRef)
+{
+  switch (uMsg)
+  {
+    case WM_CTLCOLORDLG:
+      SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+      return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+
+    case WM_CTLCOLORSTATIC:
+      SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
+      SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+      return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+  }
+
+  return DefSubclassProc(hwnd, uMsg, wParam, lParam);
+}
+
+/******************************************************************************
  *            PROPSHEET_CreatePage
  *
  * Creates a page.
@@ -1645,6 +1756,9 @@ static BOOL PROPSHEET_CreatePage(HWND hwndParent,
       EnableThemeDialogTexture (hwndPage, ETDT_ENABLETAB);
 #endif
 
+  if (psInfo->aeroChrome)
+      SetWindowSubclass(hwndPage, PROPSHEET_AeroPageSubclassProc, 1, 0);
+
   return TRUE;
 }
 
@@ -1701,7 +1815,8 @@ static BOOL PROPSHEET_ShowPage(HWND hwndDlg, int index, PropSheetInfo * psInfo)
      PROPSHEET_CreatePage(hwndDlg, index, psInfo, psInfo->proppage[index].hpage);
   }
 
-  if (psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD)
+  if ((psInfo->ppshheader.dwFlags & INTRNL_ANY_WIZARD) &&
+      !psInfo->aeroChrome)
   {
      PROPSHEET_SetTitleW(hwndDlg, psInfo->ppshheader.dwFlags,
                          psInfo->proppage[index].pszText);
@@ -1725,13 +1840,16 @@ static BOOL PROPSHEET_ShowPage(HWND hwndDlg, int index, PropSheetInfo * psInfo)
   if (psInfo->ppshheader.dwFlags & (PSH_WIZARD97_OLD | PSH_WIZARD97_NEW) )
   {
       hwndLineHeader = GetDlgItem(hwndDlg, IDC_SUNKEN_LINEHEADER);
-      
+
       if ((HPSP_get_flags(psInfo->proppage[index].hpage) & PSP_HIDEHEADER) ||
               (!(psInfo->ppshheader.dwFlags & PSH_HEADER)) )
 	  ShowWindow(hwndLineHeader, SW_HIDE);
       else
 	  ShowWindow(hwndLineHeader, SW_SHOW);
   }
+
+  if (psInfo->aeroChrome)
+      PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 
   return TRUE;
 }
@@ -2686,6 +2804,363 @@ static void PROPSHEET_SetWizButtons(HWND hwndDlg, DWORD dwFlags)
 }
 
 /******************************************************************************
+ *            PROPSHEET_GetWizButtonByIndex
+ *
+ *     Maps a PSBTN_* index to the matching wizard command-area button.
+ */
+static HWND PROPSHEET_GetWizButtonByIndex(HWND hwndDlg, UINT button)
+{
+  switch (button)
+  {
+    case PSBTN_BACK:   return GetDlgItem(hwndDlg, IDC_BACK_BUTTON);
+    case PSBTN_NEXT:   return GetDlgItem(hwndDlg, IDC_NEXT_BUTTON);
+    case PSBTN_FINISH: return GetDlgItem(hwndDlg, IDC_FINISH_BUTTON);
+    case PSBTN_CANCEL: return GetDlgItem(hwndDlg, IDCANCEL);
+    default:           return NULL;
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_SetNextTextW
+ *
+ *     Sets the label of the Next button (PSM_SETNEXTTEXT, UNICODE only).
+ */
+static void PROPSHEET_SetNextTextW(HWND hwndDlg, LPCWSTR text)
+{
+  HWND hwndNext = GetDlgItem(hwndDlg, IDC_NEXT_BUTTON);
+
+  if (hwndNext)
+    SetWindowTextW(hwndNext, text);
+}
+
+/******************************************************************************
+ *            PROPSHEET_SetWizButtonTextW
+ *
+ *     Sets the label of any wizard command-area button (PSM_SETBUTTONTEXT,
+ *     UNICODE only).
+ */
+static void PROPSHEET_SetWizButtonTextW(HWND hwndDlg, UINT button, LPCWSTR text)
+{
+  HWND hwndButton = PROPSHEET_GetWizButtonByIndex(hwndDlg, button);
+
+  if (hwndButton)
+    SetWindowTextW(hwndButton, text);
+}
+
+/******************************************************************************
+ *            PROPSHEET_ShowWizButtons
+ *
+ *     Shows or hides wizard command-area buttons (PSM_SHOWWIZBUTTONS).
+ *     A button in dwMask is shown only when it is also in dwFlags.
+ */
+static void PROPSHEET_ShowWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask)
+{
+  static const struct
+  {
+    DWORD dwBit;
+    INT nIdButton;
+  } buttons[] =
+  {
+    { PSWIZB_BACK,    IDC_BACK_BUTTON   },
+    { PSWIZB_NEXT,    IDC_NEXT_BUTTON   },
+    { PSWIZB_FINISH,  IDC_FINISH_BUTTON },
+    { PSWIZB_CANCEL,  IDCANCEL          },
+  };
+  UINT i;
+
+  for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+  {
+    if (dwMask & buttons[i].dwBit)
+    {
+      HWND hwndButton = GetDlgItem(hwndDlg, buttons[i].nIdButton);
+
+      if (hwndButton)
+        ShowWindow(hwndButton, (dwFlags & buttons[i].dwBit) ? SW_SHOW : SW_HIDE);
+    }
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_EnableWizButtons
+ *
+ *     Enables or disables wizard command-area buttons (PSM_ENABLEWIZBUTTONS).
+ *     A button in dwMask is enabled only when it is also in dwFlags.
+ */
+static void PROPSHEET_EnableWizButtons(HWND hwndDlg, DWORD dwFlags, DWORD dwMask)
+{
+  static const struct
+  {
+    DWORD dwBit;
+    INT nIdButton;
+  } buttons[] =
+  {
+    { PSWIZB_BACK,    IDC_BACK_BUTTON   },
+    { PSWIZB_NEXT,    IDC_NEXT_BUTTON   },
+    { PSWIZB_FINISH,  IDC_FINISH_BUTTON },
+    { PSWIZB_CANCEL,  IDCANCEL          },
+  };
+  UINT i;
+
+  for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+  {
+    if (dwMask & buttons[i].dwBit)
+    {
+      HWND hwndButton = GetDlgItem(hwndDlg, buttons[i].nIdButton);
+
+      if (hwndButton)
+        EnableWindow(hwndButton, (dwFlags & buttons[i].dwBit) != 0);
+    }
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroBackRect
+ *
+ * Computes the title-bar back button rectangle in sheet pixels.
+ */
+static void PROPSHEET_AeroBackRect(HWND hwndDlg, RECT *rcBack)
+{
+  RECT rc;
+
+  SetRect(&rc, AERO_BACK_LEFT, AERO_BACK_TOP,
+          AERO_BACK_LEFT + AERO_BACK_WIDTH,
+          AERO_BACK_TOP + AERO_BACK_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  *rcBack = rc;
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroHeaderRects
+ *
+ * Computes the title/subtitle static rectangles in sheet pixels.
+ */
+static void PROPSHEET_AeroHeaderRects(HWND hwndDlg, RECT *rcTitle, RECT *rcSubTitle)
+{
+  RECT rcClient, rcSide, rc, rcBack;
+  int left;
+
+  GetClientRect(hwndDlg, &rcClient);
+
+  SetRect(&rcSide, 0, 0, AERO_SIDE_MARGIN, 0);
+  MapDialogRect(hwndDlg, &rcSide);
+
+  left = rcSide.right;
+  if (IsWindowVisible(GetDlgItem(hwndDlg, IDC_BACK_BUTTON)))
+  {
+    RECT rcGap;
+
+    PROPSHEET_AeroBackRect(hwndDlg, &rcBack);
+    SetRect(&rcGap, 0, 0, AERO_BACK_GAP, 0);
+    MapDialogRect(hwndDlg, &rcGap);
+    left = rcBack.right + rcGap.right;
+  }
+
+  SetRect(&rc, AERO_SIDE_MARGIN, AERO_HEADER_TOP,
+          AERO_SIDE_MARGIN + 1, AERO_HEADER_TOP + AERO_TITLE_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  SetRect(rcTitle, left, rc.top, rcClient.right - rcSide.right, rc.bottom);
+
+  SetRect(&rc, AERO_SIDE_MARGIN, AERO_SUBTITLE_TOP,
+          AERO_SIDE_MARGIN + 1, AERO_SUBTITLE_TOP + AERO_SUBTITLE_HEIGHT);
+  MapDialogRect(hwndDlg, &rc);
+  SetRect(rcSubTitle, left, rc.top, rcClient.right - rcSide.right, rc.bottom);
+}
+
+/******************************************************************************
+ *            HPSP_get_header_textW
+ *
+ * Returns a copy of the page header title/subtitle, converted to UNICODE.
+ */
+static WCHAR *HPSP_get_header_textW(HPROPSHEETPAGE hpsp, BOOL subtitle)
+{
+  if (!hpsp)
+    return NULL;
+
+  if (hpsp->unicode)
+  {
+    const WCHAR *str = subtitle ? hpsp->pspW.pszHeaderSubTitle : hpsp->pspW.pszHeaderTitle;
+    return str ? heap_strdupW(str) : NULL;
+  }
+  else
+  {
+    const char *str = subtitle ? hpsp->pspA.pszHeaderSubTitle : hpsp->pspA.pszHeaderTitle;
+    return str ? heap_strdupAtoW(str) : NULL;
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroUpdateHeader
+ *
+ * Shows the header title/subtitle of the active page in the flat chrome.
+ */
+static void PROPSHEET_AeroUpdateHeader(HWND hwndDlg, PropSheetInfo *psInfo)
+{
+  int index = psInfo->active_page;
+  DWORD flags;
+  WCHAR *title, *subtitle;
+  HWND hwndTitle, hwndSubTitle, hwndBack;
+  RECT rcTitle, rcSubTitle;
+
+  if (index < 0)
+    return;
+
+  hwndTitle = GetDlgItem(hwndDlg, IDC_AERO_TITLE);
+  hwndSubTitle = GetDlgItem(hwndDlg, IDC_AERO_SUBTITLE);
+  if (!hwndTitle || !hwndSubTitle)
+    return;
+
+  hwndBack = GetDlgItem(hwndDlg, IDC_BACK_BUTTON);
+  if (hwndBack)
+    ShowWindow(hwndBack, index > 0 ? SW_SHOW : SW_HIDE);
+
+  PROPSHEET_AeroHeaderRects(hwndDlg, &rcTitle, &rcSubTitle);
+  SetWindowPos(hwndTitle, NULL, rcTitle.left, rcTitle.top,
+               rcTitle.right - rcTitle.left, rcTitle.bottom - rcTitle.top,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  SetWindowPos(hwndSubTitle, NULL, rcSubTitle.left, rcSubTitle.top,
+               rcSubTitle.right - rcSubTitle.left,
+               rcSubTitle.bottom - rcSubTitle.top,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+
+  flags = HPSP_get_flags(psInfo->proppage[index].hpage);
+
+  title = (flags & PSP_HIDEHEADER) ? NULL :
+      HPSP_get_header_textW(psInfo->proppage[index].hpage, FALSE);
+  subtitle = (flags & PSP_HIDEHEADER) ? NULL :
+      HPSP_get_header_textW(psInfo->proppage[index].hpage, TRUE);
+
+  if (title && title[0])
+  {
+    SetWindowTextW(hwndTitle, title);
+    ShowWindow(hwndTitle, SW_SHOW);
+  }
+  else
+    ShowWindow(hwndTitle, SW_HIDE);
+
+  if (subtitle && subtitle[0])
+  {
+    SetWindowTextW(hwndSubTitle, subtitle);
+    ShowWindow(hwndSubTitle, SW_SHOW);
+  }
+  else
+    ShowWindow(hwndSubTitle, SW_HIDE);
+
+  Free(title);
+  Free(subtitle);
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroDrawBackButton
+ *
+ * Owner-draw of the flat title-bar back button: a plain left arrow over the
+ * white sheet background.
+ */
+static void PROPSHEET_AeroDrawBackButton(DRAWITEMSTRUCT *dis)
+{
+  HDC hdc = dis->hDC;
+  RECT rc = dis->rcItem;
+  BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;
+  BOOL enabled = (dis->itemState & ODS_DISABLED) == 0;
+  BOOL focused = (dis->itemState & ODS_FOCUS) != 0;
+  COLORREF clrArrow = GetSysColor(enabled ? COLOR_WINDOWTEXT : COLOR_3DSHADOW);
+  POINT pts[7];
+  HBRUSH hbrArrow, hbrOld;
+  HPEN hpenArrow, hpenOld;
+  int cx, cy, midY, tipX, tailX, baseX, halfHead, shaft;
+
+  FillRect(hdc, &rc, GetSysColorBrush(pressed ? COLOR_3DFACE : COLOR_WINDOW));
+
+  cx = rc.right - rc.left;
+  cy = rc.bottom - rc.top;
+  midY = rc.top + cy / 2;
+  tipX = rc.left + cx / 6;
+  tailX = rc.left + cx - cx / 6;
+  baseX = rc.left + cx / 2 - 1;
+  halfHead = cy / 3;
+  shaft = (cy / 6 > 1) ? cy / 6 : 1;
+
+  pts[0].x = tipX;  pts[0].y = midY;
+  pts[1].x = baseX; pts[1].y = midY - halfHead;
+  pts[2].x = baseX; pts[2].y = midY - shaft;
+  pts[3].x = tailX; pts[3].y = midY - shaft;
+  pts[4].x = tailX; pts[4].y = midY + shaft;
+  pts[5].x = baseX; pts[5].y = midY + shaft;
+  pts[6].x = baseX; pts[6].y = midY + halfHead;
+
+  hbrArrow = CreateSolidBrush(clrArrow);
+  hpenArrow = CreatePen(PS_SOLID, 1, clrArrow);
+  hbrOld = (HBRUSH)SelectObject(hdc, hbrArrow);
+  hpenOld = (HPEN)SelectObject(hdc, hpenArrow);
+  Polygon(hdc, pts, 7);
+  SelectObject(hdc, hbrOld);
+  SelectObject(hdc, hpenOld);
+  DeleteObject(hbrArrow);
+  DeleteObject(hpenArrow);
+
+  if (focused && enabled)
+  {
+    InflateRect(&rc, -2, -2);
+    DrawFocusRect(hdc, &rc);
+  }
+}
+
+/******************************************************************************
+ *            PROPSHEET_AeroSetupChrome
+ *
+ * Turns the shared wizard template into the flat aero chrome: the command
+ * area back button, the separators and the help button go away, and the
+ * header statics and the title-bar back button are created empty (the
+ * statics are filled per page, the back button shows from page two on).
+ */
+static void PROPSHEET_AeroSetupChrome(HWND hwndDlg, PropSheetInfo *psInfo)
+{
+  RECT rcTitle, rcSubTitle, rcBack;
+  HWND hwndTitle, hwndSubTitle, hwndBack;
+
+  /* Hide the command-area separators and help button. */
+  ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINE), SW_HIDE);
+  ShowWindow(GetDlgItem(hwndDlg, IDC_SUNKEN_LINEHEADER), SW_HIDE);
+  ShowWindow(GetDlgItem(hwndDlg, IDHELP), SW_HIDE);
+
+  /* Move the existing Back button to the header as the aero back arrow.
+   * It keeps IDC_BACK_BUTTON so GetDlgItem(hwndSheet, IDC_BACK_BUTTON)
+   * and PSM_* messages work, and there is no separate arrow window. */
+  PROPSHEET_AeroBackRect(hwndDlg, &rcBack);
+  hwndBack = GetDlgItem(hwndDlg, IDC_BACK_BUTTON);
+  if (hwndBack)
+  {
+    SetWindowLongW(hwndBack, GWL_STYLE,
+                   WS_CHILD | WS_TABSTOP | BS_OWNERDRAW);
+    SetWindowPos(hwndBack, NULL, rcBack.left, rcBack.top,
+                 rcBack.right - rcBack.left, rcBack.bottom - rcBack.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    ShowWindow(hwndBack, SW_HIDE);
+  }
+
+  PROPSHEET_AeroHeaderRects(hwndDlg, &rcTitle, &rcSubTitle);
+
+  hwndTitle = CreateWindowExW(0, L"STATIC", L"",
+                              WS_CHILD | SS_LEFT | SS_NOPREFIX,
+                              rcTitle.left, rcTitle.top,
+                              rcTitle.right - rcTitle.left,
+                              rcTitle.bottom - rcTitle.top,
+                              hwndDlg, (HMENU)(INT_PTR)IDC_AERO_TITLE,
+                              COMCTL32_hModule, NULL);
+  if (hwndTitle)
+    SendMessageW(hwndTitle, WM_SETFONT, (WPARAM)psInfo->hFontBold, FALSE);
+
+  hwndSubTitle = CreateWindowExW(0, L"STATIC", L"",
+                                 WS_CHILD | SS_LEFT | SS_NOPREFIX,
+                                 rcSubTitle.left, rcSubTitle.top,
+                                 rcSubTitle.right - rcSubTitle.left,
+                                 rcSubTitle.bottom - rcSubTitle.top,
+                                 hwndDlg, (HMENU)(INT_PTR)IDC_AERO_SUBTITLE,
+                                 COMCTL32_hModule, NULL);
+  if (hwndSubTitle)
+    SendMessageW(hwndSubTitle, WM_SETFONT, (WPARAM)psInfo->hFont, FALSE);
+}
+
+/******************************************************************************
  *            PROPSHEET_SetHeaderTitleW
  */
 static void PROPSHEET_SetHeaderTitleW(HWND hwndDlg, UINT page_index, const WCHAR *title)
@@ -2698,6 +3173,9 @@ static void PROPSHEET_SetHeaderTitleW(HWND hwndDlg, UINT page_index, const WCHAR
         return;
 
     HPSP_set_header_title(psInfo->proppage[page_index].hpage, title);
+
+    if (psInfo->aeroChrome && (int)page_index == psInfo->active_page)
+        PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 }
 
 /******************************************************************************
@@ -2727,6 +3205,9 @@ static void PROPSHEET_SetHeaderSubTitleW(HWND hwndDlg, UINT page_index, const WC
         return;
 
     HPSP_set_header_subtitle(psInfo->proppage[page_index].hpage, subtitle);
+
+    if (psInfo->aeroChrome && (int)page_index == psInfo->active_page)
+        PROPSHEET_AeroUpdateHeader(hwndDlg, psInfo);
 }
 
 /******************************************************************************
@@ -2940,6 +3421,19 @@ static BOOL PROPSHEET_IsDialogMessage(HWND hwnd, LPMSG lpMsg)
    TRACE("\n");
    if (!psInfo || (hwnd != lpMsg->hwnd && !IsChild(hwnd, lpMsg->hwnd)))
       return FALSE;
+
+   if (psInfo->aeroChrome && lpMsg->message == WM_SYSKEYDOWN &&
+       lpMsg->wParam == VK_LEFT)
+   {
+      HWND hwndBackBtn = GetDlgItem(hwnd, IDC_BACK_BUTTON);
+
+      if (hwndBackBtn && IsWindowVisible(hwndBackBtn) &&
+          IsWindowEnabled(hwndBackBtn))
+      {
+         PROPSHEET_Back(hwnd);
+         return TRUE;
+      }
+   }
 
    if (lpMsg->message == WM_KEYDOWN && (GetKeyState(VK_CONTROL) & 0x8000))
    {
@@ -3417,6 +3911,12 @@ static LRESULT PROPSHEET_Paint(HWND hwnd, HDC hdcParam)
     hdc = hdcParam ? hdcParam : BeginPaint(hwnd, &ps);
     if (!hdc) return 1;
 
+    if (psInfo->aeroChrome)
+    {
+        GetClientRect(hwnd, &r);
+        FillRect(hdc, &r, GetSysColorBrush(COLOR_WINDOW));
+    }
+
     hdcSrc = CreateCompatibleDC(0);
 
     if (psInfo->ppshheader.dwFlags & PSH_USEHPLWATERMARK) 
@@ -3641,6 +4141,8 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
       GetWindowTextW(hwnd, psInfo->strPropertiesFor, MAX_CAPTION_LENGTH);
 
+      psInfo->aeroChrome = ((psInfo->ppshheader.dwFlags & PSH_AEROWIZARD) && IsAppThemed());
+
       PROPSHEET_CreateTabControl(hwnd, psInfo);
 
       PROPSHEET_LoadWizardBitmaps(psInfo);
@@ -3650,6 +4152,8 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         ShowWindow(hwndTabCtrl, SW_HIDE);
         PROPSHEET_AdjustSizeWizard(hwnd, psInfo);
         PROPSHEET_AdjustButtonsWizard(hwnd, psInfo);
+        if (psInfo->aeroChrome)
+          PROPSHEET_AeroSetupChrome(hwnd, psInfo);
         SetFocus(GetDlgItem(hwnd, IDC_NEXT_BUTTON));
       }
       else
@@ -3713,10 +4217,36 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
       PROPSHEET_Paint(hwnd, (HDC)wParam);
       return TRUE;
 
+    case WM_CTLCOLORSTATIC:
+    {
+      PropSheetInfo* psInfo = GetPropW(hwnd, PropSheetInfoStr);
+
+      if (psInfo && psInfo->aeroChrome)
+      {
+        SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+        return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+      }
+      return FALSE;
+    }
+
+    case WM_DRAWITEM:
+    {
+      PropSheetInfo* psInfo = GetPropW(hwnd, PropSheetInfoStr);
+      DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;
+
+      if (psInfo && psInfo->aeroChrome &&
+          dis->CtlType == ODT_BUTTON && dis->CtlID == IDC_BACK_BUTTON)
+      {
+        PROPSHEET_AeroDrawBackButton(dis);
+        return TRUE;
+      }
+      return FALSE;
+    }
+
     case WM_DESTROY:
       PROPSHEET_CleanUp(hwnd);
       return TRUE;
-
     case WM_CLOSE:
       PROPSHEET_Cancel(hwnd, 1);
       return FALSE; /* let DefDlgProc post us WM_COMMAND/IDCANCEL */
@@ -3916,6 +4446,22 @@ PROPSHEET_DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     case PSM_SETWIZBUTTONS:
       PROPSHEET_SetWizButtons(hwnd, (DWORD)lParam);
+      return TRUE;
+
+    case PSM_SETNEXTTEXTW:
+      PROPSHEET_SetNextTextW(hwnd, (LPCWSTR)lParam);
+      return TRUE;
+
+    case PSM_SETBUTTONTEXTW:
+      PROPSHEET_SetWizButtonTextW(hwnd, (UINT)wParam, (LPCWSTR)lParam);
+      return TRUE;
+
+    case PSM_SHOWWIZBUTTONS:
+      PROPSHEET_ShowWizButtons(hwnd, (DWORD)wParam, (DWORD)lParam);
+      return TRUE;
+
+    case PSM_ENABLEWIZBUTTONS:
+      PROPSHEET_EnableWizButtons(hwnd, (DWORD)wParam, (DWORD)lParam);
       return TRUE;
 
     case PSM_SETCURSELID:

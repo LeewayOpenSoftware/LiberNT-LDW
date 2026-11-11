@@ -17,6 +17,8 @@ class CTaskbarList :
     UINT m_ShellHookMsg;
 
     HWND TaskWnd();
+    BOOL SendTaskWnd(UINT Msg, WPARAM wParam, LPARAM lParam, LRESULT *pResult);
+    HRESULT SendDecoration(UINT Msg, HWND hWnd, LPARAM lParam);
     void SendTaskWndShellHook(WPARAM wParam, HWND hWnd);
 
 public:

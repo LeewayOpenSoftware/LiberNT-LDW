@@ -14,6 +14,17 @@
 @ stdcall NmrClientDetachProviderComplete(ptr)
 @ stdcall NmrProviderDetachClientComplete(ptr)
 
+; Network store (NSI) hosted in netio.sys
+@ stdcall NsiRegisterProvider(ptr long ptr ptr ptr)
+@ stdcall NsiDeregisterProvider(ptr)
+@ stdcall NsiNotifyChange(ptr long ptr long)
+@ stdcall NsiRequestChangeNotificationKm(ptr long ptr)
+@ stdcall NsiCancelChangeNotificationsKm(ptr)
+@ stdcall NsiQueryTableSizesKm(ptr long ptr)
+@ stdcall NsiEnumerateAllParametersKm(ptr long ptr ptr)
+@ stdcall NsiGetAllParametersKm(ptr long ptr long ptr long ptr ptr ptr)
+@ stdcall NsiGetParameterKm(ptr long ptr long ptr long long long ptr long)
+
 ; Windows Filtering Platform (WFP) kernel stubs — dev-nt6-1 branch
 @ stdcall FwpsCalloutRegister0(ptr ptr ptr)
 @ stdcall FwpsCalloutUnregisterById0(long)

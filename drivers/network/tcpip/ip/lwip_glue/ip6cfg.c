@@ -18,6 +18,8 @@
 #include <lwip/priv/nd6_priv.h>
 
 #include "lwip_glue.h"
+#include "lwiphooks.h"
+#include "../../include/ifinfo.h"
 #include <lwiphooks.h>
 #include <bcrypt.h>
 #include <nldef.h>
@@ -527,6 +529,8 @@ LibIP6StoreRoute(struct netif *Netif, const ip6_addr_t *Prefix, ULONG PrefixLeng
     Route->PreferredLifetime = PreferredLifetime;
     Route->Expiry = LibIP6Expiry(ValidLifetime);
     nd6_clear_destination_cache();
+    TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_ADD);
     return Route;
 }
 
@@ -564,6 +568,8 @@ LibIP6DropImplicitRoute(struct netif *Netif, PLIB_IP6_ADDRESS_INFO Info)
     {
         RtlZeroMemory(Route, sizeof(*Route));
         nd6_clear_destination_cache();
+        TiSignalChange();
+        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
     }
 }
 
@@ -594,6 +600,20 @@ LibIP6ForgetAddressInfo(struct netif *Netif, PLIB_IP6_ADDRESS_INFO Info)
 {
     LibIP6DropImplicitRoute(Netif, Info);
     RtlZeroMemory(Info, sizeof(*Info));
+}
+
+void
+LibIP6AddressStateChanged(void)
+{
+    TiSignalChange();
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_UNICAST, TI_NSI_CHANGE_PARAMETER);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_PARAMETER);
+}
+
+void
+LibIP6NeighborChanged(void)
+{
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_NEIGHBOUR, TI_NSI_CHANGE_PARAMETER);
 }
 
 VOID
@@ -1583,6 +1603,8 @@ LibIP6RaRecv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *ad
                     {
                         RtlZeroMemory(Route, sizeof(*Route));
                         nd6_clear_destination_cache();
+                        TiSignalChange();
+                        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
                     }
                 }
             }
@@ -1846,6 +1868,8 @@ LibIP6SetRouteCallback(void *arg)
         }
         RtlZeroMemory(Route, sizeof(*Route));
         nd6_clear_destination_cache();
+        TiSignalChange();
+        TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_FORWARD, TI_NSI_CHANGE_DELETE);
         Msg->Status = STATUS_SUCCESS;
         return;
 

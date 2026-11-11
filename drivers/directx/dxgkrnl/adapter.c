@@ -573,6 +573,11 @@ DxgkpShouldRegisterDisplayBridge(
         if (OwnerDeviceObject != NULL)
             ObDereferenceObject(OwnerDeviceObject);
         KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
+        /* Keep the fallback stopped until the first VidPn commit validates
+           the claimant; DxgkpCompleteAdapterStart defers the completion and
+           the hot-plug rebuild resolves it either way. */
+        Claimant->PostDisplayHandoffCompletionDeferred = TRUE;
+        InterlockedExchange(&Claimant->PostDisplayHandoffRolledBack, 0);
     }
 
     if (!RegisterDisplayBridge)
@@ -632,9 +637,35 @@ DxgkpCompletePostDisplayHandoff(
 
     if (Action == DxgkPostDisplayCompletionRollback && FallbackAdapter != NULL)
     {
+        InterlockedExchange(&Claimant->PostDisplayHandoffRolledBack, 1);
         Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
-        if (Owner == NULL)
+        if (Owner != NULL && Owner != Claimant)
         {
+            SuppressFallbackUi = TRUE;
+            DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed but "
+                         "adapter %p already owns the boot display; "
+                         "fallback remains stopped\n",
+                         Claimant,
+                         Owner);
+        }
+        else
+        {
+            if (Owner == Claimant)
+            {
+                /* The failed claimant already holds the boot display from
+                   its ownership claim; release it so the restarted
+                   fallback can re-acquire the desktop. */
+                DxgkpClearPostDisplayOwner(Claimant);
+                DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed "
+                             "0x%08lX; releasing the boot display it "
+                             "claimed\n",
+                             Claimant,
+                             StartStatus);
+            }
+            /* The claimant registered the win32ss display bridge at start;
+               release it so the restarted fallback can register, and stop
+               the claimant's presents (timer + shadow surface). */
+            DxgkDisplayUnregister(Claimant);
             DxgkpSetBasicDisplayUiSuppressed(FallbackAdapter, FALSE);
             DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed "
                          "0x%08lX; restarting BasicDisplay adapter %p\n",
@@ -652,15 +683,6 @@ DxgkpCompletePostDisplayHandoff(
                             FallbackAdapter,
                             RollbackStatus);
         }
-        else
-        {
-            SuppressFallbackUi = TRUE;
-            DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: claimant %p failed but "
-                         "adapter %p already owns the boot display; "
-                         "fallback remains stopped\n",
-                         Claimant,
-                         Owner);
-        }
         if (OwnerDeviceObject != NULL)
             ObDereferenceObject(OwnerDeviceObject);
     }
@@ -675,6 +697,22 @@ DxgkpCompletePostDisplayHandoff(
         ExReleaseRundownProtection(&FallbackAdapter->RemoveRundownRef);
     if (FallbackDeviceObject != NULL)
         ObDereferenceObject(FallbackDeviceObject);
+}
+
+/* Resolve a deferred take-over handoff from the first VidPn commit attempt.
+ * A success commits the handoff (BasicDisplay stays retired); a failure
+ * rolls it back and BasicDisplay restarts with the desktop.  STATUS_RETRY
+ * outcomes leave the deferral in place for the requeued rebuild. */
+VOID
+DxgkpCompleteDeferredPostDisplayHandoff(
+    _In_ PDXGKRNL_ADAPTER Adapter,
+    _In_ NTSTATUS CommitStatus)
+{
+    if (Adapter == NULL || CommitStatus == STATUS_RETRY)
+        return;
+    if (InterlockedExchange(&Adapter->PostDisplayHandoffCompletionDeferred, 0) == 0)
+        return;
+    DxgkpCompletePostDisplayHandoff(Adapter, CommitStatus, TRUE);
 }
 
 static NTSTATUS
@@ -1497,6 +1535,7 @@ DxgkpStopTdrWatchdog(
  */
 static LONG DxgkpInitialized = 0;
 static NTSTATUS DxgkpInitializationStatus = STATUS_UNSUCCESSFUL;
+static BOOLEAN g_DxgkpLegacyWddm1xEnabled;
 static FAST_MUTEX DxgkpMapMemoryMutex;
 static LIST_ENTRY DxgkpMapMemoryList;
 static FAST_MUTEX DxgkpSleepDisableMutex;
@@ -4285,6 +4324,40 @@ DxgkpEnsureGlobalInitialization(VOID)
 
     /* Initialize debug helpers. */
     DxgkDebugInit();
+
+    {
+        RTL_QUERY_REGISTRY_TABLE QueryTable[2];
+        union { UNICODE_STRING String; ULONG Raw[4]; } Value;
+        WCHAR ValueBuffer[8];
+
+        RtlZeroMemory(&Value, sizeof(Value));
+        RtlZeroMemory(ValueBuffer, sizeof(ValueBuffer));
+        Value.String.Buffer = ValueBuffer;
+        Value.String.MaximumLength = sizeof(ValueBuffer);
+
+        RtlZeroMemory(QueryTable, sizeof(QueryTable));
+        QueryTable[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
+        QueryTable[0].Name = L"LegacyWddm1x";
+        QueryTable[0].EntryContext = &Value;
+        QueryTable[0].DefaultType = REG_SZ;
+        QueryTable[0].DefaultData = L"0";
+        QueryTable[0].DefaultLength = sizeof(L"0");
+
+        (VOID)RtlQueryRegistryValues(RTL_REGISTRY_CONTROL, L"GraphicsDrivers", QueryTable, NULL, NULL);
+
+        /* DIRECT returns REG_SZ as a UNICODE_STRING and REG_DWORD as a raw ULONG.
+         * For a value that exists the UNICODE_STRING points at the stored data;
+         * the local ValueBuffer only backs the default, so test the string
+         * itself and not the spare buffer. */
+        if ((Value.String.Length == sizeof(L"1") - sizeof(WCHAR) &&
+             Value.String.Buffer != NULL && Value.String.Buffer[0] == L'1') ||
+            Value.Raw[0] == 1)
+        {
+            g_DxgkpLegacyWddm1xEnabled = TRUE;
+        }
+        DXGKRNL_INFO("DxgkpEnsureGlobalInitialization: LegacyWddm1x=%d\n",
+                     g_DxgkpLegacyWddm1xEnabled ? 1 : 0);
+    }
 
     Status = DxgkpMms2Initialize();
     if (!NT_SUCCESS(Status))
@@ -7661,7 +7734,12 @@ DxgkpSelectInterfaceAdvertisement(
     _Out_ PULONG AdvertisedSize,
     _Out_ PULONG AdvertisedVersion)
 {
-    if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_WIN7)
+    if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_VISTA_SP1)
+    {
+        *AdvertisedSize = DXGKP_FIELD_END(DXGKRNL_INTERFACE, DxgkCbExcludeAdapterAccess);
+        *AdvertisedVersion = RequestedVersion;
+    }
+    else if (RequestedVersion <= DXGKDDI_INTERFACE_VERSION_WIN7)
     {
         *AdvertisedSize = DXGKP_FIELD_END(DXGKRNL_INTERFACE, DxgkCbExcludeAdapterAccess);
         *AdvertisedVersion = DXGKDDI_INTERFACE_VERSION_WIN7;
@@ -13264,7 +13342,109 @@ DxgkpCompleteAdapterStart(
         KeSetEvent(&Adapter->AdapterStartCompletedEvent, IO_NO_INCREMENT, FALSE);
     }
     KeReleaseMutex(&Adapter->AdapterMutex, FALSE);
-    DxgkpCompletePostDisplayHandoff(Adapter, Status, Restartable);
+    /* A successful take-over from the BasicDisplay fallback completes only
+       when the first VidPn commit proves the claimant can drive the desktop
+       (DxgkpCompleteDeferredPostDisplayHandoff from the rebuild worker).  A
+       failure here resolves immediately: the fallback must come back. */
+    if (NT_SUCCESS(Status) && InterlockedCompareExchange(&Adapter->PostDisplayHandoffCompletionDeferred, 0, 0) != 0)
+    {
+        DXGKRNL_TRACE("DxgkAdapterStart: POST handoff completion deferred until first VidPn commit\n");
+    }
+    else
+    {
+        BOOLEAN HadFallbackTransaction = Adapter->PostDisplayHandoffCore.FallbackStopped;
+
+        DxgkpCompletePostDisplayHandoff(Adapter, Status, Restartable);
+        if (!HadFallbackTransaction &&
+            Adapter->MiniportContext != NULL &&
+            !Adapter->IsBasicDisplayFallback)
+        {
+            /* The claimant failed before claiming the POST display, so no
+               handoff transaction ran and the rollback above was a no-op.
+               Its StartDevice may still have poked the shared boot
+               framebuffer (BAR sizing, dispi registers) while the
+               BasicDisplay fallback was scanning the desktop, leaving it
+               invisible - and a restartable failure has just cleared the
+               POST owner, so the owner lookup alone would miss the
+               fallback.  Re-assert the fallback's scanout. */
+            PDXGKRNL_ADAPTER Owner;
+            PDXGKRNL_ADAPTER Fallback = NULL;
+            PDEVICE_OBJECT OwnerDeviceObject = NULL;
+            PDXGKRNL_MINIPORT_CONTEXT MpCtx = Adapter->MiniportContext;
+            NTSTATUS ReassertStatus = STATUS_UNSUCCESSFUL;
+            PLIST_ENTRY Entry;
+            KIRQL OldIrql;
+
+            (VOID)KeWaitForSingleObject(&g_PostDisplayOwnershipMutex,
+                                        Executive, KernelMode, FALSE, NULL);
+            Owner = DxgkpReferencePostDisplayOwner(&OwnerDeviceObject);
+            if (Owner != NULL && Owner->IsBasicDisplayFallback &&
+                Owner->State == DxgkAdapterStateStarted)
+                Fallback = Owner;
+            if (Fallback == NULL)
+            {
+                /* The owner was cleared with the failure (or never
+                   published): find the started fallback on this miniport's
+                   adapter list. */
+                KeAcquireSpinLock(&MpCtx->AdapterListLock, &OldIrql);
+                for (Entry = MpCtx->AdapterListHead.Flink;
+                     Entry != &MpCtx->AdapterListHead;
+                     Entry = Entry->Flink)
+                {
+                    PDXGKRNL_ADAPTER Candidate =
+                        CONTAINING_RECORD(Entry, DXGKRNL_ADAPTER,
+                                          MiniportAdapterListEntry);
+                    if (Candidate->IsBasicDisplayFallback &&
+                        Candidate->State == DxgkAdapterStateStarted)
+                    {
+                        Fallback = Candidate;
+                        break;
+                    }
+                }
+                KeReleaseSpinLock(&MpCtx->AdapterListLock, OldIrql);
+            }
+            if (Fallback != NULL && !InbvCheckDisplayOwnership())
+            {
+                /* The claimant's start took the boot display
+                   (InbvNotifyDisplayOwnershipLost runs VidCleanUp, a black
+                   fill of the physical framebuffer), and a no-claim failure
+                   leaves the fallback running with the desktop content
+                   destroyed and no repaint path firing.  Replay the
+                   claim-rollback recovery: stop the fallback and start it
+                   again - the same DxgkpStopPostDisplayOwner the takeover
+                   uses and the same DxgkAdapterStart the rollback uses -
+                   which re-registers the bridge and makes win32k redraw
+                   the desktop (the sequence L6d/L6e validated). */
+                DXGK_DISPLAY_INFORMATION DisplayInformation;
+                BOOLEAN ReleasedByDriver;
+
+                ReassertStatus = DxgkpStopPostDisplayOwner(Fallback,
+                                                           &DisplayInformation,
+                                                           &ReleasedByDriver);
+                if (NT_SUCCESS(ReassertStatus))
+                    ReassertStatus = DxgkAdapterStart(Fallback, NULL, NULL);
+                /* The restarted fallback now holds the desktop the way the
+                   boot-time handover would have; the boot log must yield
+                   the display or every later present is dropped outright -
+                   DxgkpBootLogHoldsDisplay gates the present path and the
+                   present timer on inbv ownership. */
+                if (NT_SUCCESS(ReassertStatus))
+                    InbvNotifyDisplayOwnershipLost(NULL);
+            }
+            DXGKRNL_INFO("POSTDISPLAY_REASSERT: claimant %p failed 0x%08lX "
+                         "without a claim; owner %p fallback %p restart "
+                         "0x%08lX inbv %s\n",
+                         Adapter,
+                         Status,
+                         Owner,
+                         Fallback,
+                         ReassertStatus,
+                         InbvCheckDisplayOwnership() ? "owned" : "lost");
+            if (OwnerDeviceObject != NULL)
+                ObDereferenceObject(OwnerDeviceObject);
+            KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
+        }
+    }
     if (QueueHotPlug)
     {
         (VOID)DxgkGpuVaInitializePageTablePool(Adapter);
@@ -16244,11 +16424,16 @@ DxgkpMiniportPnpDispatch(
                 IoCompleteRequest(Irp, IO_NO_INCREMENT);
                 return STATUS_SUCCESS;
             }
-            if (InterlockedCompareExchange(&Adapter->MiniportStartFailed, 0, 0) != 0)
-            {
-                Irp->IoStatus.Information |= PNP_DEVICE_FAILED;
-                Irp->IoStatus.Status = STATUS_SUCCESS;
-            }
+            /* A miniport start failure is recoverable: dxgkrnl converts the
+               start IRP to success (see IRP_MN_START_DEVICE above) and the
+               BasicDisplay fallback keeps serving the desktop.  Do NOT report
+               PNP_DEVICE_FAILED here - this pnpmgr couples that flag to
+               DeviceNodeAwaitingQueuedRemoval (see devaction.c), which
+               surprise-removes the display device, tears the whole stack
+               down and leaves the session headless.  Windows keeps a
+               start-failed display device with problem code 10 instead;
+               revisit the problem code when pnpmgr distinguishes it from
+               removal. */
             return DxgkpForwardIrp(Adapter, Irp);
         }
 
@@ -17177,13 +17362,27 @@ DxgkpAddDeviceRegistered(
 
     /* Registration already enforces the Win11 profile.  Keep the same floor
      * at AddDevice so a corrupted or stale registration cannot reintroduce a
-     * pre-WDDM 1.2 miniport through the PnP path. */
+     * pre-WDDM 1.2 miniport through the PnP path.  The LegacyWddm1x switch
+     * lifts the floor for exactly the 1.0/1.1 full-table miniports that
+     * registration already admitted. */
     if (!DxgkCapsCoreInterfaceVersionAtLeast(
             MpCtx->InitData.s.Version,
             DXGK_CAPS_CORE_LEVEL_WDDM_1_2))
     {
-        DXGKRNL_WARN("DxgkpAddDevice: pre-WDDM 1.2 miniport version 0x%lX rejected by the Win11 profile\n", MpCtx->InitData.s.Version);
-        return STATUS_NOT_SUPPORTED;
+        ULONG VersionLevel = DxgkCapsCoreInterfaceVersionToLevel(
+            MpCtx->InitData.s.Version);
+        BOOLEAN LegacyAdmit = g_DxgkpLegacyWddm1xEnabled &&
+            !MpCtx->IsDisplayOnlyDriver &&
+            (VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_0 ||
+             VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_1);
+
+        if (!LegacyAdmit)
+        {
+            DXGKRNL_WARN("DxgkpAddDevice: pre-WDDM 1.2 miniport version 0x%lX rejected by the Win11 profile\n", MpCtx->InitData.s.Version);
+            return STATUS_NOT_SUPPORTED;
+        }
+        DXGKRNL_INFO("DxgkpAddDevice: LegacyWddm1x admitting pre-WDDM 1.2 miniport version 0x%lX\n",
+                     MpCtx->InitData.s.Version);
     }
 
     /* Create the FDO; size the DeviceExtension to hold DXGKRNL_ADAPTER. */
@@ -17748,6 +17947,17 @@ DxgkpFullInitDataPrefixSize(
     if (DxgkCapsCoreInterfaceVersionAtLeast(
             Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_3))
         return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiFormatHistoryBuffer);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_2))
+        return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_1))
+        return DXGKP_FIELD_END(
+            DRIVER_INITIALIZATION_DATA,
+            DxgkDdiSetDisplayPrivateDriverFormat);
+    if (DxgkCapsCoreInterfaceVersionAtLeast(
+            Version, DXGK_CAPS_CORE_LEVEL_WDDM_1_0))
+        return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiDestroyContext);
     return DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval);
 }
 
@@ -17765,6 +17975,7 @@ DxgkpDodInitDataPrefixSize(
 
 #ifdef _WIN64
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiSetDisplayPrivateDriverFormat) == 0x1F0);
+C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiDestroyContext) == 0x1E0);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiQueryVidPnHWCapability) == 0x238);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiNotifySurpriseRemoval) == 0x298);
 C_ASSERT(DXGKP_FIELD_END(DRIVER_INITIALIZATION_DATA, DxgkDdiFormatHistoryBuffer) == 0x2C8);
@@ -17966,9 +18177,19 @@ DxgkpInitializeMiniport(
     if (!DxgkCapsCoreInterfaceVersionPermitted(
             Version, REACTOS_WDDM_TARGET_LEVEL))
     {
-        DXGKRNL_ERR("DxgkpInitializeMiniport: DDI selector 0x%lX level %lu is outside the Win11 miniport range %lu..%lu\n",
-                    Version, VersionLevel, (ULONG)DXGK_CAPS_CORE_LEVEL_WDDM_2_0, (ULONG)REACTOS_WDDM_TARGET_LEVEL);
-        return STATUS_REVISION_MISMATCH;
+        BOOLEAN LegacyAdmit = g_DxgkpLegacyWddm1xEnabled &&
+            (VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_0 ||
+             VersionLevel == DXGK_CAPS_CORE_LEVEL_WDDM_1_1) &&
+            !UseDodLayout;
+
+        if (!LegacyAdmit)
+        {
+            DXGKRNL_ERR("DxgkpInitializeMiniport: DDI selector 0x%lX level %lu is outside the Win11 miniport range %lu..%lu\n",
+                        Version, VersionLevel, (ULONG)DXGK_CAPS_CORE_LEVEL_WDDM_2_0, (ULONG)REACTOS_WDDM_TARGET_LEVEL);
+            return STATUS_REVISION_MISMATCH;
+        }
+        DXGKRNL_INFO("DxgkpInitializeMiniport: LegacyWddm1x admitting DDI 0x%lX level %lu\n",
+                     Version, VersionLevel);
     }
 
     if (UseDodLayout)

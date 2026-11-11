@@ -326,23 +326,26 @@ Directory::LoadDirectNode(_In_ ULONG Depth,
 
         IndexRecordNumber = AllocationOffset / IndexRecordSize;
 
-        if (!DiskVolume->IndexWorkBuffer ||
-            DiskVolume->IndexWorkBufferSize < IndexRecordSize)
+        if (!EnumerationBuffer ||
+            EnumerationBufferSize < IndexRecordSize)
         {
-            delete[] DiskVolume->IndexWorkBuffer;
-            DiskVolume->IndexWorkBuffer =
+            delete[] EnumerationBuffer;
+            EnumerationBuffer =
                 new(PagedPool, TAG_NTFS) UCHAR[IndexRecordSize];
-            DiskVolume->IndexWorkBufferSize =
-                DiskVolume->IndexWorkBuffer ? IndexRecordSize : 0;
-            DiskVolume->IndexWorkBufferValid = FALSE;
+            EnumerationBufferSize =
+                EnumerationBuffer ? IndexRecordSize : 0;
+            EnumerationLoadedDepth = -1;
+            EnumerationLoadedVCN = ~(ULONGLONG)0;
         }
-        if (!DiskVolume->IndexWorkBuffer)
+        if (!EnumerationBuffer)
             return STATUS_INSUFFICIENT_RESOURCES;
 
         if (EnumerationLoadedDepth != (LONG)Depth ||
             EnumerationLoadedVCN != Frame->VCN)
         {
-            DiskVolume->IndexWorkBufferValid = FALSE;
+            /* A refill that fails below leaves the buffer half written. */
+            EnumerationLoadedDepth = -1;
+            EnumerationLoadedVCN = ~(ULONGLONG)0;
             BitmapLength =
                 GetAttributeDataSize(EnumerationBitmap);
             if ((IndexRecordNumber >> 3) >= BitmapLength)
@@ -367,7 +370,7 @@ Directory::LoadDirectNode(_In_ ULONG Depth,
             BytesRemaining = IndexRecordSize;
             Status = EnumerationFile->CopyData(
                 EnumerationAllocation,
-                DiskVolume->IndexWorkBuffer,
+                EnumerationBuffer,
                 &BytesRemaining,
                 AllocationOffset);
             if (!NT_SUCCESS(Status) || BytesRemaining != 0)
@@ -378,7 +381,7 @@ Directory::LoadDirectNode(_In_ ULONG Depth,
             }
 
             NodeBuffer =
-                (PIndexBuffer)DiskVolume->IndexWorkBuffer;
+                (PIndexBuffer)EnumerationBuffer;
             Status = NtfsApplyFixup(
                 &NodeBuffer->RecordHeader,
                 IndexRecordSize,
@@ -397,7 +400,7 @@ Directory::LoadDirectNode(_In_ ULONG Depth,
             EnumerationLoadedVCN = Frame->VCN;
         }
 
-        NodeBuffer = (PIndexBuffer)DiskVolume->IndexWorkBuffer;
+        NodeBuffer = (PIndexBuffer)EnumerationBuffer;
         *Header = &NodeBuffer->IndexHeader;
         *HeaderBytes =
             IndexRecordSize -

@@ -310,8 +310,27 @@ void netconn_release( struct netconn *conn )
     free(conn);
 }
 
+/* Map a netconn_verify_cert() result to its WINHTTP_CALLBACK_STATUS_FLAG_* bit, 0 if it is not a certificate error. */
+static DWORD cert_error_to_secure_flag( DWORD err )
+{
+    switch (err)
+    {
+    case ERROR_WINHTTP_SECURE_CERT_REV_FAILED:   return WINHTTP_CALLBACK_STATUS_FLAG_CERT_REV_FAILED;
+    case ERROR_WINHTTP_SECURE_INVALID_CERT:      return WINHTTP_CALLBACK_STATUS_FLAG_INVALID_CERT;
+    case ERROR_WINHTTP_SECURE_CERT_REVOKED:      return WINHTTP_CALLBACK_STATUS_FLAG_CERT_REVOKED;
+    case ERROR_WINHTTP_SECURE_INVALID_CA:        return WINHTTP_CALLBACK_STATUS_FLAG_INVALID_CA;
+    case ERROR_WINHTTP_SECURE_CERT_CN_INVALID:   return WINHTTP_CALLBACK_STATUS_FLAG_CERT_CN_INVALID;
+    case ERROR_WINHTTP_SECURE_CERT_DATE_INVALID: return WINHTTP_CALLBACK_STATUS_FLAG_CERT_DATE_INVALID;
+    case ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE:  return WINHTTP_CALLBACK_STATUS_FLAG_CERT_WRONG_USAGE;
+    default:                                     return 0;
+    }
+}
+
+/* On a rejected server certificate, returns ERROR_WINHTTP_SECURE_FAILURE and stores the reason in
+ * *secure_flags (WINHTTP_CALLBACK_STATUS_FLAG_*), as Windows reports it. Any other failure leaves
+ * *secure_flags at 0. The connection is refused in both cases. */
 DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD security_flags, CredHandle *cred_handle,
-                              BOOL check_revocation )
+                              BOOL check_revocation, DWORD *secure_flags )
 {
     SecBuffer out_buf = {0, SECBUFFER_TOKEN, NULL}, in_bufs[2] = {{0, SECBUFFER_TOKEN}, {0, SECBUFFER_EMPTY}};
     SecBufferDesc out_desc = {SECBUFFER_VERSION, 1, &out_buf}, in_desc = {SECBUFFER_VERSION, 2, in_bufs};
@@ -327,6 +346,7 @@ DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD secur
     const DWORD isc_req_flags = ISC_REQ_ALLOCATE_MEMORY|ISC_REQ_USE_SESSION_KEY|ISC_REQ_CONFIDENTIALITY
         |ISC_REQ_SEQUENCE_DETECT|ISC_REQ_REPLAY_DETECT|ISC_REQ_MANUAL_CRED_VALIDATION;
 
+    *secure_flags = 0;
     if (!(read_buf = malloc( read_buf_size ))) return ERROR_OUTOFMEMORY;
 
     memset( &ctx, 0, sizeof(ctx) );
@@ -437,6 +457,8 @@ DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD secur
         free(conn->ssl_write_buf);
         conn->ssl_write_buf = NULL;
         DeleteSecurityContext(&ctx);
+        if (status == SEC_E_OK && (*secure_flags = cert_error_to_secure_flag( res )))
+            return ERROR_WINHTTP_SECURE_FAILURE;
         return ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
     }
 

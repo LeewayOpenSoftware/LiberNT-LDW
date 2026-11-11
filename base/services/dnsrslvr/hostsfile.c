@@ -189,16 +189,16 @@ AddIpv6HostEntries(
 }
 
 
+/* Returns the full path of the hosts file in a process heap block, or NULL */
 static
-FILE *
-OpenHostsFile(VOID)
+PWSTR
+BuildHostsPath(VOID)
 {
     PWSTR ExpandedPath;
     PWSTR DatabasePath;
     HKEY DatabaseKey;
     DWORD RegSize = 0;
     size_t StringLength;
-    FILE *pHostsFile;
     DWORD dwError;
 
     ExpandedPath = HeapAlloc(GetProcessHeap(), 0, MAX_PATH * sizeof(WCHAR));
@@ -278,10 +278,21 @@ OpenHostsFile(VOID)
     /* Add the database name */
     StringCchCatW(ExpandedPath, MAX_PATH, L"hosts");
 
-    /* Open the hosts file */
-    pHostsFile = _wfopen(ExpandedPath, L"r");
+    return ExpandedPath;
+}
 
-    HeapFree(GetProcessHeap(), 0, ExpandedPath);
+static
+FILE *
+OpenHostsFile(VOID)
+{
+    FILE *pHostsFile;
+    PWSTR Path = BuildHostsPath();
+
+    if (Path == NULL)
+        return NULL;
+
+    pHostsFile = _wfopen(Path, L"r");
+    HeapFree(GetProcessHeap(), 0, Path);
 
     return pHostsFile;
 }
@@ -363,7 +374,11 @@ ReadHostsFile(VOID)
         for (;;)
         {
             if (*Ptr == 0 || *Ptr == '#')
+            {
+                /* the last line of the file may end right after the name */
+                NameEnd = Ptr;
                 break;
+            }
 
             if (isspace(*Ptr))
             {
@@ -410,6 +425,202 @@ ReadHostsFile(VOID)
     fclose(pHostFile);
 
     return TRUE;
+}
+
+
+/* Reload and watch ***********************************************************/
+
+static CRITICAL_SECTION HostsLock;
+static BOOL HostsLockInitialized = FALSE;
+static HANDLE HostsStopEvent = NULL;
+static HANDLE HostsWatchThread = NULL;
+
+/* What the file looked like when it was last read */
+static BOOL HostsStampValid = FALSE;
+static BOOL HostsStampExists = FALSE;
+static FILETIME HostsStampTime;
+static DWORD HostsStampSize;
+
+static
+BOOL
+GetHostsStamp(
+    _Out_ PFILETIME Time,
+    _Out_ PDWORD Size)
+{
+    WIN32_FILE_ATTRIBUTE_DATA Data;
+    PWSTR Path = BuildHostsPath();
+    BOOL Exists;
+
+    Time->dwLowDateTime = Time->dwHighDateTime = 0;
+    *Size = 0;
+    if (Path == NULL)
+        return FALSE;
+
+    Exists = GetFileAttributesExW(Path, GetFileExInfoStandard, &Data);
+    HeapFree(GetProcessHeap(), 0, Path);
+    if (Exists)
+    {
+        *Time = Data.ftLastWriteTime;
+        *Size = Data.nFileSizeLow;
+    }
+    return Exists;
+}
+
+/* Caller holds HostsLock */
+static
+VOID
+ReloadHostsFileLocked(VOID)
+{
+    /* Stamp first: an edit that lands while the file is read is seen again by the next check */
+    HostsStampExists = GetHostsStamp(&HostsStampTime, &HostsStampSize);
+    HostsStampValid = TRUE;
+
+    DnsIntCacheFlush(CACHE_FLUSH_ALL);
+    ReadHostsFile();
+}
+
+/*
+ * Forget everything that was learned from the hosts file (and every answer that
+ * DnsQuery got from it through dnsapi), then read the file again. Like the DNS
+ * Client service on Windows, so that a removed line never survives in the cache.
+ */
+VOID
+ReloadHostsFile(VOID)
+{
+    if (!HostsLockInitialized)
+        return;
+
+    EnterCriticalSection(&HostsLock);
+    ReloadHostsFileLocked();
+    LeaveCriticalSection(&HostsLock);
+}
+
+/*
+ * Called before a query is answered from the cache. The change watcher reloads
+ * the file about 100 ms after an edit; in that window a cached answer from DNS
+ * would still win over a line that was just added. Look at the file's size and
+ * time stamp (one cheap call) and reload at once when they differ from the last
+ * read, so that the answer never depends on who is faster, the watcher or the query.
+ */
+VOID
+HostsRefreshIfChanged(VOID)
+{
+    FILETIME Time;
+    DWORD Size;
+    BOOL Exists;
+
+    if (!HostsLockInitialized)
+        return;
+
+    Exists = GetHostsStamp(&Time, &Size);
+
+    EnterCriticalSection(&HostsLock);
+    if (!HostsStampValid ||
+        Exists != HostsStampExists ||
+        (Exists && (Size != HostsStampSize || CompareFileTime(&Time, &HostsStampTime) != 0)))
+    {
+        ReloadHostsFileLocked();
+    }
+    LeaveCriticalSection(&HostsLock);
+}
+
+static
+DWORD
+WINAPI
+HostsWatchRoutine(LPVOID lpParameter)
+{
+    HANDLE Handles[2];
+    PWSTR Path;
+    size_t Length;
+    HANDLE Change = INVALID_HANDLE_VALUE;
+    DWORD Wait;
+
+    UNREFERENCED_PARAMETER(lpParameter);
+
+    Handles[0] = HostsStopEvent;
+
+    Path = BuildHostsPath();
+    if (Path != NULL)
+    {
+        /* Cut the file name: watch the directory, the file may be replaced or recreated */
+        Length = wcslen(Path);
+        while (Length > 0 && Path[Length - 1] != L'\\')
+            Length--;
+        if (Length > 0)
+            Path[Length - 1] = UNICODE_NULL;
+
+        Change = FindFirstChangeNotificationW(Path,
+                                              FALSE,
+                                              FILE_NOTIFY_CHANGE_FILE_NAME |
+                                              FILE_NOTIFY_CHANGE_SIZE |
+                                              FILE_NOTIFY_CHANGE_LAST_WRITE);
+        HeapFree(GetProcessHeap(), 0, Path);
+    }
+
+    if (Change == INVALID_HANDLE_VALUE)
+    {
+        DPRINT1("DNSRSLVR: cannot watch the hosts directory (%lu)\n", GetLastError());
+        return 1;
+    }
+    Handles[1] = Change;
+
+    for (;;)
+    {
+        Wait = WaitForMultipleObjects(2, Handles, FALSE, INFINITE);
+        if (Wait != WAIT_OBJECT_0 + 1)
+            break;
+
+        /* An editor writes in several steps: let it finish, unless we are asked to stop */
+        if (WaitForSingleObject(HostsStopEvent, 100) == WAIT_OBJECT_0)
+            break;
+
+        FindNextChangeNotification(Change);
+        ReloadHostsFile();
+    }
+
+    FindCloseChangeNotification(Change);
+    return 0;
+}
+
+BOOL
+HostsWatchStart(VOID)
+{
+    if (HostsWatchThread != NULL)
+        return TRUE;
+
+    InitializeCriticalSection(&HostsLock);
+    HostsLockInitialized = TRUE;
+
+    HostsStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (HostsStopEvent != NULL)
+        HostsWatchThread = CreateThread(NULL, 0, HostsWatchRoutine, NULL, 0, NULL);
+
+    if (HostsWatchThread == NULL)
+    {
+        if (HostsStopEvent != NULL)
+            CloseHandle(HostsStopEvent);
+        HostsStopEvent = NULL;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+VOID
+HostsWatchStop(VOID)
+{
+    if (HostsWatchThread == NULL)
+        return;
+
+    SetEvent(HostsStopEvent);
+    WaitForSingleObject(HostsWatchThread, 5000);
+    CloseHandle(HostsWatchThread);
+    CloseHandle(HostsStopEvent);
+    HostsWatchThread = NULL;
+    HostsStopEvent = NULL;
+
+    HostsLockInitialized = FALSE;
+    DeleteCriticalSection(&HostsLock);
 }
 
 /* EOF */

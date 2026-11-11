@@ -1975,6 +1975,9 @@ WriteFileFromHost(NtfsFuseState* State,
         Status = STATUS_END_OF_FILE;
         goto NtfsError;
     }
+    Status = NtfsFileRecordTrimSpeculativeAllocation(File);
+    if (!NT_SUCCESS(Status))
+        goto NtfsError;
 
     Result = 0;
     goto Done;
@@ -3894,11 +3897,26 @@ NtfsFuseOpen(const char* Path, struct fuse_file_info* FileInfo)
 static int
 NtfsFuseRelease(const char* Path, struct fuse_file_info* FileInfo)
 {
+    PNtfsFileRecord File = HandleRecord(FileInfo);
+    int Result = 0;
+
     UNREFERENCED_PARAMETER(Path);
     if (!(FileInfo->fh & NTFS_FUSE_CACHED_RECORD_BIT))
-        NtfsFileRecordDestroy(HandleRecord(FileInfo));
+    {
+        /* As NTFS does at cleanup, give back what an append reserved past
+         * the end of the data; otherwise every file written in two pieces
+         * keeps a whole 1 MB growth step. */
+        if (File && FuseState()->Writable)
+        {
+            NTSTATUS Status = NtfsFileRecordTrimSpeculativeAllocation(File);
+
+            if (!NT_SUCCESS(Status))
+                Result = -NtStatusToErrno(Status);
+        }
+        NtfsFileRecordDestroy(File);
+    }
     FileInfo->fh = 0;
-    return 0;
+    return Result;
 }
 
 static int
@@ -5036,6 +5054,7 @@ PrintUsage(const char* Program)
             "  %s [--show-metadata] --basic IMAGE PATH\n"
             "  %s --recover IMAGE\n"
             "  %s --check IMAGE [--fix]\n"
+            "  %s --verify-shape IMAGE\n"
             "  %s --set-label IMAGE LABEL\n"
             "  %s --set-basic IMAGE PATH CREATION ACCESS WRITE CHANGE ATTRS\n"
             "  %s --set-security IMAGE PATH SOURCE\n"
@@ -5071,6 +5090,7 @@ PrintUsage(const char* Program)
             "  %s [--show-metadata] --streams IMAGE PATH\n"
             "  %s [--show-metadata] [--writable] IMAGE MOUNTPOINT"
             " [FUSE options]\n",
+            Program,
             Program,
             Program,
             Program,
@@ -5468,6 +5488,42 @@ main(int Argc, char** Argv)
         printf("%s\n", Result ? "read-only" : "writable");
         CloseImage(&State);
         return Result;
+    }
+
+    if (strcmp(Argv[First], "--verify-shape") == 0)
+    {
+        NtfsShapeFault Fault;
+        ULONGLONG Files = 0;
+
+        if (First + 2 != Argc || ShowMetadata)
+        {
+            PrintUsage(Argv[0]);
+            return 2;
+        }
+        Status = OpenImage(Argv[First + 1], false, &State);
+        if (NT_SUCCESS(Status))
+            Status = NtfsVerifyVolumeShape(State.Volume, 0, &Files, &Fault);
+        if (Status == STATUS_FILE_CORRUPT_ERROR && Fault.Invariant != NtfsShapeOk)
+        {
+            printf("shape: invariant %u record 0x%" PRIx64 " detail 0x%" PRIx64 " files=%" PRIu64 "\n",
+                   (unsigned)Fault.Invariant, (uint64_t)Fault.Record, (uint64_t)Fault.Detail, (uint64_t)Files);
+            CloseImage(&State);
+            return 3;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            fprintf(stderr,
+                    "%s: ntfslib status 0x%08" PRIx32 " (%s)\n",
+                    Argv[First + 1],
+                    (uint32_t)Status,
+                    strerror(NtStatusToErrno(Status)));
+            if (State.Volume)
+                CloseImage(&State);
+            return 1;
+        }
+        printf("shape: ok files=%" PRIu64 "\n", (uint64_t)Files);
+        CloseImage(&State);
+        return 0;
     }
 
     if (strcmp(Argv[First], "--check") == 0)

@@ -9,6 +9,35 @@
 #include <ndk/iofuncs.h>
 #include <taskbarpinlock.h>
 #include <taskbarpinicon.h>
+#include <propsys.h>
+
+static const PROPERTYKEY PinPkeyAppUserModelId =
+    { { 0x9f4c2855, 0x9f79, 0x4b39, { 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3 } }, 5 };
+
+static BOOL
+PinHasAppId(PCWSTR pszShortcut)
+{
+    CComPtr<IShellLinkW> Link;
+    CComPtr<IPersistFile> Persist;
+    CComPtr<IPropertyStore> Store;
+    PROPVARIANT Variant;
+    BOOL bHasAppId = FALSE;
+
+    HRESULT hr = Link.CoCreateInstance(CLSID_ShellLink, IID_IShellLinkW, NULL, CLSCTX_INPROC_SERVER);
+    if (SUCCEEDED(hr))
+        hr = Link->QueryInterface(IID_PPV_ARG(IPersistFile, &Persist));
+    if (SUCCEEDED(hr))
+        hr = Persist->Load(pszShortcut, STGM_READ);
+    if (SUCCEEDED(hr))
+        hr = Link->QueryInterface(IID_PPV_ARG(IPropertyStore, &Store));
+    if (FAILED(hr))
+        return FALSE;
+    PropVariantInit(&Variant);
+    if (SUCCEEDED(Store->GetValue(PinPkeyAppUserModelId, &Variant)))
+        bHasAppId = Variant.vt == VT_LPWSTR && Variant.pwszVal && Variant.pwszVal[0];
+    PropVariantClear(&Variant);
+    return bHasAppId;
+}
 
 #define TASKBAR_PIN_CHANGED_MESSAGE L"TaskbarPinningChanged"
 
@@ -141,6 +170,10 @@ GetTaskbarPinFolder(BOOL bCreate, CStringW &Folder)
     if (FAILED(hr) || !PathAppendW(szFolder, L"TaskBar"))
         return FAILED(hr) ? hr : HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
 
+    DWORD Attributes = GetFileAttributesW(szFolder);
+    if (Attributes != INVALID_FILE_ATTRIBUTES && !(Attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
+
     if (bCreate)
     {
         INT error = SHCreateDirectoryExW(NULL, szFolder, NULL);
@@ -222,7 +255,6 @@ FindPinnedShortcut(PCWSTR pszTarget, CStringW *pShortcut)
     BYTE Buffer[8192];
     BOOLEAN bRestart = TRUE;
     BOOL bFound = FALSE;
-    HRESULT hrRead = S_OK;
 
     while (!bFound)
     {
@@ -253,11 +285,8 @@ FindPinnedShortcut(PCWSTR pszTarget, CStringW *pShortcut)
                     SUCCEEDED(StringCchPrintfW(szShortcut, _countof(szShortcut), L"%s\\%s",
                                                Folder.GetString(), szName)))
                 {
-                    if (!ResolvePinTarget(szShortcut, Target))
-                    {
-                        hrRead = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-                    }
-                    else if (Target.CompareNoCase(pszTarget) == 0)
+                    if (ResolvePinTarget(szShortcut, Target) &&
+                        Target.CompareNoCase(pszTarget) == 0 && !PinHasAppId(szShortcut))
                     {
                         if (pShortcut)
                             *pShortcut = szShortcut;
@@ -276,7 +305,7 @@ FindPinnedShortcut(PCWSTR pszTarget, CStringW *pShortcut)
     }
 
     CloseHandle(hFolder);
-    return bFound ? S_OK : FAILED(hrRead) ? hrRead : S_FALSE;
+    return bFound ? S_OK : S_FALSE;
 }
 
 static VOID

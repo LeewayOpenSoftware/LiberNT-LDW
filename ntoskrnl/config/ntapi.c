@@ -1754,6 +1754,11 @@ NtInitializeRegistry(IN USHORT Flag)
      * if the boot log was never armed.
      */
     KdStartBootLog();
+
+    /* The hive list is loaded and the registry lock released: the
+     * hibernation-file reserve may start now (it waits for this and for the
+     * first paging file, whichever comes last). */
+    PopHiberRegistryInitialized();
     return STATUS_SUCCESS;
 }
 

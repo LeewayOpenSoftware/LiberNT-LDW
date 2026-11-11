@@ -794,6 +794,7 @@ CreateProcessAsUserCommon(
     HANDLE hTokenDup = NULL;
     HANDLE OriginalImpersonationToken = NULL;
     HANDLE NullToken = NULL;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(StatusOnExit);
 
     if (hToken != NULL)
     {

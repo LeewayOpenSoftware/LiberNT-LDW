@@ -472,6 +472,7 @@ RtlpDphPlaceOnBusyList(PDPH_HEAP_ROOT DphRoot, PDPH_HEAP_BLOCK DphNode)
 {
     BOOLEAN NewElement;
     PVOID AddressUserData;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(AddressUserData);
 
     DPRINT("RtlpDphPlaceOnBusyList(%p %p)\n", DphRoot, DphNode);
 
@@ -643,6 +644,7 @@ RtlpDphRemoveFromBusyList(PDPH_HEAP_ROOT DphRoot,
                           PDPH_HEAP_BLOCK Node)
 {
     BOOLEAN ElementPresent;
+    DBG_UNREFERENCED_LOCAL_VARIABLE(ElementPresent);
 
     DPRINT("RtlpDphRemoveFromBusyList(%p %p)\n", DphRoot, Node);
 
@@ -724,6 +726,7 @@ RtlpDphCoalesceNodeIntoAvailable(PDPH_HEAP_ROOT DphRoot,
             /* Check they actually belong to the same virtual memory block */
             NTSTATUS Status;
             MEMORY_BASIC_INFORMATION MemoryBasicInfo;
+            DBG_UNREFERENCED_LOCAL_VARIABLE(Status);
 
             Status = ZwQueryVirtualMemory(
                 ZwCurrentProcess(),
@@ -767,6 +770,7 @@ RtlpDphCoalesceNodeIntoAvailable(PDPH_HEAP_ROOT DphRoot,
                 /* Check they actually belong to the same virtual memory block */
                 NTSTATUS Status;
                 MEMORY_BASIC_INFORMATION MemoryBasicInfo;
+                DBG_UNREFERENCED_LOCAL_VARIABLE(Status);
 
                 Status = ZwQueryVirtualMemory(
                     ZwCurrentProcess(),

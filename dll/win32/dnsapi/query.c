@@ -581,6 +581,170 @@ QueryLocalName(LPCWSTR Name, WORD Type, PDNS_RECORD *Result)
     return ERROR_SUCCESS;
 }
 
+#define HOSTS_FILE_LIMIT (1024 * 1024)
+
+/* The hosts file is %DatabasePath%\hosts, DatabasePath being a value of Tcpip\Parameters
+ * (%SystemRoot%\system32\drivers\etc when it is not set) */
+static
+HANDLE
+OpenHostsFile(VOID)
+{
+    WCHAR Path[MAX_PATH], Expanded[MAX_PATH];
+    DWORD Size = sizeof(Path), Type = 0;
+    SIZE_T Length;
+    HKEY Key;
+
+    Path[0] = UNICODE_NULL;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Services\\Tcpip\\Parameters",
+                      0, KEY_QUERY_VALUE, &Key) == ERROR_SUCCESS)
+    {
+        if (RegQueryValueExW(Key, L"DatabasePath", NULL, &Type, (LPBYTE)Path, &Size) != ERROR_SUCCESS ||
+            (Type != REG_SZ && Type != REG_EXPAND_SZ))
+            Path[0] = UNICODE_NULL;
+        RegCloseKey(Key);
+    }
+    Path[ARRAYSIZE(Path) - 1] = UNICODE_NULL;
+
+    if (Path[0])
+    {
+        DWORD Written = ExpandEnvironmentStringsW(Path, Expanded, ARRAYSIZE(Expanded));
+
+        if (!Written || Written > ARRAYSIZE(Expanded))
+            return INVALID_HANDLE_VALUE;
+    }
+    else
+    {
+        if (!GetSystemDirectoryW(Expanded, ARRAYSIZE(Expanded)) ||
+            FAILED(StringCchCatW(Expanded, ARRAYSIZE(Expanded), L"\\drivers\\etc")))
+            return INVALID_HANDLE_VALUE;
+    }
+
+    Length = wcslen(Expanded);
+    if (Length && Expanded[Length - 1] != L'\\' && FAILED(StringCchCatW(Expanded, ARRAYSIZE(Expanded), L"\\")))
+        return INVALID_HANDLE_VALUE;
+    if (FAILED(StringCchCatW(Expanded, ARRAYSIZE(Expanded), L"hosts")))
+        return INVALID_HANDLE_VALUE;
+
+    return CreateFileW(Expanded, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+}
+
+/* Next blank-separated word of a hosts file line; terminates it in place */
+static
+PSTR
+NextHostsToken(PSTR *Cursor)
+{
+    PSTR Start = *Cursor, End;
+
+    while (*Start == ' ' || *Start == '\t' || *Start == '\r')
+        Start++;
+    if (!*Start)
+    {
+        *Cursor = Start;
+        return NULL;
+    }
+    End = Start;
+    while (*End && *End != ' ' && *End != '\t' && *End != '\r')
+        End++;
+    if (*End)
+        *End++ = ANSI_NULL;
+    *Cursor = End;
+    return Start;
+}
+
+/* A name in the hosts file is answered before DNS is asked, as on Windows. The file is read on every query,
+ * so an entry added or removed while the system runs takes effect at once: there is no copy to go stale.
+ * ERROR_FILE_NOT_FOUND means "not in the file, ask DNS"; a name that is listed but has no address of the
+ * requested family answers with no records instead of leaving the machine. */
+static
+DNS_STATUS
+QueryHostsFile(LPCWSTR Name, WORD Type, PDNS_RECORD *Result)
+{
+    WCHAR Query[DNS_MAX_NAME_BUFFER_LENGTH], Word[DNS_MAX_NAME_BUFFER_LENGTH];
+    SIZE_T Length = wcslen(Name);
+    PDNS_RECORD *Tail = Result;
+    BOOL NameFound = FALSE;
+    DWORD Size, Read = 0;
+    HANDLE File;
+    PSTR Data, Line, Next;
+
+    if ((Type != DNS_TYPE_A && Type != DNS_TYPE_AAAA) || !Length || Length >= ARRAYSIZE(Query))
+        return ERROR_FILE_NOT_FOUND;
+    StringCchCopyW(Query, ARRAYSIZE(Query), Name);
+    if (Query[Length - 1] == L'.')
+        Query[Length - 1] = UNICODE_NULL;
+
+    File = OpenHostsFile();
+    if (File == INVALID_HANDLE_VALUE)
+        return ERROR_FILE_NOT_FOUND;
+    Size = GetFileSize(File, NULL);
+    if (Size == INVALID_FILE_SIZE || Size > HOSTS_FILE_LIMIT)
+    {
+        CloseHandle(File);
+        return ERROR_FILE_NOT_FOUND;
+    }
+    Data = RtlAllocateHeap(RtlGetProcessHeap(), 0, Size + 1);
+    if (!Data)
+    {
+        CloseHandle(File);
+        return ERROR_FILE_NOT_FOUND;
+    }
+    if (!ReadFile(File, Data, Size, &Read, NULL))
+        Read = 0;
+    CloseHandle(File);
+    Data[Read] = ANSI_NULL;
+
+    for (Line = Data; *Line; Line = Next)
+    {
+        PSTR End = strchr(Line, '\n'), Hash, Cursor, Address, Token;
+        IN_ADDR Address4;
+        IN6_ADDR Address6;
+        BOOL Is4 = FALSE, Is6 = FALSE;
+
+        if (End)
+        {
+            *End = ANSI_NULL;
+            Next = End + 1;
+        }
+        else
+            Next = Line + strlen(Line);
+
+        Hash = strchr(Line, '#');
+        if (Hash)
+            *Hash = ANSI_NULL;
+
+        Cursor = Line;
+        Address = NextHostsToken(&Cursor);
+        if (!Address || strlen(Address) >= ARRAYSIZE(Word) ||
+            !MultiByteToWideChar(CP_ACP, 0, Address, -1, Word, ARRAYSIZE(Word)))
+            continue;
+        Is4 = ParseIpv4Address(Word, &Address4);
+        Is6 = !Is4 && ParseIpv6Address(Word, &Address6);
+        if (!Is4 && !Is6)
+            continue;
+
+        /* every following word is a name of that address (the first one and its aliases) */
+        while ((Token = NextHostsToken(&Cursor)) != NULL)
+        {
+            if (strlen(Token) >= ARRAYSIZE(Word) || !MultiByteToWideChar(CP_ACP, 0, Token, -1, Word, ARRAYSIZE(Word)))
+                continue;
+            if (_wcsicmp(Word, Query))
+                continue;
+            NameFound = TRUE;
+            if (Type == DNS_TYPE_A && Is4)
+                AppendAddressRecord(Name, Type, &Address4, &Tail, 86400, DnsSectionAnswer);
+            else if (Type == DNS_TYPE_AAAA && Is6)
+                AppendAddressRecord(Name, Type, &Address6, &Tail, 86400, DnsSectionAnswer);
+            break;
+        }
+    }
+    RtlFreeHeap(RtlGetProcessHeap(), 0, Data);
+
+    if (*Result)
+        return ERROR_SUCCESS;
+    return NameFound ? DNS_INFO_NO_RECORDS : ERROR_FILE_NOT_FOUND;
+}
+
 DNS_STATUS
 WINAPI
 Query_Main(LPCWSTR Name,
@@ -598,6 +762,13 @@ Query_Main(LPCWSTR Name,
     Status = QueryLocalName(Name, Type, QueryResultSet);
     if (Status != ERROR_FILE_NOT_FOUND)
         return Status;
+
+    if (!(Options & DNS_QUERY_WIRE_ONLY))
+    {
+        Status = QueryHostsFile(Name, Type, QueryResultSet);
+        if (Status != ERROR_FILE_NOT_FOUND)
+            return Status;
+    }
 
     return DnsIntResolve(Name, Type, Options, (PDNS_RECORDW *)QueryResultSet);
 }

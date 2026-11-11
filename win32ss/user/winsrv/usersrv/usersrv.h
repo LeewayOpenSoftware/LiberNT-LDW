@@ -41,4 +41,7 @@ FindTopLevelWnd(
 VOID
 UserInitHardErrorsCache(VOID);
 
+VOID
+CallInitCommonControls(VOID);
+
 #endif /* __USERSRV_H__ */

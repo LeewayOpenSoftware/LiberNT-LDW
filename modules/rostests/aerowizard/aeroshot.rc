@@ -1,0 +1,43 @@
+#include <windef.h>
+#include <winuser.h>
+#include <commctrl.h>
+#include <dlgs.h>
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+
+#include <reactos/manifest_exe.rc>
+
+#include "resource.h"
+
+IDD_SHOT_PAGE1 DIALOG 0, 0, 300, 150
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "page1"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT "PAGE ONE - method selection content area", -1, 10, 16, 280, 12
+    AUTORADIOBUTTON "Search automatically for an updated driver", IDC_SHOT_OPT_AUTO, 10, 40, 280, 12
+    AUTORADIOBUTTON "Browse my computer for drivers", IDC_SHOT_OPT_BROWSE, 10, 56, 280, 12
+    AUTORADIOBUTTON "Don't install any driver software", IDC_SHOT_OPT_SKIP, 10, 72, 280, 12
+    LTEXT "Distinct body content so the page area is unambiguous on screenshots.", -1, 10, 100, 280, 24
+END
+
+IDD_SHOT_PAGE2 DIALOG 0, 0, 300, 150
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "page2"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT "PAGE TWO - progress content area", -1, 10, 16, 280, 12
+    LTEXT "Searching DriverStore, C:\\Drivers and the driver packages inbox...", -1, 10, 44, 280, 24
+    LTEXT "Elapsed: a few seconds (faked for the harness)", -1, 10, 90, 280, 12
+    CONTROL "", IDC_SHOT_PROGRESS, "msctls_progress32", WS_CHILD | WS_VISIBLE | PBS_SMOOTH, 10, 112, 280, 14
+END
+
+IDD_SHOT_PAGE3 DIALOG 0, 0, 300, 150
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "page3"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT "PAGE THREE - completion content area", -1, 10, 16, 280, 12
+    LTEXT "The wizard chrome around this text is what the screenshots validate.", -1, 10, 40, 280, 24
+    AUTOCHECKBOX "Close this wizard when finished", -1, 10, 80, 280, 12
+END

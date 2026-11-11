@@ -24,6 +24,14 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell_notify);
 
+/* Vista+ flags the SDK headers here do not define yet; Explorer handles them. */
+#ifndef NIF_REALTIME
+#define NIF_REALTIME 0x00000040
+#endif
+#ifndef NIF_SHOWTIP
+#define NIF_SHOWTIP 0x00000080
+#endif
+
 /*************************************************************************
  * Shell_NotifyIcon             [SHELL32.296]
  * Shell_NotifyIconA            [SHELL32.297]
@@ -48,7 +56,7 @@ BOOL WINAPI Shell_NotifyIconA(DWORD dwMessage, PNOTIFYICONDATAA pnid)
     if (cbSize == sizeof(NOTIFYICONDATAA))
     {
         nidW.cbSize = sizeof(nidW);
-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID /* | NIF_REALTIME | NIF_SHOWTIP */;
+        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_REALTIME | NIF_SHOWTIP;
     }
     else if (cbSize == NOTIFYICONDATAA_V3_SIZE)
     {
@@ -144,7 +152,7 @@ BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW pnid)
     dwValidFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     if (cbSize == sizeof(NOTIFYICONDATAW))
     {
-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID /* | NIF_REALTIME | NIF_SHOWTIP */;
+        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_REALTIME | NIF_SHOWTIP;
     }
     else if (cbSize == NOTIFYICONDATAW_V3_SIZE)
     {

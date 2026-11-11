@@ -1,0 +1,7 @@
+; Network Store Interface proxy driver
+[AddReg]
+HKLM,"SYSTEM\CurrentControlSet\Services\Nsiproxy","ErrorControl",0x00010001,0x00000001
+HKLM,"SYSTEM\CurrentControlSet\Services\Nsiproxy","Group",0x00000000,"NDIS Wrapper"
+HKLM,"SYSTEM\CurrentControlSet\Services\Nsiproxy","ImagePath",0x00020000,"system32\drivers\nsiproxy.sys"
+HKLM,"SYSTEM\CurrentControlSet\Services\Nsiproxy","Start",0x00010001,0x00000001
+HKLM,"SYSTEM\CurrentControlSet\Services\Nsiproxy","Type",0x00010001,0x00000001

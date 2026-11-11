@@ -111,6 +111,12 @@ u32_t retrans_timer = LWIP_ND6_RETRANS_TIMER; /* @todo implement this value in t
 #else
 #define ND6_ROUTER_ALLOWED(netif) 1
 #endif
+#ifdef LWIP_HOOK_ND6_NEIGHBOR_CHANGED
+#define ND6_NEIGHBOR_CHANGED() LWIP_HOOK_ND6_NEIGHBOR_CHANGED()
+#else
+#define ND6_NEIGHBOR_CHANGED()
+#endif
+
 #ifdef LWIP_HOOK_ND6_RETRANS_TIME
 #define ND6_RETRANS_TIME(netif) LWIP_HOOK_ND6_RETRANS_TIME(netif, retrans_timer)
 #else
@@ -457,6 +463,7 @@ nd6_input(struct pbuf *p, struct netif *inp)
 
       neighbor_cache[i].netif = inp;
       neighbor_cache[i].state = ND6_REACHABLE;
+      ND6_NEIGHBOR_CHANGED();
       neighbor_cache[i].counter.reachable_time = ND6_REACHABLE_TIME(inp);
 
       /* Send queued packets, if any. */
@@ -1021,6 +1028,7 @@ nd6_tmr(void)
       if (neighbor_cache[i].counter.reachable_time <= ND6_TMR_INTERVAL) {
         /* Change to stale state. */
         neighbor_cache[i].state = ND6_STALE;
+        ND6_NEIGHBOR_CHANGED();
         neighbor_cache[i].counter.stale_time = 0;
       } else {
         neighbor_cache[i].counter.reachable_time -= ND6_TMR_INTERVAL;
@@ -1033,6 +1041,7 @@ nd6_tmr(void)
       if (neighbor_cache[i].counter.delay_time <= 1) {
         /* Change to PROBE state. */
         neighbor_cache[i].state = ND6_PROBE;
+        ND6_NEIGHBOR_CHANGED();
         neighbor_cache[i].counter.probes_sent = 0;
         neighbor_cache[i].probe_next = sys_now();
       } else {
@@ -1621,6 +1630,7 @@ nd6_free_neighbor_cache_entry(s8_t i)
   }
 
   neighbor_cache[i].state = ND6_NO_ENTRY;
+  ND6_NEIGHBOR_CHANGED();
   neighbor_cache[i].isrouter = 0;
   neighbor_cache[i].permanent = 0;
   neighbor_cache[i].netif = NULL;
@@ -1902,6 +1912,7 @@ nd6_new_router(const ip6_addr_t *router_addr, struct netif *netif)
     neighbor_cache[neighbor_index].netif = netif;
     neighbor_cache[neighbor_index].q = NULL;
     neighbor_cache[neighbor_index].state = ND6_INCOMPLETE;
+    ND6_NEIGHBOR_CHANGED();
     neighbor_cache[neighbor_index].counter.probes_sent = 1;
     nd6_send_neighbor_cache_probe(&neighbor_cache[neighbor_index], ND6_SEND_FLAG_MULTICAST_DEST);
     neighbor_cache[neighbor_index].probe_next = sys_now() + ND6_RETRANS_TIME(netif);

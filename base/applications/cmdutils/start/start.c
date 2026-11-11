@@ -419,6 +419,8 @@ static struct
     DWORD             creation_flags;
     USHORT            machine;
     BOOL              cp_inherit;
+    BOOL              has_affinity;
+    DWORD_PTR         affinity_mask;
 } opts;
 
 static void parse_command_line( int argc, WCHAR *argv[] )
@@ -501,7 +503,14 @@ static void parse_command_line( int argc, WCHAR *argv[] )
         else if (is_option_with_arg(argv, &i, L"/node"))
             TRACE("/node is ignored\n"); /* FIXME */
         else if (is_option_with_arg(argv, &i, L"/affinity"))
-            TRACE("/affinity is ignored\n"); /* FIXME */
+        {
+            /* The mask is hexadecimal, as on Windows. */
+            WCHAR *end;
+            opts.affinity_mask = (DWORD_PTR)_wcstoui64(argv[i], &end, 16);
+            if (end == argv[i] || *end || !opts.affinity_mask)
+                usage();
+            opts.has_affinity = TRUE;
+        }
         else if (is_option_with_arg(argv, &i, L"/machine"))
         {
             if (is_option( argv[i], L"x86" )) opts.machine = IMAGE_FILE_MACHINE_I386;
@@ -595,12 +604,31 @@ int __cdecl wmain (int argc, WCHAR *argv[])
                     si.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
                     si.StartupInfo.lpTitle = opts.title;
 
+                    if (opts.has_affinity)
+                        opts.creation_flags |= CREATE_SUSPENDED;
+
                     if (!CreateProcessW( opts.sei.lpFile, commandline, NULL, NULL, opts.cp_inherit,
                                          opts.creation_flags, NULL, opts.sei.lpDirectory,
                                          &si.StartupInfo, &process_information ))
                     {
 			fatal_string_error(STRING_EXECFAIL, GetLastError(), opts.sei.lpFile);
                     }
+                    if (opts.has_affinity)
+                    {
+                        if (!SetProcessAffinityMask(process_information.hProcess,
+                                                    opts.affinity_mask))
+                        {
+                            DWORD error = GetLastError();
+                            TerminateProcess(process_information.hProcess, 1);
+                            CloseHandle(process_information.hThread);
+                            CloseHandle(process_information.hProcess);
+                            fatal_string_error(STRING_EXECFAIL, error, opts.sei.lpFile);
+                        }
+                        ResumeThread(process_information.hThread);
+                        /* The done: fallback below must not re-apply it. */
+                        opts.has_affinity = FALSE;
+                    }
+                    CloseHandle(process_information.hThread);
                     opts.sei.hProcess = process_information.hProcess;
                     goto done;
         }
@@ -651,6 +679,12 @@ int __cdecl wmain (int argc, WCHAR *argv[])
         }
 
 done:
+        /* A ShellExecuteEx-launched process (no CreateProcess path): apply the
+           affinity post-start, best effort; without SEE_MASK_NOCLOSEPROCESS
+           there is no handle to work with. */
+        if (opts.has_affinity && opts.sei.hProcess)
+            (VOID)SetProcessAffinityMask(opts.sei.hProcess, opts.affinity_mask);
+
 	if (opts.sei.fMask & SEE_MASK_NOCLOSEPROCESS) {
 		DWORD exitcode;
 		HANDLE hJob;

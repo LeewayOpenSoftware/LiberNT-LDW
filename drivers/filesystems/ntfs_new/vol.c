@@ -499,6 +499,7 @@ NtfsMountVolume(IN PDEVICE_OBJECT TargetDeviceObject,
     ExInitializeFastMutex(&VolCB->VolumeStateMutex);
     ExInitializeFastMutex(&VolCB->StreamListMutex);
     ExInitializeFastMutex(&VolCB->MissingNameMutex);
+    ExInitializeFastMutex(&VolCB->CachedLookupParentMutex);
     InitializeListHead(&VolCB->MissingNameList);
     for (Index = 0; Index < NTFS_MISSING_NAME_BUCKETS; Index++)
         InitializeListHead(&VolCB->MissingNameHash[Index]);

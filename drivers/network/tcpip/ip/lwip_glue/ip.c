@@ -734,7 +734,11 @@ LibIP6QueryCallback(void *arg)
     {
         PIP_INTERFACE IF = netif->state;
 
-        if (!IF)
+        /* A netif exists before IPRegisterInterface gives its interface an
+         * index and puts it on the interface list, and again after
+         * IPUnregisterInterface takes it off. Rows for such an interface
+         * would carry index 0 and a LUID nobody can resolve. */
+        if (!IF || !IF->Registered)
             continue;
 
         switch (Query->TableId)
@@ -857,7 +861,7 @@ LibIP6QueryCallback(void *arg)
             PIP_INTERFACE IF;
             IP6_NEIGHBOR_ROW Row;
 
-            if (Entry->state == ND6_NO_ENTRY || !Entry->netif || !(IF = Entry->netif->state))
+            if (Entry->state == ND6_NO_ENTRY || !Entry->netif || !(IF = Entry->netif->state) || !IF->Registered)
                 continue;
 
             RtlZeroMemory(&Row, sizeof(Row));
@@ -888,7 +892,7 @@ LibIP6QueryCallback(void *arg)
             PIP_INTERFACE IF;
             IP6_NEIGHBOR_ROW Row;
 
-            if (!Netif || !(IF = Netif->state))
+            if (!Netif || !(IF = Netif->state) || !IF->Registered)
                 continue;
 
             RtlZeroMemory(&Row, sizeof(Row));

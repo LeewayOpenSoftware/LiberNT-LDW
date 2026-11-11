@@ -1724,6 +1724,7 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
     BOOLEAN SkipDodVidPnNegotiation;
     BOOLEAN KmdTransaction = FALSE;
     BOOLEAN MiniportModeSetFailed = FALSE;
+    BOOLEAN ModeSetAttempted = FALSE;
     BOOLEAN TopologyEmpty;
     BOOLEAN UseSetTimings;
     ULONG NewCommittedWidth;
@@ -2665,6 +2666,7 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
         }
         _SEH2_TRY
         {
+            ModeSetAttempted = TRUE;
             Status = SetTimingsCallback(
                          Adapter->MiniportDeviceContext,
                          &TimingArgs);
@@ -2781,6 +2783,7 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
             Status = STATUS_DELETE_PENDING;
             goto Cleanup;
         }
+        ModeSetAttempted = TRUE;
         Status = DXGK_CB(Adapter, DxgkDdiCommitVidPn)(
                      Adapter->MiniportDeviceContext,
                      &CommitArgs);
@@ -2849,6 +2852,7 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
          */
         DXGKRNL_TRACE("DxgkpCommitVidPnToMiniport: no CommitVidPn — "
                       "DOD present-only path\n");
+        ModeSetAttempted = TRUE;
 
         /*
          * Use the POST display resolution for DOD present-only drivers.
@@ -2959,6 +2963,12 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
 Cleanup:
     if (KmdTransaction)
         DxgkEndKmdTransaction(Adapter);
+    /* A deferred take-over handoff stays pending until the first real
+       mode-set attempt; its result commits the claimant or rolls the
+       desktop back to BasicDisplay.  Validation failures above never
+       reach a DDI and leave the deferral armed. */
+    if (ModeSetAttempted)
+        DxgkpCompleteDeferredPostDisplayHandoff(Adapter, Status);
     if (MiniportModeSetFailed)
     {
         (VOID)DxgkCollectAdapterDiagnosticInfo(
@@ -4810,6 +4820,22 @@ DxgkpDisplayDispatch(
         }
     }
 
+    if (Stack->Parameters.DeviceIoControl.IoControlCode != IOCTL_VIDEO_DXGK_PRESENT_DIRTY_RECT)
+    {
+        DXGKRNL_ERR("K2TRACE: DXGK Video0 IOCTL 0x%lx -> 0x%lx adapter %p\n",
+                    Stack->Parameters.DeviceIoControl.IoControlCode, Status, g_DisplayAdapter);
+    }
+    else
+    {
+        static LONG PresentTraceCount;
+        LONG PresentSeq = InterlockedIncrement(&PresentTraceCount);
+        if (PresentSeq <= 3 || (PresentSeq % 128) == 0)
+        {
+            DXGKRNL_ERR("K2TRACE: DXGK Video0 PRESENT_DIRTY_RECT #%lu -> 0x%lx\n",
+                        PresentSeq, Status);
+        }
+    }
+
     Irp->IoStatus.Status = Status;
     Irp->IoStatus.Information = BytesReturned;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
@@ -4827,7 +4853,7 @@ DxgkpDisplayCreate(
 {
     UNREFERENCED_PARAMETER(DeviceObject);
 
-    DXGKRNL_TRACE("DxgkpDisplayCreate: opened\n");
+    DXGKRNL_ERR("K2TRACE: DXGK Video0 create\n");
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);

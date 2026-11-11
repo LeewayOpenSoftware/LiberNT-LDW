@@ -788,6 +788,11 @@ BOOLEAN ReconfigureAdapter(PRECONFIGURE_CONTEXT Context)
     TCPUpdateInterfaceIPInformation(Interface);
     TCPUpdateInterfaceLinkStatus(Interface);
 
+    TiNsiNotifyInterface(Interface->Index, TI_NSI_CHANGE_PARAMETER);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV4, TI_NSI_TABLE_INTERFACE, TI_NSI_CHANGE_PARAMETER);
+    TiNsiNotifyIpTable(TI_NSI_FAMILY_IPV6, TI_NSI_TABLE_INTERFACE, TI_NSI_CHANGE_PARAMETER);
+    TiSignalChange();
+
     return TRUE;
 }
 

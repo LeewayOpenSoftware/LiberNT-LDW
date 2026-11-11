@@ -67,7 +67,14 @@ typedef struct _VolumeContextBlock
     LIST_ENTRY RecordIdentityHash[256];
     ULONG RecordCacheCount;
 
-    /* One stable parent record for repeated leaf lookups in a directory. */
+    /*
+     * One stable parent record for repeated leaf lookups in a directory.
+     * Lookups take the record out of the slot under CachedLookupParentMutex,
+     * use it alone, and put it back (create.c), so two lookups never share
+     * it and none destroys it under another. Paths that create, rename or
+     * delete still use it in place: they hold the metadata lock exclusive.
+     */
+    FAST_MUTEX CachedLookupParentMutex;
     PNtfsFileRecord CachedLookupParent;
     LONG CachedLookupParentGeneration;
     USHORT CachedLookupParentPathLength;
@@ -340,6 +347,25 @@ typedef struct _SCB
     BOOLEAN Unlinked;
     BOOLEAN PagingFile;
     LONG UncleanCount;
+    /* System time of the last automatic write-time stamp by a cached
+     * write of this stream (write.c, NtfsCachedWrite). */
+    LONGLONG LastWriteStampTime;
+    /*
+     * The last allocated extent a paging read resolved (read.c), so that
+     * page-ins inside it skip the volume-wide metadata lock. It is filled
+     * and used only under PagingIoResource shared, and NtfsDropPagingExtent
+     * clears it right after every exclusive acquisition: every path that
+     * frees, moves, compresses, zeroes or shrinks the stream, or marks it
+     * deleted, holds PagingIoResource exclusive. ExtentLock orders the
+     * shared holders among themselves.
+     */
+    KSPIN_LOCK ExtentLock;
+    BOOLEAN ExtentValid;
+    ULONG ExtentClusterSize;
+    ULONGLONG ExtentFirstVcn;
+    ULONGLONG ExtentNextVcn;
+    ULONGLONG ExtentLcn;
+    ULONGLONG ExtentValidData;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -521,6 +547,22 @@ PERESOURCE
 NtfsGetPagingIoResource(_In_ PFileContextBlock FileCB)
 {
     return FileCB->StreamCB ? &FileCB->StreamCB->PagingIoResource : &FileCB->PagingIoResource;
+}
+
+/* Forget the paging-read extent of a stream. The caller holds the stream's
+ * PagingIoResource exclusive. */
+static inline
+VOID
+NtfsDropPagingExtent(_In_opt_ PStreamContextBlock StreamCB)
+{
+    KIRQL OldIrql;
+
+    if (!StreamCB)
+        return;
+    ASSERT(ExIsResourceAcquiredExclusiveLite(&StreamCB->PagingIoResource));
+    KeAcquireSpinLock(&StreamCB->ExtentLock, &OldIrql);
+    StreamCB->ExtentValid = FALSE;
+    KeReleaseSpinLock(&StreamCB->ExtentLock, OldIrql);
 }
 
 NTSTATUS

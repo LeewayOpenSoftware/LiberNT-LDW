@@ -186,6 +186,8 @@ NtfsMasterFileTableCreateFile(
                 FileAttributes,
                 reinterpret_cast<PFileRecord*>(File));
     delete[] TerminatedQuery;
+    if (NT_SUCCESS(Status) && *File)
+        reinterpret_cast<PFileRecord>(*File)->VerifyShapeAfterMutation(Status);
     return Status;
 }
 
@@ -202,10 +204,12 @@ NtfsMasterFileTableCreateFileInDirectory(
     _In_ ULONG ShortNameLength,
     _Out_ PNtfsFileRecord* File)
 {
+    NTSTATUS Status;
+
     if (!Mft || !Parent || !File)
         return STATUS_INVALID_PARAMETER;
     *File = NULL;
-    return reinterpret_cast<PMasterFileTable>(Mft)->
+    Status = reinterpret_cast<PMasterFileTable>(Mft)->
         CreateFileInDirectory(
             reinterpret_cast<PFileRecord>(Parent),
             Name,
@@ -216,6 +220,9 @@ NtfsMasterFileTableCreateFileInDirectory(
             reinterpret_cast<PFileRecord*>(File),
             ShortName,
             ShortNameLength);
+    if (NT_SUCCESS(Status) && *File)
+        reinterpret_cast<PFileRecord>(*File)->VerifyShapeAfterMutation(Status);
+    return Status;
 }
 
 NTSTATUS
