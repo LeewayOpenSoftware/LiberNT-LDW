@@ -317,9 +317,10 @@ URL: https://www.catch22.net/tuts/cards/cardlib/
 
 Title: lwIP - A Lightweight TCP/IP stack
 Path: drivers/network/tcpip/lwip
-Used Version: 2.2.0
+Used Version: 2.2.1
 License: Modified BSD License (drivers/network/tcpip/lwip/COPYING)
 URL: https://savannah.nongnu.org/projects/lwip/
+Modifications: hooks and behaviour changes for tcpip.sys in src/core (ND6 fast timer, permanent neighbours, MLDv2, source-address rank, TCP keepalive/quick-ACK/urgent data) and Filelists.cmake generating init.h into the build directory; listed in the [TCPIP] lwIP update commits
 
 Title: FreeType
 Path: sdk/lib/3rdparty/freetype
