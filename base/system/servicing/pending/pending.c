@@ -44,6 +44,12 @@
 #else
 #include <ntndk.h>
 
+/* The user-native NDK path does not emit the KEY_VALUE Type constants
+ * from cmtypes.h ($if _WDMDDK_); S1BootIsFallback needs REG_SZ. */
+#ifndef REG_SZ
+#define REG_SZ 1
+#endif
+
 WCHAR g_ServicingRoot[MAX_PATH * 2];
 WCHAR g_VolumeRoot[MAX_PATH * 2];
 WCHAR g_S1PlanPath[MAX_PATH * 2];
