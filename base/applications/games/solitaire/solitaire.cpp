@@ -410,7 +410,7 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
 VOID ShowGameOptionsDlg(HWND hwnd)
 {
     DWORD dwOldOptions = dwOptions;
-    RECT rcMain, rcStatus;
+    RECT rcMain;
 
     int iOldScoreMode = GetScoreMode();
 
