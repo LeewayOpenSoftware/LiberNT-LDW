@@ -22,10 +22,12 @@ list(APPEND SOURCE
 
 list(APPEND MINIZIP_SOURCE
     contrib/minizip/crypt.h
+    contrib/minizip/ints.h
     contrib/minizip/ioapi.c
     contrib/minizip/ioapi.h
     contrib/minizip/iowin32.c
     contrib/minizip/iowin32.h
+    contrib/minizip/skipset.h
     contrib/minizip/unzip.c
     contrib/minizip/unzip.h
     contrib/minizip/zip.c

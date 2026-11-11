@@ -377,9 +377,11 @@ URL: http://stlport.sourceforge.net/
 
 Title: ZLib
 Path: sdk/lib/3rdparty/zlib
-Used Version: 1.2.13
+Path: sdk/include/reactos/libs/zlib
+Used Version: 1.4
 License: Zlib (https://spdx.org/licenses/Zlib.html)
-URL: http://www.zlib.net
+URL: https://www.zlib.net
+Modifications: contrib/minizip keeps the __REACTOS__ guards that drop the fopen-based file functions and the 32-bit filefunc wrappers (unzOpen2/zipOpen2); sdk/lib/3rdparty/zlib/CMakeLists.txt is ours
 
 Title: chmc and lzxcomp
 Path: sdk/tools/hhpcomp/chmc
