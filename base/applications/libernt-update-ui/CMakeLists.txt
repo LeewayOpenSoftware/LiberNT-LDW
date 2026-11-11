@@ -19,5 +19,5 @@ if(MSVC)
     set_target_cpp_properties(libernt-update-ui WITH_EXCEPTIONS)
 endif()
 target_link_libraries(libernt-update-ui shellframe libservicing cppstl cpprt uuid)
-add_importlibs(libernt-update-ui advapi32 user32 gdi32 gdiplus shell32 shlwapi comctl32 dwmapi uxtheme ole32
+add_importlibs(libernt-update-ui advapi32 user32 gdi32 gdiplus shell32 shlwapi comctl32 comdlg32 dwmapi uxtheme ole32
                wintrust crypt32 msvcrt kernel32 ntdll)

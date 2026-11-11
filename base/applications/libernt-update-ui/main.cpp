@@ -10,6 +10,7 @@
 #include "state.h"
 #include <shellframe.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #include <strsafe.h>
 #include <shlwapi.h>
 #include <algorithm>
@@ -34,6 +35,8 @@ enum class HitKind
     ApplyRow,
     RemoveRow,
     AddPackage,
+    InstallPackage,
+    UninstallRow,
     ConfirmBanner,
     OpenHistory,
     OpenOptions,
@@ -121,7 +124,7 @@ protected:
                     StringCchPrintfW(text, _countof(text), L"%s (0x%08lX)", ErrorSentence(error), (unsigned long)error);
                     m_Notice = text;
                 }
-                else if (job->What == Action::Apply && job->Reboot)
+                else if ((job->What == Action::Apply || job->What == Action::InstallPackageExe) && job->Reboot)
                     m_Notice = L"Restart to finish this update.";
                 else
                     m_Notice = L"Done.";
@@ -384,6 +387,31 @@ private:
                     StartAction(Action::Rollback, p.Id, p.Version, L"");
                 break;
             }
+            case HitKind::UninstallRow:
+            {
+                const PackageRow &p = m_State.Packages[hit.Arg];
+
+                if (MessageBoxW(m_hwnd, L"The files this update changed will be restored and the package removed.",
+                                L"Uninstall", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+                    StartAction(Action::Remove, p.Id, p.Version, L"");
+                break;
+            }
+            case HitKind::InstallPackage:
+            {
+                WCHAR path[MAX_PATH] = L"";
+                OPENFILENAMEW ofn = { };
+
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = m_hwnd;
+                ofn.lpstrFilter = L"LiberNT update packages (*.exe)\0*.exe\0All files\0*.*\0";
+                ofn.lpstrFile = path;
+                ofn.nMaxFile = _countof(path);
+                ofn.lpstrTitle = L"Install an update package";
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+                if (GetOpenFileNameW(&ofn))
+                    StartAction(Action::InstallPackageExe, "", "", path);
+                break;
+            }
             case HitKind::AddPackage:
             case HitKind::ExportLog:
             {
@@ -432,6 +460,12 @@ private:
     {
         return p.VerifyError == ERROR_SUCCESS &&
                (p.Phase.empty() || p.Phase == "staged" || p.Phase == "rolled-back" || p.Phase == "failed");
+    }
+
+    /* installed, or applied and waiting for confirmation: remove-package restores its files and drops it */
+    static bool CanUninstall(const PackageRow &p)
+    {
+        return p.Phase == "confirmed" || p.Phase == "applied";
     }
 
     /* ---- drawing helpers ---- */
@@ -603,12 +637,14 @@ private:
                                  head.top + m_Theme.Scale(50) };
                 RECT add = { head.right - m_Theme.Scale(40) - m_Theme.Scale(130), head.bottom - m_Theme.Scale(32),
                              head.right - m_Theme.Scale(48), head.bottom - m_Theme.Scale(6) };
+                RECT install = { add.left - m_Theme.Scale(200), add.top, add.left - m_Theme.Scale(16), add.bottom };
 
                 canvas.Text(L"Packages", t, m_Theme.Font(TextStyle::Body), c.Text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                canvas.Text(L"Staged and verified. Updating a package changes system files; a restart may be needed.", d,
+                canvas.Text(L"Staged, installed and verified. Updating a package changes system files; a restart may be needed.", d,
                             m_Theme.Font(TextStyle::Caption), c.TextSecondary, DT_LEFT | DT_TOP | DT_WORDBREAK);
                 canvas.Icon(m_Collapsed ? L"chevron_down_12_regular" : L"chevron_up_12_regular", chevron, c.Text);
                 AddHit(head, HitKind::Collapse);
+                Link(canvas, install, L"Install update package...", HitKind::InstallPackage, 0, DT_RIGHT);
                 Link(canvas, add, L"Add package...", HitKind::AddPackage, 0, DT_RIGHT);
             }
             y = head.bottom + m_Theme.Scale(4);
@@ -634,9 +670,15 @@ private:
                     Link(canvas, a, L"Update", HitKind::ApplyRow, i, DT_RIGHT);
                     Link(canvas, r, L"Remove", HitKind::RemoveRow, i, DT_RIGHT);
                 }
-                else
-                    canvas.Text(p.Phase == "confirmed" ? L"Installed" : L"In progress", a, m_Theme.Font(TextStyle::Caption),
+                else if (CanUninstall(p))
+                {
+                    canvas.Text(p.Phase == "confirmed" ? L"Installed" : L"Waiting", a, m_Theme.Font(TextStyle::Caption),
                                 c.TextSecondary, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                    Link(canvas, r, L"Uninstall", HitKind::UninstallRow, i, DT_RIGHT);
+                }
+                else
+                    canvas.Text(L"In progress", a, m_Theme.Font(TextStyle::Caption), c.TextSecondary,
+                                DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
                 y += rowHeight + m_Theme.Scale(4);
             }
             y += m_Theme.Scale(16);
@@ -644,7 +686,9 @@ private:
         else
         {
             RECT add = { right - m_Theme.Scale(140), y, right, y + m_Theme.Scale(28) };
+            RECT install = { add.left - m_Theme.Scale(200), y, add.left - m_Theme.Scale(16), y + m_Theme.Scale(28) };
 
+            Link(canvas, install, L"Install update package...", HitKind::InstallPackage, 0, DT_RIGHT);
             Link(canvas, add, L"Add package...", HitKind::AddPackage, 0, DT_RIGHT);
             y += m_Theme.Scale(44);
         }

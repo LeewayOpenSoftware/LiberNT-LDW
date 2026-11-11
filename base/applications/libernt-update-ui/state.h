@@ -77,6 +77,7 @@ enum class Action
     Rollback,
     Remove,
     AddPackage,
+    InstallPackageExe,       /* a standalone package .exe: add-package --exe, then apply (one click) */
     ExportLog
 };
 

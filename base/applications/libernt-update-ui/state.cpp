@@ -265,7 +265,7 @@ RunAction(Action action, const std::string &id, const std::string &version, cons
     char tx[65];
     DWORD error;
 
-    error = LnTargetOpen(&target, LnTargetOnline, NULL, action == Action::AddPackage);
+    error = LnTargetOpen(&target, LnTargetOnline, NULL, action == Action::AddPackage || action == Action::InstallPackageExe);
     if (error)
         return error;
     switch (action)
@@ -287,6 +287,30 @@ RunAction(Action action, const std::string &id, const std::string &version, cons
             return LnServicingRemovePackage(&target, id.c_str(), version.c_str());
         case Action::AddPackage:
             return LnServicingAddPackage(&target, path.c_str(), tx);
+        case Action::InstallPackageExe:
+        {
+            /* the id and version come from the package itself: its manifest, read through the table hash */
+            char *json = NULL;
+            size_t len = 0;
+            LN_MANIFEST manifest;
+            BOOL reboot = FALSE;
+
+            error = LnPackageExeInspect(path.c_str(), &json, &len);
+            if (error)
+                return error;
+            ZeroMemory(&manifest, sizeof(manifest));
+            error = LnManifestParse(json, len, &manifest);
+            free(json);
+            if (error)
+                return error;
+            error = LnServicingAddPackageExe(&target, path.c_str(), tx);
+            if (error == ERROR_SUCCESS)
+                error = LnServicingApplyPackage(&target, manifest.packageId, manifest.releaseVersion, &reboot, tx);
+            LnManifestFree(&manifest);
+            if (rebootRequired)
+                *rebootRequired = reboot != FALSE;
+            return error;
+        }
         case Action::ExportLog:
             return LnServicingExportLog(&target, path.c_str());
     }
@@ -324,6 +348,12 @@ ErrorSentence(DWORD error)
             return L"The update history is damaged.";
         case LN_E_MANIFEST_INVALID:
             return L"The package description is not valid.";
+        case LN_E_PACKAGE_INVALID:
+            return L"This file is not a LiberNT update package, or it is damaged.";
+        case LN_E_NOT_APPLICABLE:
+            return L"This update needs another update that is not installed.";
+        case LN_E_SUPERSEDED:
+            return L"A newer update already replaces this one.";
         default:
             return L"Something went wrong.";
     }
