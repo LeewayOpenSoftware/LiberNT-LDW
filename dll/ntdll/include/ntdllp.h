@@ -670,6 +670,10 @@ LdrpGetNeutralResourceModule(
     _In_ PVOID BaseAddress,
     _Out_ PVOID *ResourceBase);
 
+LANGID
+NTAPI
+RtlpGetThreadUILanguage(VOID);
+
 PVOID
 NTAPI
 LdrpGetResourceModuleForEntry(

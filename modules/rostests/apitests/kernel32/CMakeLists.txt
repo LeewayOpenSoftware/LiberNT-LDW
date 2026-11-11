@@ -108,6 +108,7 @@ list(APPEND SOURCE
     QueueUserAPC.c
     QueryProcessCycleTime.c
     ReadFile.c
+    ResourceUILanguage.c
     RenameDirectoryOldPath.c
     ResizePseudoConsole.c
     SetComputerNameExW.c
