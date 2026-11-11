@@ -18,12 +18,14 @@ list(APPEND SOURCE
     src/FAPOFX_masteringlimiter.c
     src/FAPOFX_reverb.c
     src/FAudio.c
+    src/FAudioFX_collector.c
     src/FAudioFX_reverb.c
     src/FAudioFX_volumemeter.c
     src/FAudio_internal.c
     src/FAudio_internal_simd.c
     src/FAudio_operationset.c
-    src/FAudio_platform_win32.c)
+    src/FAudio_platform_win32.c
+    src/FAudio_platform_win32_wmadec.c)
 
 add_library(faudio ${SOURCE})
 target_compile_definitions(faudio PRIVATE $<$<CONFIG:Debug>:NDEBUG>)
