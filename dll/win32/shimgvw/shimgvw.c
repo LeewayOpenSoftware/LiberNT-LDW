@@ -1735,7 +1735,7 @@ Preview_Open(PPREVIEW_DATA pData)
     WCHAR szFile[MAX_PATH], szAll[64];
     WCHAR *szFilter, *szAllExts, *c;
     UINT num = 0, size = 0, j;
-    SIZE_T cchFilter, cchAllExts;
+    size_t cchFilter, cchAllExts; /* size_t: StringCchPrintfExW takes size_t* */
     PCWSTR pszExtra = GetExtraExtensionsGdipList();
 
     if (GdipGetImageDecodersSize(&num, &size) != Ok || !num)
