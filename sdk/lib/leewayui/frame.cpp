@@ -10,7 +10,9 @@
 #include <commctrl.h>
 #include <strsafe.h>
 #include <leewayui/frame.h>
+#include <uxtheme.h>
 #include <leewayui/dpi.h>
+#include <leewayui/theme.h>
 
 static inline int FrMin(int a, int b) { return a < b ? a : b; }
 static inline int FrMax(int a, int b) { return a > b ? a : b; }
@@ -30,6 +32,9 @@ struct LeewayUIFrame {
     HWND status;
     HWND slider;
     BOOL shown;
+    ILeewayTheme *theme;        /* the status bar and slider follow it like the ribbon does */
+    WCHAR info[256];            /* status part 0 */
+    WCHAR zoomText[16];         /* status part 1 */
     BOOL ownsRibbon;            /* FALSE when the app passed its own */
     BOOL syncing;               /* SetZoom in progress: do not call on_zoom */
     UINT32 zoom;
@@ -164,13 +169,44 @@ static UINT32 NearestLevel(const LeewayUIFrame *f, UINT32 percent)
     return best;
 }
 
+/* ---- theme ----
+ * The status bar draws its parts itself (owner draw) in the theme's colours;
+ * the slider gets its background through WM_CTLCOLORSTATIC. No theme object =
+ * the system look. */
+
+static COLORREF ThemeColor(const LeewayUIFrame *f, LeewayThemeColor c, int sysIndex)
+{
+    return f->theme ? LeewayThemeGetColor(f->theme, c) : GetSysColor(sysIndex);
+}
+
+static void ApplyTheme(LeewayUIFrame *f)
+{
+    if (!f->status)
+        return;
+    SetWindowTheme(f->status, L"", L"");        /* classic look so the background colour applies */
+    SendMessageW(f->status, SB_SETBKCOLOR, 0, (LPARAM)ThemeColor(f, LWUI_COLOR_STRIP_BG, COLOR_BTNFACE));
+    InvalidateRect(f->status, NULL, TRUE);
+    if (f->slider)
+        InvalidateRect(f->slider, NULL, TRUE);
+}
+
+static void SetPartText(LeewayUIFrame *f, UINT part, const WCHAR *text)
+{
+    WCHAR *dst = part ? f->zoomText : f->info;
+    size_t cch = part ? 16 : 256;
+    if (!f->status)
+        return;
+    StringCchCopyW(dst, cch, text ? text : L"");
+    SendMessageW(f->status, SB_SETTEXTW, part | SBT_OWNERDRAW | SBT_NOBORDERS, (LPARAM)dst);
+}
+
 static void UpdateZoomText(LeewayUIFrame *f)
 {
     WCHAR t[16];
     if (!f->status)
         return;
     StringCchPrintfW(t, 16, L"%u%%", f->zoom);
-    SendMessageW(f->status, SB_SETTEXTW, 1, (LPARAM)t);
+    SetPartText(f, 1, t);
 }
 
 /* ---- create / destroy ---- */
@@ -232,6 +268,7 @@ HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **
             f->chrome = LWUI_CHROME_PILL;       /* fall back, app keeps its toolbar */
     }
 
+    LeewayThemeCreate(&f->theme);               /* optional: NULL = system colours */
     f->shown = ReadStatusShown(desc->app_name);
     if (desc->flags & LWUI_FRAME_STATUSBAR)
     {
@@ -242,6 +279,8 @@ HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **
         {
             if (f->ownsRibbon)
                 RibbonDestroy(f->ribbon);
+            if (f->theme)
+                LeewayThemeDestroy(f->theme);
             HeapFree(GetProcessHeap(), 0, f);
             return HRESULT_FROM_WIN32(GetLastError());
         }
@@ -260,6 +299,7 @@ HRESULT WINAPI LeewayFrameCreate(const LeewayUIFrameDesc *desc, LeewayUIFrame **
             }
         }
     }
+    ApplyTheme(f);
     LeewayFrameSetZoom(f, f->zoom);
     *out = f;
     return S_OK;
@@ -275,6 +315,8 @@ void WINAPI LeewayFrameDestroy(LeewayUIFrame *f)
         DestroyWindow(f->status);
     if (f->ownsRibbon)
         RibbonDestroy(f->ribbon);
+    if (f->theme)
+        LeewayThemeDestroy(f->theme);
     HeapFree(GetProcessHeap(), 0, f);
 }
 
@@ -338,6 +380,7 @@ void WINAPI LeewayFrameLayout(LeewayUIFrame *f, const RECT *client, LeewayUIFram
             if (!f->slider)
                 edges[1] = -1;
             SendMessageW(f->status, SB_SETPARTS, f->slider ? 3 : 2, (LPARAM)edges);
+            SetPartText(f, 0, f->info);
             UpdateZoomText(f);
             if (f->slider)
                 SetWindowPos(f->slider, HWND_TOP, sliderLeft, status.top, sw, status.bottom - status.top,
@@ -383,7 +426,7 @@ BOOL WINAPI LeewayFrameIsStatusBarShown(const LeewayUIFrame *f)
 void WINAPI LeewayFrameSetStatusText(LeewayUIFrame *f, UINT32 part, const WCHAR *text)
 {
     if (f && f->status && part < 2)
-        SendMessageW(f->status, SB_SETTEXTW, part, (LPARAM)(text ? text : L""));
+        SetPartText(f, part, text);
 }
 
 HWND WINAPI LeewayFrameGetStatusWindow(const LeewayUIFrame *f)
@@ -453,10 +496,49 @@ BOOL WINAPI LeewayFrameHandleMessage(LeewayUIFrame *f, UINT msg, WPARAM wp, LPAR
     case WM_SYSCOLORCHANGE:
     case WM_THEMECHANGED:
     case WM_SETTINGCHANGE:
+        if (f->theme)
+        {
+            if (msg == WM_SETTINGCHANGE)
+                LeewayThemeOnSettingChange(f->theme);
+            LeewayThemeOnThemeChange(f->theme);
+        }
         if (f->ribbon)
             LeewayRibbonOnThemeChanged(f->ribbon);
-        if (f->status)
-            InvalidateRect(f->status, NULL, TRUE);
+        ApplyTheme(f);
+        return FALSE;
+
+    case WM_DRAWITEM:
+    {
+        const DRAWITEMSTRUCT *di = (const DRAWITEMSTRUCT *)lp;
+        if (f->status && di && di->hwndItem == f->status)
+        {
+            HBRUSH br = CreateSolidBrush(ThemeColor(f, LWUI_COLOR_STRIP_BG, COLOR_BTNFACE));
+            RECT rc = di->rcItem;
+
+            FillRect(di->hDC, &rc, br);
+            DeleteObject(br);
+            SetBkMode(di->hDC, TRANSPARENT);
+            SetTextColor(di->hDC, ThemeColor(f, LWUI_COLOR_TEXT, COLOR_BTNTEXT));
+            rc.left += 4;
+            if (di->itemData)
+                DrawTextW(di->hDC, (const WCHAR *)di->itemData, -1, &rc,
+                          DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (result)
+                *result = TRUE;
+            return TRUE;
+        }
+        return FALSE;
+    }
+
+    case WM_CTLCOLORSTATIC:
+        if (f->slider && f->theme && (HWND)lp == f->slider)
+        {
+            SetBkColor((HDC)wp, LeewayThemeGetColor(f->theme, LWUI_COLOR_STRIP_BG));
+            SetTextColor((HDC)wp, LeewayThemeGetColor(f->theme, LWUI_COLOR_TEXT));
+            if (result)
+                *result = (LRESULT)LeewayThemeGetBrush(f->theme, L"STRIP_BG");
+            return TRUE;
+        }
         return FALSE;
 
     case WM_NOTIFY:

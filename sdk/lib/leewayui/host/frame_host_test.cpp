@@ -80,7 +80,18 @@ int main(void)
 
     /* status text + hide/persist */
     LeewayFrameSetStatusText(f, 0, L"640 x 480");
-    { WCHAR t[32]; SendMessageW(LeewayFrameGetStatusWindow(f), SB_GETTEXTW, 0, (LPARAM)t); CHECK(!lstrcmpW(t, L"640 x 480")); }
+    { WCHAR t[32]; const WCHAR *p = (const WCHAR *)SendMessageW(LeewayFrameGetStatusWindow(f), SB_GETTEXTW, 0, (LPARAM)t);
+      CHECK(p && !lstrcmpW(p, L"640 x 480"));
+      /* owner draw: the frame paints the part in the theme's colours */
+      HDC dc = GetDC(w); DRAWITEMSTRUCT di = {}; di.hwndItem = LeewayFrameGetStatusWindow(f); di.hDC = dc;
+      di.rcItem.right = 100; di.rcItem.bottom = 20; di.itemData = (ULONG_PTR)p;
+      CHECK(LeewayFrameHandleMessage(f, WM_DRAWITEM, 0, (LPARAM)&di, &lr) && lr == TRUE);
+      di.hwndItem = w; CHECK(!LeewayFrameHandleMessage(f, WM_DRAWITEM, 0, (LPARAM)&di, &lr));
+      /* the slider background comes from the theme */
+      HWND sl = FindWindowExW(w, NULL, L"msctls_trackbar32", NULL);
+      CHECK(LeewayFrameHandleMessage(f, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)sl, &lr) && lr != 0);
+      CHECK(!LeewayFrameHandleMessage(f, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)w, &lr));
+      ReleaseDC(w, dc); }
     CHECK(LeewayFrameShowStatusBar(f, FALSE, TRUE));
     LeewayFrameLayout(f, &c, &r);
     CHECK(IsRectEmpty(&r.status) && r.work.bottom == 500);
