@@ -315,6 +315,13 @@ Used Version: 2005-07-14
 License: "Public Domain"
 URL: https://www.catch22.net/tuts/cards/cardlib/
 
+Title: libgsm (GSM 06.10 reference codec, used by msgsm32.acm)
+Path: sdk/lib/3rdparty/libgsm
+Used Version: 1.0.22
+License: libgsm (BSD-like, sdk/lib/3rdparty/libgsm/COPYRIGHT)
+URL: https://www.quut.com/gsm/
+Modifications: plain string.h/stdlib.h includes instead of the configure-generated config.h logic in code.c, gsm_create.c and gsm_destroy.c; NeedFunctionPrototypes for MSVC in gsm.h and proto.h
+
 Title: lwIP - A Lightweight TCP/IP stack
 Path: drivers/network/tcpip/lwip
 Used Version: 2.2.0
