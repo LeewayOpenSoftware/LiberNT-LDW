@@ -101,7 +101,7 @@ jobs:
         avail=$(ninja -C "$OUT" -t targets all | cut -d: -f1)
         build=""
         for t in $WANT; do
-          if printf '%s\n' "$avail" | grep -qx "$t"; then build="$build $t"; else echo "::notice::target not on this branch: $t"; fi
+          if grep -qx "$t" <<<"$avail"; then build="$build $t"; else echo "::notice::target not on this branch: $t"; fi
         done
         echo "building:$build"
         if [ -n "$build" ]; then ninja -C "$OUT" -k0 $build; fi

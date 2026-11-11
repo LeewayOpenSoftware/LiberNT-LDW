@@ -32,6 +32,7 @@ set_module_type(lnfailstub_smss nativecui)
 
 add_executable(lnfailstub_win32 lnfailstub_win32.c)
 set_module_type(lnfailstub_win32 win32cui)
-add_importlibs(lnfailstub_win32 kernel32)
+# msvcrt supplies the win32cui entry (mainCRTStartup) and __main, as the CLI (libernt-update) does.
+add_importlibs(lnfailstub_win32 msvcrt kernel32)
 
 endif()
