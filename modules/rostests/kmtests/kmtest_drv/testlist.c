@@ -237,6 +237,7 @@ KMT_TESTFUNC Test_KeDpcRemove;
 KMT_TESTFUNC Test_KeEvent;
 KMT_TESTFUNC Test_KeFloatPointState;
 KMT_TESTFUNC Test_KeGuardedMutex;
+KMT_TESTFUNC Test_CmBigValueDelete;
 KMT_TESTFUNC Test_CmCallbacks;
 KMT_TESTFUNC Test_CmTransactions;
 KMT_TESTFUNC Test_CmKeyKM;
@@ -499,6 +500,7 @@ const KMT_TEST TestList[] =
     { "IoArbiter",                          Test_IoArbiter },
     { "IoLargeMemoryResource",              Test_IoLargeMemoryResource },
     { "IoCancelKM",                         Test_IoCancelKM },
+    { "CmBigValueDelete",                   Test_CmBigValueDelete },
     { "CmCallbacks",                        Test_CmCallbacks },
     { "CmTransactions",                     Test_CmTransactions },
     { "CmKeyKM",                            Test_CmKeyKM },

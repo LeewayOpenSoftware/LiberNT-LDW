@@ -181,4 +181,13 @@
 #  error "Unsupported size_t size; please submit a bug report"
 #endif
 
+/* ReactOS: math.h maps isnan() to _isnan, which libtiff would import from
+   msvcrt while crtmath (linked for log2) brings its own copy; the two
+   definitions collide at link time, so compare in place instead. */
+#if defined(_MSC_VER)
+#include <math.h>
+#undef isnan
+#define isnan(x) ((x) != (x))
+#endif
+
 /* clang-format on */
