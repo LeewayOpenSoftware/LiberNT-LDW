@@ -4,7 +4,7 @@
  *
  *   FreeType utility functions for bitmaps (specification).
  *
- * Copyright (C) 2004-2020 by
+ * Copyright (C) 2004-2026 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -206,14 +206,6 @@ FT_BEGIN_HEADER
                      FT_Bitmap        *target,
                      FT_Int            alignment );
 
-#ifdef __REACTOS__
-  FT_EXPORT( FT_Error )
-  FT_Bitmap_Convert_ReactOS_Hack( FT_Library        library,
-                                  const FT_Bitmap  *source,
-                                  FT_Bitmap        *target,
-                                  FT_Int            alignment,
-                                  FT_Bool           hack );
-#endif
 
   /**************************************************************************
    *
