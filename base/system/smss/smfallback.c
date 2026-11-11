@@ -104,7 +104,7 @@ SmpS1ReadList(VOID)
     SmpS1OldCount = 0;
     if (!SharedUserData->NtSystemRoot[0] || SharedUserData->NtSystemRoot[1] != L':')
         return;
-    swprintf(PathBuffer, L"\\??\\%c:\\LiberNT\\Servicing\\pending\\bootstate", SharedUserData->NtSystemRoot[0]);
+    _swprintf(PathBuffer, L"\\??\\%c:\\LiberNT\\Servicing\\pending\\bootstate", SharedUserData->NtSystemRoot[0]);
     RtlInitUnicodeString(&Path, PathBuffer);
     InitializeObjectAttributes(&Attr, &Path, OBJ_CASE_INSENSITIVE, NULL, NULL);
     Status = NtOpenFile(&File, FILE_GENERIC_READ, &Attr, &IoStatus, FILE_SHARE_READ,

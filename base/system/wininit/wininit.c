@@ -136,7 +136,6 @@ CreateTermSrvReadyEvent(VOID)
     return Event;
 }
 
-static
 /* ---- LiberNT Update fallback boot (S1-GROUP3-DESIGN.md) --------------------------------------------
  * services.exe and lsass.exe are swapped on disk by a boot-class update, the previous file kept beside
  * them as <stem>.old. On a fallback boot (SystemStartOptions names a *.old kernel, HAL or bootvid) the
