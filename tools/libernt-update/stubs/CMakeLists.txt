@@ -29,6 +29,8 @@ add_importlibs(lnokstub ntoskrnl hal)
 add_executable(lnfailstub_smss WIN32 lnfailstub_native.c)
 target_link_libraries(lnfailstub_smss nt)
 set_module_type(lnfailstub_smss nativecui)
+# ntdll supplies the native syscall imports (NtTerminateProcess), as smss and the applier do.
+add_importlibs(lnfailstub_smss ntdll)
 
 add_executable(lnfailstub_win32 lnfailstub_win32.c)
 set_module_type(lnfailstub_win32 win32cui)
