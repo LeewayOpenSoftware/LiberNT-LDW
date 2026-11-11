@@ -4,7 +4,7 @@ add_definitions(
     -DWINE_REGISTER_DLL
     -DPROXY_DELEGATION)
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/libmpg123)
+include_directories(${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/libmpg123/src/include)
 
 spec2def(quartz.dll quartz.spec)
 add_rpcproxy_files(quartz_strmif.idl)
