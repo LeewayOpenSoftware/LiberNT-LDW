@@ -429,20 +429,20 @@ DxgkpRetainAndStopBasicDisplayFallback(
         return STATUS_DEVICE_BUSY;
     }
 
-    (VOID)KeWaitForSingleObject(&Owner->SharedPrimaryMutex, Executive, KernelMode, FALSE, NULL);
-    OwnerInUse = DxgkIsDisplayAdapter(Owner) &&
-                 (InterlockedCompareExchange(&Owner->ShadowFbMapCount, 0, 0) > 0 ||
-                  Owner->RetiredShadowFb != NULL ||
-                  Owner->RetiredShadowAllocationFb != NULL);
-    KeReleaseMutex(&Owner->SharedPrimaryMutex, FALSE);
-    if (OwnerInUse)
+    if (DxgkDisplayMapsDesktop(Owner))
     {
-        DXGKRNL_WARN("POSTDISPLAY_HANDOFF: win32k still maps the desktop of "
-                     "BasicDisplay adapter %p; claimant %p cannot take ownership\n",
-                     Owner,
-                     Claimant);
-        ExReleaseRundownProtection(&Owner->RemoveRundownRef);
-        return STATUS_DEVICE_BUSY;
+        Status = DxgkDisplayDetachDesktop(Owner);
+        if (!NT_SUCCESS(Status))
+        {
+            DXGKRNL_WARN("POSTDISPLAY_HANDOFF: win32k still maps the desktop of "
+                         "BasicDisplay adapter %p (0x%08lX); claimant %p cannot "
+                         "take ownership\n",
+                         Owner,
+                         Status,
+                         Claimant);
+            ExReleaseRundownProtection(&Owner->RemoveRundownRef);
+            return STATUS_DEVICE_BUSY;
+        }
     }
 
     Status = DxgkpStopPostDisplayOwner(Owner,
@@ -454,6 +454,7 @@ DxgkpRetainAndStopBasicDisplayFallback(
                     "be stopped 0x%08lX\n",
                     Owner,
                     Status);
+        DxgkDisplayAbortDetach(Owner);
         ExReleaseRundownProtection(&Owner->RemoveRundownRef);
         return Status;
     }
@@ -591,7 +592,9 @@ DxgkpShouldRegisterDisplayBridge(
 }
 
 /* Complete the claimant-bound handoff after the complete start state has been
- * published. A successful or non-restartable claimant commits the handoff.
+ * published. A successful claimant commits the handoff. A non-restartable
+ * failure defers the rollback to the claimant's RemoveDevice, when its
+ * hardware is no longer driven.
  * A restartable failure starts the retained BasicDisplay FDO again while the
  * ownership mutex excludes a second claimant. KMUTEX recursion permits the
  * fallback's AcquirePostDisplayOwnership callback on this same thread. */
@@ -627,13 +630,39 @@ DxgkpCompletePostDisplayHandoff(
     FallbackAdapter = Claimant->PostDisplayFallbackAdapter;
     FallbackDeviceObject = Claimant->PostDisplayFallbackDeviceObject;
     FallbackRemoveRundownHeld = Claimant->PostDisplayFallbackRemoveRundownHeld;
-    Claimant->PostDisplayFallbackAdapter = NULL;
-    Claimant->PostDisplayFallbackDeviceObject = NULL;
     Claimant->PostDisplayFallbackRemoveRundownHeld = FALSE;
     ASSERT(FallbackAdapter != NULL);
     ASSERT(FallbackDeviceObject != NULL);
-    ASSERT(FallbackRemoveRundownHeld);
+    if (Action == DxgkPostDisplayCompletionDefer)
+    {
+        KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);
+        DXGKRNL_WARN("POSTDISPLAY_HANDOFF: claimant %p failed 0x%08lX and "
+                     "could not be stopped; BasicDisplay adapter %p restarts "
+                     "when the claimant is removed\n",
+                     Claimant,
+                     StartStatus,
+                     FallbackAdapter);
+        if (FallbackRemoveRundownHeld && FallbackAdapter != NULL)
+            ExReleaseRundownProtection(&FallbackAdapter->RemoveRundownRef);
+        return;
+    }
+    Claimant->PostDisplayFallbackAdapter = NULL;
+    Claimant->PostDisplayFallbackDeviceObject = NULL;
     SuppressFallbackUi = (Action == DxgkPostDisplayCompletionCommit);
+
+    if (Action == DxgkPostDisplayCompletionRollback && FallbackAdapter != NULL &&
+        !FallbackRemoveRundownHeld)
+    {
+        FallbackRemoveRundownHeld = ExAcquireRundownProtection(&FallbackAdapter->RemoveRundownRef);
+        if (!FallbackRemoveRundownHeld)
+        {
+            DXGKRNL_WARN("POSTDISPLAY_ROLLBACK: BasicDisplay adapter %p is "
+                         "being removed; claimant %p leaves no display owner\n",
+                         FallbackAdapter,
+                         Claimant);
+            FallbackAdapter = NULL;
+        }
+    }
 
     if (Action == DxgkPostDisplayCompletionRollback && FallbackAdapter != NULL)
     {
@@ -1256,6 +1285,11 @@ DxgkpTdrWorker(
     DxgkPresentCompleteReset(Adapter);
     PresentResetStarted = FALSE;
     KeReleaseMutex(&Adapter->AdapterMutex, FALSE);
+    if (TimedOutDevice != NULL)
+    {
+        DxgkDereferenceDevice(TimedOutDevice);
+        TimedOutDevice = NULL;
+    }
 
     /* Recommitting the unchanged mode does not recreate allocations.
      * Replace a lost adapter-owned primary explicitly, preserving CDD's
@@ -1274,7 +1308,12 @@ DxgkpTdrWorker(
         if (!NT_SUCCESS(RecommitStatus))
             DXGKRNL_ERR("DxgkpTdrWorker: display restoration after reset failed 0x%08lX\n", RecommitStatus);
         else
+        {
             DXGKRNL_WARN("DxgkpTdrWorker: VidPN and shared surfaces restored after reset\n");
+            RecommitStatus = DxgkDisplayPresentRect(Adapter, NULL);
+            if (!NT_SUCCESS(RecommitStatus))
+                DXGKRNL_WARN("DxgkpTdrWorker: desktop repaint after reset failed 0x%08lX\n", RecommitStatus);
+        }
     }
 
 Exit:
@@ -3095,7 +3134,7 @@ DxgkPrepareTrackedDmaBuffer(
     if (OutEntry == NULL)
         return STATUS_INVALID_PARAMETER;
     *OutEntry = NULL;
-    if (Adapter == NULL || Args == NULL || Args->DmaBuffer == NULL || Args->SubmissionFenceId == 0 || Args->NodeOrdinal >= Adapter->NodeCount || Args->NodeOrdinal >= DXGK_MAX_TRACKED_NODES || Args->DmaBuffer->VirtualAddress == NULL || Args->DmaBuffer->SubmissionStartOffset > Args->DmaBuffer->SubmissionEndOffset || Args->DmaBuffer->SubmissionEndOffset > Args->DmaBuffer->Capacity || (Args->PresentBindingReferenceCount != 0 && (Args->PresentBindingReferences == NULL || Args->Device == NULL)) || (Args->OpenBindingReferenceCount != 0 && Args->OpenBindingReferences == NULL) || (Args->AllocationReferenceCount != 0 && Args->AllocationReferences == NULL) || (Args->LifetimeAllocationReferenceCount != 0 && Args->LifetimeAllocationReferences == NULL) || (SIZE_T)Args->PresentBindingReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->OpenBindingReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->AllocationReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->LifetimeAllocationReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION))
+    if (Adapter == NULL || Args == NULL || Args->DmaBuffer == NULL || Args->NodeOrdinal >= Adapter->NodeCount || Args->NodeOrdinal >= DXGK_MAX_TRACKED_NODES || Args->DmaBuffer->VirtualAddress == NULL || Args->DmaBuffer->SubmissionStartOffset > Args->DmaBuffer->SubmissionEndOffset || Args->DmaBuffer->SubmissionEndOffset > Args->DmaBuffer->Capacity || (Args->PresentBindingReferenceCount != 0 && (Args->PresentBindingReferences == NULL || Args->Device == NULL)) || (Args->OpenBindingReferenceCount != 0 && Args->OpenBindingReferences == NULL) || (Args->AllocationReferenceCount != 0 && Args->AllocationReferences == NULL) || (Args->LifetimeAllocationReferenceCount != 0 && Args->LifetimeAllocationReferences == NULL) || (SIZE_T)Args->PresentBindingReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->OpenBindingReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->AllocationReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION) || (SIZE_T)Args->LifetimeAllocationReferenceCount > MAXULONG_PTR / sizeof(PDXGKVMM_ALLOCATION))
         return STATUS_INVALID_PARAMETER;
     if (!DxgkpAcquireSubmitDmaReservation(Adapter))
         return STATUS_DELETE_PENDING;
@@ -14647,7 +14686,8 @@ DxgkAdapterStart(
         CapsStatus = DXGK_CB_FULL(Adapter, DxgkDdiQueryAdapterInfo)(Adapter->MiniportDeviceContext, &QueryArgs);
         DxgkReleaseKmdCall(Adapter);
         Adapter->PhysicalAdapterCapsValid = NT_SUCCESS(CapsStatus);
-        if (!NT_SUCCESS(CapsStatus) && !Adapter->MiniportContext->IsBasicDisplayFallback)
+        if (!NT_SUCCESS(CapsStatus) && CapsStatus != STATUS_NOT_SUPPORTED &&
+            !Adapter->MiniportContext->IsBasicDisplayFallback)
             DXGKRNL_WARN("DxgkAdapterStart: physical adapter caps failed 0x%08lx\n", CapsStatus);
         DXGKRNL_TRACE("DxgkAdapterStart: physical adapter caps status=0x%08lx nodes=%u paging-node=%u handle=%p flags=0x%08x\n",
                     CapsStatus, Adapter->PhysicalAdapterCaps.NumExecutionNodes, Adapter->PhysicalAdapterCaps.PagingNodeIndex,
@@ -15318,6 +15358,30 @@ DxgkAcquireKmdCall(
     return TRUE;
 }
 
+/* Callers inside the KMD may be waiting on this dispatch's fence, so it stays admitted until they have drained. */
+BOOLEAN
+DxgkAcquireKmdCallForDispatch(
+    _In_ PDXGKRNL_ADAPTER Adapter)
+{
+    if (DxgkAcquireKmdCall(Adapter))
+        return TRUE;
+    if (Adapter == NULL ||
+        InterlockedCompareExchange(&Adapter->KmdMonitorPowerWindow, 0, 0) == 0 ||
+        Adapter->KmdExclusiveOwnerThread != NULL)
+    {
+        return FALSE;
+    }
+    InterlockedIncrement(&Adapter->KmdActiveCalls);
+    KeMemoryBarrier();
+    if (InterlockedCompareExchange(&Adapter->KmdMonitorPowerWindow, 0, 0) != 0 &&
+        Adapter->KmdExclusiveOwnerThread == NULL)
+    {
+        return TRUE;
+    }
+    DxgkReleaseKmdCall(Adapter);
+    return DxgkAcquireKmdCall(Adapter);
+}
+
 VOID
 DxgkReleaseKmdCall(
     _In_ PDXGKRNL_ADAPTER Adapter)
@@ -15400,6 +15464,8 @@ DxgkpBeginKmdExclusiveCapture(
         KeDelayExecutionThread(KernelMode, FALSE, &Delay);
     Adapter->KmdExclusiveOwnerThread = PsGetCurrentThread();
     KeMemoryBarrier();
+    while (InterlockedCompareExchange(&Adapter->KmdActiveCalls, 0, 0) != 0)
+        KeDelayExecutionThread(KernelMode, FALSE, &Delay);
 }
 
 VOID
@@ -16011,6 +16077,7 @@ DxgkAdapterRemove(
     (VOID)DxgkCleanupAdapterDevices(Adapter);
     DxgkpReleaseAdapterResources(Adapter);
     DxgkpReleasePostDisplayMapping(Adapter);
+    DxgkpCompletePostDisplayHandoff(Adapter, STATUS_DEVICE_REMOVED, TRUE);
 
     /* Delete all child PDOs. */
     while (!IsListEmpty(&Adapter->ChildListHead))
@@ -16653,7 +16720,13 @@ DxgkpChildApplyDevicePower(
         InterlockedCompareExchange(&Adapter->RemoveRundownStarted, 0, 0) == 0 &&
         ExAcquireRundownProtection(&Adapter->RemoveRundownRef))
     {
+        (VOID)KeWaitForSingleObject(&Adapter->KmdExclusiveMutex, Executive, KernelMode, FALSE, NULL);
+        if (InterlockedCompareExchange(&Adapter->KmdCallsBlocked, 0, 0) == 0)
+            InterlockedExchange(&Adapter->KmdMonitorPowerWindow, 1);
         DxgkpBeginKmdExclusiveCapture(Adapter, &WasBlocked);
+        if (WasBlocked)
+            InterlockedExchange(&Adapter->KmdMonitorPowerWindow, 0);
+        /* FIXME: Level Three also guarantees idle hardware and no DMA in the scheduler; GPU work keeps running. */
         if (!WasBlocked && Adapter->DevicePowerState == PowerDeviceD0)
         {
             Status = DxgkpCallMiniportSetPowerState(
@@ -16670,6 +16743,9 @@ DxgkpChildApplyDevicePower(
                           WasBlocked ? "closed" : "open");
         }
         DxgkEndKmdExclusive(Adapter, WasBlocked == 0);
+        InterlockedExchange(&Adapter->KmdMonitorPowerWindow, 0);
+        KeReleaseMutex(&Adapter->KmdExclusiveMutex, FALSE);
+        DxgkQueueEngineKick(Adapter);
         ExReleaseRundownProtection(&Adapter->RemoveRundownRef);
     }
 
@@ -17440,6 +17516,7 @@ DxgkpAddDeviceRegistered(
         &Adapter->PeriodicInterruptCore);
     KeInitializeSpinLock(&Adapter->ChildListLock);
     KeInitializeMutex(&Adapter->PresentLifecycleMutex, 0);
+    KeInitializeMutex(&Adapter->SubmissionOrderMutex, 0);
     KeInitializeMutex(&Adapter->SwizzlingRangeLock, 0);
     KeInitializeSpinLock(&Adapter->CommittedMultisampleLock);
     KeInitializeSpinLock(&Adapter->AdvancedColorLock);

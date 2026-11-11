@@ -1776,6 +1776,63 @@ Cleanup:
     return Status;
 }
 
+static NTSTATUS
+DxgkpLockPresentSource(
+    _In_ PBYTE Source,
+    _In_ SIZE_T Length,
+    _Out_ PMDL *Mdl,
+    _Out_ PBYTE *SystemVa)
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+    PMDL SourceMdl;
+    PBYTE MappedVa;
+
+    *Mdl = NULL;
+    *SystemVa = Source;
+    if ((ULONG_PTR)Source >= (ULONG_PTR)MmSystemRangeStart)
+        return STATUS_SUCCESS;
+    if (Length > MAXULONG)
+        return STATUS_INVALID_BUFFER_SIZE;
+
+    SourceMdl = IoAllocateMdl(Source, (ULONG)Length, FALSE, FALSE, NULL);
+    if (SourceMdl == NULL)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    _SEH2_TRY
+    {
+        MmProbeAndLockPages(SourceMdl, KernelMode, IoReadAccess);
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        Status = _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+    if (!NT_SUCCESS(Status))
+    {
+        IoFreeMdl(SourceMdl);
+        return Status;
+    }
+    MappedVa = MmGetSystemAddressForMdlSafe(SourceMdl, NormalPagePriority | MdlMappingNoExecute);
+    if (MappedVa == NULL)
+    {
+        MmUnlockPages(SourceMdl);
+        IoFreeMdl(SourceMdl);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    *Mdl = SourceMdl;
+    *SystemVa = MappedVa;
+    return STATUS_SUCCESS;
+}
+
+static VOID
+DxgkpUnlockPresentSource(
+    _In_opt_ PMDL Mdl)
+{
+    if (Mdl == NULL)
+        return;
+    MmUnlockPages(Mdl);
+    IoFreeMdl(Mdl);
+}
+
 NTSTATUS
 DxgkpPresentDisplayOnlyToSharedPrimary(
     _In_ PDXGKRNL_ADAPTER Adapter,
@@ -1791,6 +1848,7 @@ DxgkpPresentDisplayOnlyToSharedPrimary(
     BOOLEAN DestroyCdd;
     PBYTE DestinationVa;
     PBYTE SourceVa;
+    PMDL SourceMdl = NULL;
     ULONG Width;
     ULONG Height;
     ULONG SourcePitch;
@@ -1851,14 +1909,25 @@ DxgkpPresentDisplayOnlyToSharedPrimary(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
+    Status = DxgkpLockPresentSource((PBYTE)PresentDisplayOnly->pSource,
+                                    ((SIZE_T)(Height - 1) * SourcePitch) +
+                                        ((SIZE_T)Width * sizeof(ULONG)),
+                                    &SourceMdl,
+                                    &SourceVa);
+    if (!NT_SUCCESS(Status))
+        return Status;
     if (!DxgkpAcquirePresentQueues(Adapter))
+    {
+        DxgkpUnlockPresentSource(SourceMdl);
         return STATUS_DELETE_PENDING;
+    }
     KeWaitForSingleObject(&Adapter->CddPresentMutex, Executive, KernelMode, FALSE, NULL);
+    RtlZeroMemory(&Entry, sizeof(Entry));
+    DestroyCdd = FALSE;
+
     Attached = PsGetCurrentProcess() != PsInitialSystemProcess;
     if (Attached)
         KeStackAttachProcess((PKPROCESS)PsInitialSystemProcess, &ApcState);
-    RtlZeroMemory(&Entry, sizeof(Entry));
-    DestroyCdd = FALSE;
 
     /* A compositor claim takes CddPresentMutex too, draining the previous
      * background copy before it gains desktop publication ownership. */
@@ -1869,6 +1938,20 @@ DxgkpPresentDisplayOnlyToSharedPrimary(
     }
 
     Status = DxgkpReferenceCddContext(Adapter, &Entry);
+    if (NT_SUCCESS(Status) &&
+        InterlockedCompareExchange(&Entry.Device->ExecutionState, 0, 0) != D3DKMT_DEVICEEXECUTION_ACTIVE &&
+        InterlockedCompareExchange(&Adapter->VBlankResetActive, 0, 0) == 0)
+    {
+        (VOID)DxgkpDestroyCddPresentBindings(Adapter, Entry.Device);
+        DxgkDereferenceContext(Entry.Context);
+        Entry.Context = NULL;
+        Entry.Device = NULL;
+        DestroyDevice.hDevice = Adapter->CddDeviceHandle;
+        Adapter->CddContextHandle = 0;
+        Adapter->CddDeviceHandle = 0;
+        DxgkDestroyDevice(&DestroyDevice);
+        Status = DxgkpReferenceCddContext(Adapter, &Entry);
+    }
     if (!NT_SUCCESS(Status))
         goto CleanupCdd;
     Status = DxgkDeviceWaitForIdle(Entry.Device);
@@ -1922,8 +2005,8 @@ DxgkpPresentDisplayOnlyToSharedPrimary(
         goto CleanupCdd;
     }
 
-    SourceVa = (PBYTE)PresentDisplayOnly->pSource;
     for (Index = 0;
+         (SourceVa != DestinationVa || SourcePitch != DestinationPitch) &&
          Index < PresentDisplayOnly->NumDirtyRects;
          ++Index)
     {
@@ -2027,6 +2110,7 @@ CleanupCdd:
         KeUnstackDetachProcess(&ApcState);
     KeReleaseMutex(&Adapter->CddPresentMutex, FALSE);
     DxgkpReleasePresentQueues(Adapter);
+    DxgkpUnlockPresentSource(SourceMdl);
     return Status;
 }
 
