@@ -43,10 +43,11 @@ Modifications: added .spec file; pnglibconf.h is scripts/pnglibconf.h.prebuilt w
 
 Title: libtiff
 Path: dll/3rdparty/libtiff
-Used Version: 4.7.1
+Path: sdk/include/reactos/libs/libtiff
+Used Version: 4.7.2
 License: libtiff (https://spdx.org/licenses/libtiff.html)
-URL: http://www.simplesystems.org/libtiff/
-Modifications: added .spec file
+URL: https://libtiff.gitlab.io/libtiff/
+Modifications: added .spec file; tif_config.h/tiffconf.h are our generated configuration
 
 Title: Public Suffix List (ICANN domains)
 Path: dll/win32/wininet/public_suffix_list.h

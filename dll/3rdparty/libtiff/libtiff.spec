@@ -17,3 +17,4 @@
 @ cdecl TIFFSetField(ptr long long long)
 @ cdecl TIFFWriteDirectory(ptr)
 @ cdecl TIFFWriteScanline(ptr ptr long long)
+@ cdecl TIFFGetMaxCompressionRatio(ptr)
