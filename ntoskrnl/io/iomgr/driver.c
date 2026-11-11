@@ -704,6 +704,208 @@ IopNormalizeRegistryPathCase(
     }
 }
 
+/* ---- LiberNT Update: system-start drivers on a fallback boot ---------------------------------------
+ * A boot-class update swaps a Start 0/1 driver on disk and keeps the previous file as <stem>.old
+ * beside it. On a fallback boot (the load options name a *.old kernel, HAL or bootvid: the manual
+ * LiberNT_Fallback entry and the boot-try loader both do) the drivers listed in the updater's
+ * pending\bootstate ("ARMED", then one "old <path>" line per swapped file) load from that pre-image,
+ * so a driver that killed the previous boot is not loaded again before the boot applier rolls the
+ * swap back. freeldr does the same for the boot-start drivers it loads. Any other boot, or no list:
+ * nothing changes. S1-BOOT-DRIVERS-DESIGN.md. */
+#define IOP_S1_MAX_OLD_DRIVERS 16
+#define IOP_S1_NAME_CCH 64
+#define IOP_S1_STATE_MAX 4096
+static WCHAR IopS1OldDrivers[IOP_S1_MAX_OLD_DRIVERS][IOP_S1_NAME_CCH];
+static ULONG IopS1OldDriverCount = 0;
+
+/* TRUE when a KEY=value load option (with or without the leading slash) has a value ending in ".old" */
+static BOOLEAN
+IopS1OptionNamesOld(
+    _In_ PCSTR Options,
+    _In_ PCSTR Key)
+{
+    SIZE_T KeyLength = strlen(Key);
+    PCSTR p = Options;
+
+    while (*p)
+    {
+        if (p == Options || p[-1] == ' ' || p[-1] == '\t')
+        {
+            PCSTR Name = (*p == '/') ? p + 1 : p;
+
+            if (_strnicmp(Name, Key, KeyLength) == 0)
+            {
+                PCSTR Value = Name + KeyLength;
+                SIZE_T Length = 0;
+
+                while (Value[Length] && Value[Length] != ' ' && Value[Length] != '\t')
+                    Length++;
+                if (Length > 4 && _strnicmp(Value + Length - 4, ".old", 4) == 0)
+                    return TRUE;
+            }
+        }
+        p++;
+    }
+    return FALSE;
+}
+
+CODE_SEG("INIT")
+static VOID
+IopS1ReadOldDriverList(VOID)
+{
+    CHAR PathBuffer[320];
+    ANSI_STRING PathA;
+    UNICODE_STRING PathU;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE FileHandle;
+    PCHAR Buffer, Line, Next;
+    SIZE_T Count;
+    NTSTATUS Status;
+
+    IopS1OldDriverCount = 0;
+    if (!KeLoaderBlock || !KeLoaderBlock->LoadOptions || !KeLoaderBlock->ArcBootDeviceName)
+        return;
+    if (!IopS1OptionNamesOld(KeLoaderBlock->LoadOptions, "KERNEL=") &&
+        !IopS1OptionNamesOld(KeLoaderBlock->LoadOptions, "HAL=") &&
+        !IopS1OptionNamesOld(KeLoaderBlock->LoadOptions, "BOOTVID="))
+    {
+        return;
+    }
+    if (strlen(KeLoaderBlock->ArcBootDeviceName) + 60 > sizeof(PathBuffer))
+        return;
+    sprintf(PathBuffer, "\\ArcName\\%s\\LiberNT\\Servicing\\pending\\bootstate", KeLoaderBlock->ArcBootDeviceName);
+    RtlInitAnsiString(&PathA, PathBuffer);
+    if (!NT_SUCCESS(RtlAnsiStringToUnicodeString(&PathU, &PathA, TRUE)))
+        return;
+    InitializeObjectAttributes(&ObjectAttributes, &PathU, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    Status = ZwOpenFile(&FileHandle,
+                        FILE_GENERIC_READ,
+                        &ObjectAttributes,
+                        &IoStatusBlock,
+                        FILE_SHARE_READ,
+                        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+    RtlFreeUnicodeString(&PathU);
+    if (!NT_SUCCESS(Status))
+        return;                                 /* no state file: not armed */
+
+    Buffer = ExAllocatePoolWithTag(PagedPool, IOP_S1_STATE_MAX + 1, TAG_IO);
+    if (Buffer)
+    {
+        Status = ZwReadFile(FileHandle, NULL, NULL, NULL, &IoStatusBlock, Buffer, IOP_S1_STATE_MAX, NULL, NULL);
+    }
+    ZwClose(FileHandle);
+    if (!Buffer)
+        return;
+    Count = NT_SUCCESS(Status) ? IoStatusBlock.Information : 0;
+    if (Count > IOP_S1_STATE_MAX)
+        Count = IOP_S1_STATE_MAX;
+    Buffer[Count] = ANSI_NULL;
+    if (Count < 5 || memcmp(Buffer, "ARMED", 5) != 0)
+    {
+        ExFreePoolWithTag(Buffer, TAG_IO);
+        return;
+    }
+
+    for (Line = Buffer; Line && *Line; Line = Next)
+    {
+        PCSTR Base;
+        PCHAR p;
+        SIZE_T i, BaseLength;
+
+        Next = strchr(Line, '\n');
+        if (Next)
+            *Next++ = ANSI_NULL;
+        for (p = Line + strlen(Line); p > Line && (p[-1] == '\r' || p[-1] == ' '); p--)
+            p[-1] = ANSI_NULL;
+        if (_strnicmp(Line, "old ", 4) != 0)
+            continue;
+        Base = Line + 4;
+        for (p = Line + 4; *p; p++)
+        {
+            if (*p == '\\' || *p == '/')
+                Base = p + 1;
+        }
+        BaseLength = strlen(Base);
+        if (BaseLength == 0 || BaseLength >= IOP_S1_NAME_CCH || IopS1OldDriverCount >= IOP_S1_MAX_OLD_DRIVERS)
+            continue;
+        for (i = 0; i <= BaseLength; i++)
+            IopS1OldDrivers[IopS1OldDriverCount][i] = (WCHAR)(UCHAR)Base[i];
+        IopS1OldDriverCount++;
+    }
+    ExFreePoolWithTag(Buffer, TAG_IO);
+    if (IopS1OldDriverCount)
+        DPRINT1("Fallback boot: %lu boot-class driver(s) load from their .old pre-image\n", IopS1OldDriverCount);
+}
+
+/* ImagePath names a listed driver and <stem>.old exists: ImagePath becomes that file (new TAG_IO buffer,
+ * the old one is freed). Otherwise ImagePath is left alone. */
+static VOID
+IopS1SubstituteOldDriver(
+    _Inout_ PUNICODE_STRING ImagePath)
+{
+    UNICODE_STRING Candidate;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE FileHandle;
+    PWCHAR Base, Dot;
+    ULONG i, Chars, BaseChars, StemChars;
+    NTSTATUS Status;
+
+    Chars = ImagePath->Length / sizeof(WCHAR);
+    Base = ImagePath->Buffer;
+    Dot = NULL;
+    for (i = 0; i < Chars; i++)
+    {
+        if (ImagePath->Buffer[i] == L'\\')
+        {
+            Base = &ImagePath->Buffer[i + 1];
+            Dot = NULL;
+        }
+        else if (ImagePath->Buffer[i] == L'.')
+        {
+            Dot = &ImagePath->Buffer[i];
+        }
+    }
+    BaseChars = (ULONG)(ImagePath->Buffer + Chars - Base);
+    if (BaseChars == 0 || BaseChars >= IOP_S1_NAME_CCH)
+        return;
+    for (i = 0; i < IopS1OldDriverCount; i++)
+    {
+        if (wcslen(IopS1OldDrivers[i]) == BaseChars && _wcsnicmp(IopS1OldDrivers[i], Base, BaseChars) == 0)
+            break;
+    }
+    if (i == IopS1OldDriverCount)
+        return;
+
+    StemChars = Dot ? (ULONG)(Dot - ImagePath->Buffer) : Chars;
+    Candidate.Length = (USHORT)((StemChars + 4) * sizeof(WCHAR));
+    Candidate.MaximumLength = Candidate.Length + sizeof(UNICODE_NULL);
+    Candidate.Buffer = ExAllocatePoolWithTag(NonPagedPool, Candidate.MaximumLength, TAG_IO);
+    if (!Candidate.Buffer)
+        return;
+    RtlCopyMemory(Candidate.Buffer, ImagePath->Buffer, StemChars * sizeof(WCHAR));
+    RtlCopyMemory(Candidate.Buffer + StemChars, L".old", 5 * sizeof(WCHAR));
+
+    InitializeObjectAttributes(&ObjectAttributes, &Candidate, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    Status = ZwOpenFile(&FileHandle,
+                        FILE_READ_ATTRIBUTES,
+                        &ObjectAttributes,
+                        &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        FILE_NON_DIRECTORY_FILE);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Fallback boot: '%wZ' has no .old pre-image, loading it as named\n", ImagePath);
+        ExFreePoolWithTag(Candidate.Buffer, TAG_IO);
+        return;
+    }
+    ZwClose(FileHandle);
+    DPRINT1("Fallback boot: loading '%wZ' instead of '%wZ'\n", &Candidate, ImagePath);
+    ExFreePool(ImagePath->Buffer);                  /* TAG_IO or the caller's registry buffer */
+    *ImagePath = Candidate;
+}
+
 /*
  * IopNormalizeImagePath
  *
@@ -774,6 +976,10 @@ IopNormalizeImagePath(
         /* Free caller's string */
         ExFreePoolWithTag(InputImagePath.Buffer, TAG_RTLREGISTRY);
     }
+
+    /* LiberNT fallback boot: a driver of an unconfirmed swap loads from its .old pre-image */
+    if (IopS1OldDriverCount != 0)
+        IopS1SubstituteOldDriver(ImagePath);
 
     DPRINT("Normalized image path is '%wZ' for service '%wZ'\n", ImagePath, ServiceName);
 
@@ -1917,6 +2123,9 @@ IopInitializeSystemDrivers(VOID)
     HANDLE ServiceHandle;
     ULONG Slot = 0, i;
     BOOLEAN PrepareImages;
+
+    /* The boot volume is up: learn which drivers a fallback boot must take from their .old pre-image */
+    IopS1ReadOldDriverList();
 
     PiPerformSyncDeviceAction(IopRootDeviceNode->PhysicalDeviceObject, PiActionEnumDeviceTree);
 
