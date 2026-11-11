@@ -110,6 +110,25 @@ Volume::WriteBarrierEnabled()
 }
 
 NTSTATUS
+Volume::CommitRecord(_In_ class FileRecord* Record)
+{
+    ULONGLONG Offset = 0;
+    NTSTATUS Status;
+
+    if (!Record ||
+        Record->RecordNumber == MAXULONG ||
+        !NT_SUCCESS(MFT->GetFileRecordDiskOffset(Record->RecordNumber,
+                                                 &Offset)))
+    {
+        return FlushVolume();
+    }
+    Status = CommitRange(Offset, MFT->FileRecordSize);
+    if (Status == STATUS_NOT_IMPLEMENTED)
+        Status = FlushVolume();
+    return Status;
+}
+
+NTSTATUS
 Volume::OrderAfter(_In_ ULONGLONG PointerOffset, _In_ ULONG PointerLength,
                    _In_ ULONGLONG PointeeOffset, _In_ ULONG PointeeLength)
 {

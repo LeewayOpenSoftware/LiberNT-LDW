@@ -1571,7 +1571,13 @@ FileRecord::CollapseUnneededAttributeList()
 
     Status = DropUnneededAttributeList(TRUE, &Unneeded);
     if (NT_SUCCESS(Status) && ListRuns)
-        Status = DiskVolume->ReleaseClusters(ListRuns);
+    {
+        /* The record without its list must be durable before the list's
+         * clusters can be handed to another file (CommitBeforeRelease). */
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(ListRuns);
+    }
     FreeDataRun(ListRuns);
     return Status;
 }
