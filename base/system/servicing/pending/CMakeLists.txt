@@ -18,3 +18,9 @@ set_module_type(LiberNTUpdatePending nativecui)
 add_importlibs(LiberNTUpdatePending ntdll)
 add_dependencies(LiberNTUpdatePending psdk)
 endif()
+
+# Boot-class lab fixture stubs (tools/libernt-update/stubs): target-guarded by LIBERNT_BUILD_S1_LABSTUBS
+# (OFF by default, so nothing here enters the default tree or the ISO). Wired from this stage-1 CMakeLists,
+# which base/system/CMakeLists.txt add_subdirectory()s unconditionally. CI turns the option ON to publish
+# the stubs as separate artifacts for the Lab04 boot-class job.
+add_subdirectory(${CMAKE_SOURCE_DIR}/tools/libernt-update/stubs ${CMAKE_BINARY_DIR}/tools/libernt-update/stubs)
