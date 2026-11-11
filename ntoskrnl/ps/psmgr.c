@@ -323,10 +323,19 @@ PsLocateSystemDll(VOID)
     NTSTATUS Status;
     ULONG_PTR HardErrorParameters;
     ULONG HardErrorResponse;
+    UNICODE_STRING OldName;
+    PUNICODE_STRING Name = &PsNtDllPathName;
+
+    /* LiberNT fallback boot: an unconfirmed swap of ntdll is mapped from its .old pre-image */
+    if (IopS1OldFileName(&PsNtDllPathName, &OldName))
+    {
+        DPRINT1("Fallback boot: system DLL is '%wZ'\n", &OldName);
+        Name = &OldName;
+    }
 
     /* Locate and open NTDLL to determine ImageBase and LdrStartup */
     InitializeObjectAttributes(&ObjectAttributes,
-                               &PsNtDllPathName,
+                               Name,
                                OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
@@ -336,6 +345,8 @@ PsLocateSystemDll(VOID)
                         &IoStatusBlock,
                         FILE_SHARE_READ,
                         0);
+    if (Name == &OldName)
+        ExFreePool(OldName.Buffer);
     if (!NT_SUCCESS(Status))
     {
         /* Failed, bugcheck */

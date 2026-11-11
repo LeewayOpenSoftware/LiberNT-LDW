@@ -136,14 +136,153 @@ CreateTermSrvReadyEvent(VOID)
     return Event;
 }
 
-static
+/* ---- LiberNT Update fallback boot (S1-GROUP3-DESIGN.md) --------------------------------------------
+ * services.exe and lsass.exe are swapped on disk by a boot-class update, the previous file kept beside
+ * them as <stem>.old. On a fallback boot (SystemStartOptions names a *.old kernel, HAL or bootvid) the
+ * files listed in LiberNT\Servicing\pending\bootstate ("ARMED", then "old <path>" lines) start from the
+ * pre-image. smss and the kernel do the same for the processes and modules they start. */
+#define S1_MAX_OLD 16
+#define S1_NAME_CCH 64
+static WCHAR S1Old[S1_MAX_OLD][S1_NAME_CCH];
+static DWORD S1OldCount;
+static BOOL S1Checked;
+
+static BOOL
+S1OptionNamesOld(
+    _In_ PCWSTR Options,
+    _In_ PCWSTR Key)
+{
+    SIZE_T KeyLength = wcslen(Key);
+    PCWSTR p = Options;
+
+    while (*p)
+    {
+        if ((p == Options || p[-1] == L' ' || p[-1] == L'\t') && _wcsnicmp(p, Key, KeyLength) == 0)
+        {
+            PCWSTR Value = p + KeyLength;
+            SIZE_T Length = 0;
+
+            while (Value[Length] && Value[Length] != L' ' && Value[Length] != L'\t')
+                Length++;
+            if (Length > 4 && _wcsnicmp(Value + Length - 4, L".old", 4) == 0)
+                return TRUE;
+        }
+        p++;
+    }
+    return FALSE;
+}
+
+static VOID
+S1Init(VOID)
+{
+    HKEY Key;
+    WCHAR Options[1024], Path[MAX_PATH];
+    DWORD Size = sizeof(Options) - sizeof(WCHAR), Type = 0, Read = 0;
+    HANDLE File;
+    CHAR *Buffer, *Line, *Next;
+
+    S1Checked = TRUE;
+    S1OldCount = 0;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_QUERY_VALUE, &Key) != ERROR_SUCCESS)
+        return;
+    if (RegQueryValueExW(Key, L"SystemStartOptions", NULL, &Type, (LPBYTE)Options, &Size) != ERROR_SUCCESS || Type != REG_SZ)
+    {
+        RegCloseKey(Key);
+        return;
+    }
+    RegCloseKey(Key);
+    Options[Size / sizeof(WCHAR)] = UNICODE_NULL;
+    if (!S1OptionNamesOld(Options, L"/KERNEL=") && !S1OptionNamesOld(Options, L"/HAL=") &&
+        !S1OptionNamesOld(Options, L"/BOOTVID="))
+        return;
+    if (!GetSystemWindowsDirectoryW(Path, MAX_PATH) || Path[1] != L':')
+        return;
+    Path[3] = UNICODE_NULL;
+    wcscat(Path, L"LiberNT\\Servicing\\pending\\bootstate");
+    File = CreateFileW(Path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (File == INVALID_HANDLE_VALUE)
+        return;
+    Buffer = HeapAlloc(GetProcessHeap(), 0, 4097);
+    if (Buffer && ReadFile(File, Buffer, 4096, &Read, NULL) && Read >= 5 && memcmp(Buffer, "ARMED", 5) == 0)
+    {
+        Buffer[Read] = 0;
+        for (Line = Buffer; Line && *Line; Line = Next)
+        {
+            PCSTR Base;
+            CHAR *p;
+            DWORD k;
+
+            Next = strchr(Line, '\n');
+            if (Next)
+                *Next++ = 0;
+            for (p = Line + strlen(Line); p > Line && (p[-1] == '\r' || p[-1] == ' '); p--)
+                p[-1] = 0;
+            if (_strnicmp(Line, "old ", 4) != 0)
+                continue;
+            Base = Line + 4;
+            for (p = Line + 4; *p; p++)
+            {
+                if (*p == '\\' || *p == '/')
+                    Base = p + 1;
+            }
+            if (!*Base || strlen(Base) >= S1_NAME_CCH || S1OldCount >= S1_MAX_OLD)
+                continue;
+            for (k = 0; Base[k]; k++)
+                S1Old[S1OldCount][k] = (WCHAR)(UCHAR)Base[k];
+            S1Old[S1OldCount][k] = UNICODE_NULL;
+            S1OldCount++;
+        }
+    }
+    if (Buffer)
+        HeapFree(GetProcessHeap(), 0, Buffer);
+    CloseHandle(File);
+}
+
+/* ImageName listed and <SystemRoot>\System32\<stem>.old present: OldPath gets that full path */
+static BOOL
+S1OldImage(
+    _In_ PCWSTR ImageName,
+    _Out_writes_(MAX_PATH) PWSTR OldPath)
+{
+    DWORD i;
+    PWSTR Dot;
+
+    if (!S1Checked)
+        S1Init();
+    for (i = 0; i < S1OldCount; i++)
+    {
+        if (_wcsicmp(S1Old[i], ImageName) == 0)
+            break;
+    }
+    if (i == S1OldCount)
+        return FALSE;
+    if (!GetSystemDirectoryW(OldPath, MAX_PATH - 70))
+        return FALSE;
+    wcscat(OldPath, L"\\");
+    wcscat(OldPath, ImageName);
+    Dot = wcsrchr(OldPath, L'.');
+    if (Dot)
+        *Dot = UNICODE_NULL;
+    wcscat(OldPath, L".old");
+    if (GetFileAttributesW(OldPath) == INVALID_FILE_ATTRIBUTES)
+    {
+        ERR("WININIT: fallback boot, %ls has no .old pre-image, starting it as named\n", ImageName);
+        return FALSE;
+    }
+    ERR("WININIT: fallback boot, starting %ls instead of %ls\n", OldPath, ImageName);
+    return TRUE;
+}
+
 HANDLE
 StartSystemProcess(
     _In_ PCWSTR ImageName)
 {
     STARTUPINFOW StartupInfo = { sizeof(StartupInfo) };
     PROCESS_INFORMATION ProcessInformation;
+    WCHAR OldPath[MAX_PATH];
 
+    if (S1OldImage(ImageName, OldPath))
+        ImageName = OldPath;
     if (!CreateProcessW(ImageName,
                         NULL,
                         NULL,

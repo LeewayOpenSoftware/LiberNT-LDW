@@ -478,6 +478,132 @@ WinLdrInitializePhase1(
     TRACE("WinLdrInitializePhase1() completed\n");
 }
 
+/* ---- LiberNT Update: boot-start drivers on a fallback boot ---------------------------------------
+ * A boot-class update swaps a boot-start driver on disk and keeps the previous file as <stem>.old
+ * beside it. If the new driver kills the boot before smss, the fallback boot (the manual
+ * LiberNT_Fallback entry or the boot-try loader; both name a *.old kernel, HAL or bootvid in the
+ * options) must not load it again: the updater lists the swapped files in pending\bootstate ("ARMED",
+ * then one "old <path>" line per file) and those drivers are loaded from the .old pre-image under
+ * their usual base name, so imports and the kernel see the normal module. No *.old trio option, no
+ * state file or no list: nothing changes. The kernel does the same for the system-start drivers
+ * (ntoskrnl io/iomgr/driver.c). S1-BOOT-DRIVERS-DESIGN.md. */
+#define WINLDR_S1_MAX_OLD_DRIVERS 16
+#define WINLDR_S1_NAME_CCH 64
+static CHAR WinLdrS1OldDrivers[WINLDR_S1_MAX_OLD_DRIVERS][WINLDR_S1_NAME_CCH];
+static ULONG WinLdrS1OldDriverCount = 0;
+
+/* TRUE when the value of /Option= in BootOptions ends in ".old" */
+static BOOLEAN
+WinLdrS1OptionNamesOld(PCSTR BootOptions, PCSTR Option)
+{
+    ULONG Length = 0, NameLength = (ULONG)strlen(Option);
+    PCSTR Value = NtLdrGetOptionEx(BootOptions, Option, &Length);
+
+    if (!Value || Length <= NameLength + 4)
+        return FALSE;
+    return _strnicmp(Value + Length - 4, ".old", 4) == 0;
+}
+
+static VOID
+WinLdrS1DriverFallbackInit(PCSTR BootOptions, PCSTR BootPath)
+{
+    CHAR StatePath[MAX_PATH];
+    CHAR Buffer[2048];
+    PCSTR Paren = strrchr(BootPath, ')');
+    PCHAR Line, Next;
+    ULONG FileId, Count = 0;
+    size_t Prefix;
+
+    WinLdrS1OldDriverCount = 0;
+    if (!WinLdrS1OptionNamesOld(BootOptions, "KERNEL=") &&
+        !WinLdrS1OptionNamesOld(BootOptions, "HAL=") &&
+        !WinLdrS1OptionNamesOld(BootOptions, "BOOTVID="))
+    {
+        return;
+    }
+    if (!Paren)
+        return;
+    Prefix = (size_t)(Paren - BootPath) + 1;
+    if (Prefix + 40 >= sizeof(StatePath))
+        return;
+    memcpy(StatePath, BootPath, Prefix);
+    StatePath[Prefix] = ANSI_NULL;
+    RtlStringCbCatA(StatePath, sizeof(StatePath), "\\LiberNT\\Servicing\\pending\\bootstate");
+    if (ArcOpen(StatePath, OpenReadOnly, &FileId) != ESUCCESS)
+        return;
+    if (ArcRead(FileId, Buffer, sizeof(Buffer) - 1, &Count) != ESUCCESS)
+        Count = 0;
+    ArcClose(FileId);
+    if (Count >= sizeof(Buffer))
+        Count = sizeof(Buffer) - 1;
+    Buffer[Count] = ANSI_NULL;
+    if (Count < 5 || memcmp(Buffer, "ARMED", 5) != 0)
+        return;
+
+    for (Line = Buffer; Line && *Line; Line = Next)
+    {
+        PCSTR Base;
+        PCHAR p;
+
+        Next = strchr(Line, '\n');
+        if (Next)
+            *Next++ = ANSI_NULL;
+        for (p = Line + strlen(Line); p > Line && (p[-1] == '\r' || p[-1] == ' '); p--)
+            p[-1] = ANSI_NULL;
+        if (_strnicmp(Line, "old ", 4) != 0)
+            continue;
+        Base = Line + 4;
+        for (p = Line + 4; *p; p++)
+        {
+            if (*p == '\\' || *p == '/')
+                Base = p + 1;
+        }
+        if (!*Base || strlen(Base) >= WINLDR_S1_NAME_CCH ||
+            WinLdrS1OldDriverCount >= WINLDR_S1_MAX_OLD_DRIVERS)
+        {
+            continue;
+        }
+        RtlStringCbCopyA(WinLdrS1OldDrivers[WinLdrS1OldDriverCount], WINLDR_S1_NAME_CCH, Base);
+        WinLdrS1OldDriverCount++;
+    }
+    if (WinLdrS1OldDriverCount)
+        ERR("Fallback boot: %lu boot-class driver(s) load from their .old pre-image\n", WinLdrS1OldDriverCount);
+}
+
+/* On a fallback boot, when DllName is a listed driver and its <stem>.old exists in the driver's
+ * directory, put that file name in FileName. FALSE: load the file as named. */
+static BOOLEAN
+WinLdrS1OldDriverName(PCSTR BootPath, PCSTR DriverPath, PCSTR DllName, PSTR FileName, SIZE_T FileNameSize)
+{
+    CHAR FullPath[1024];
+    PCHAR Dot;
+    ULONG i, FileId;
+
+    for (i = 0; i < WinLdrS1OldDriverCount; i++)
+    {
+        if (_stricmp(WinLdrS1OldDrivers[i], DllName) == 0)
+            break;
+    }
+    if (i == WinLdrS1OldDriverCount)
+        return FALSE;
+    if (strlen(DllName) + 5 > FileNameSize)
+        return FALSE;
+    RtlStringCbCopyA(FileName, FileNameSize, DllName);
+    Dot = strrchr(FileName, '.');
+    if (Dot)
+        *Dot = ANSI_NULL;
+    RtlStringCbCatA(FileName, FileNameSize, ".old");
+    RtlStringCbPrintfA(FullPath, sizeof(FullPath), "%s%s%s", BootPath, DriverPath, FileName);
+    if (ArcOpen(FullPath, OpenReadOnly, &FileId) != ESUCCESS)
+    {
+        ERR("Fallback boot: '%s' has no .old pre-image, loading it as named\n", DllName);
+        return FALSE;
+    }
+    ArcClose(FileId);
+    ERR("Fallback boot: loading '%s' as '%s'\n", FileName, DllName);
+    return TRUE;
+}
+
 static BOOLEAN
 WinLdrLoadDeviceDriver(PLIST_ENTRY LoadOrderListHead,
                        PCSTR BootPath,
@@ -488,6 +614,7 @@ WinLdrLoadDeviceDriver(PLIST_ENTRY LoadOrderListHead,
     CHAR FullPath[1024];
     CHAR DriverPath[1024];
     CHAR DllName[1024];
+    CHAR FileName[1024];
     PCHAR DriverNamePos;
     BOOLEAN Success;
     PVOID DriverBase = NULL;
@@ -522,8 +649,10 @@ WinLdrLoadDeviceDriver(PLIST_ENTRY LoadOrderListHead,
         return TRUE;
     }
 
-    // It's not loaded, we have to load it
-    RtlStringCbPrintfA(FullPath, sizeof(FullPath), "%s%s%s", BootPath, DriverPath, DllName);
+    // It's not loaded, we have to load it (a fallback boot may take the .old pre-image under this name)
+    if (!WinLdrS1OldDriverName(BootPath, DriverPath, DllName, FileName, sizeof(FileName)))
+        RtlStringCbCopyA(FileName, sizeof(FileName), DllName);
+    RtlStringCbPrintfA(FullPath, sizeof(FullPath), "%s%s%s", BootPath, DriverPath, FileName);
 
     NtLdrOutputLoadMsg(FullPath, NULL);
     Success = PeLdrLoadImage(FullPath, LoaderBootDriver, &DriverBase);
@@ -533,10 +662,10 @@ WinLdrLoadDeviceDriver(PLIST_ENTRY LoadOrderListHead,
         return FALSE;
     }
 
-    // Allocate a DTE for it
+    // Allocate a DTE for it (the base name stays the alias the imports and the service use)
     Success = PeLdrAllocateDataTableEntry(LoadOrderListHead,
                                           DllName,
-                                          DllName,
+                                          FileName,
                                           PaToVa(DriverBase),
                                           DriverDTE);
     if (!Success)
@@ -1829,6 +1958,9 @@ LoadAndBootWindowsCommon(
  ****/
 
     UiSetProgressBarSubset(40, 90); // NTOS goes from 25 to 75%
+
+    /* On a fallback boot, boot-class drivers of an unconfirmed swap load from their .old pre-image */
+    WinLdrS1DriverFallbackInit(BootOptions, BootPath);
 
     /* Load boot drivers */
     UiSetProgressBarText("Loading boot drivers...");

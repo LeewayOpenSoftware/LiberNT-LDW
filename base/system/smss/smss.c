@@ -36,12 +36,17 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
     NTSTATUS Status;
     RTL_USER_PROCESS_INFORMATION LocalProcessInfo;
     PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
-    UNICODE_STRING ImagePathName;
+    UNICODE_STRING ImagePathName, OldName;
+    BOOLEAN UseOld = FALSE;
     static const UNICODE_STRING DosDevicesPrefix = RTL_CONSTANT_STRING(L"\\??\\");
 
     /* Use the input process information if we have it, otherwise use local */
     ProcessInfo = ProcessInformation;
     if (!ProcessInfo) ProcessInfo = &LocalProcessInfo;
+
+    /* LiberNT fallback boot: a swapped critical process starts from its .old pre-image */
+    if (NT_SUCCESS(SmpS1OldImageName(FileName, &OldName, &UseOld)) && UseOld)
+        FileName = &OldName;
 
     ImagePathName = *FileName;
     if (RtlPrefixUnicodeString(&DosDevicesPrefix, &ImagePathName, FALSE))
@@ -69,6 +74,8 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
         ASSERTMSG("RtlCreateProcessParameters failed.\n", NT_SUCCESS(Status));
         DPRINT1("SMSS: RtlCreateProcessParameters failed for %wZ - Status == %lx\n",
                 FileName, Status);
+        if (UseOld)
+            RtlFreeHeap(RtlGetProcessHeap(), 0, OldName.Buffer);
         return Status;
     }
 
@@ -107,6 +114,8 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
                                   NULL,
                                   NULL,
                                   ProcessInfo);
+    if (UseOld)
+        RtlFreeHeap(RtlGetProcessHeap(), 0, OldName.Buffer);
     RtlDestroyProcessParameters(ProcessParameters);
     if (!NT_SUCCESS(Status))
     {
