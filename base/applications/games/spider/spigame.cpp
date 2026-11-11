@@ -51,9 +51,19 @@ CardStack CreatePlayDeck()
     return newStack;
 }
 
+void GameStarted(void)
+{
+    fGameStarted = true;
+    LwgShellGameStart(g_shell);
+}
+
 void NewGame(void)
 {
     int i, j;
+
+    /* a game that was started and is dealt over counts as lost in the statistics */
+    LwgShellGameAbandon(g_shell);
+    SpiSetVariant();
     /* First four stack with five, all other with 4 */
     int covCards = 5;
     CardStack fakeDeck, temp;
@@ -89,6 +99,7 @@ void NewGame(void)
 
     SpiderWnd.Redraw();
     fGameStarted = false;
+    SpiUpdateStatus();
 }
 
 bool stackLookingGood(const CardStack &mystack, int numChecks)
@@ -126,7 +137,7 @@ void TurnStackCard(CardRegion &stackobj)
 void CARDLIBPROC DeckClickProc(CardRegion &stackobj, int NumDragCards)
 {
     CardStack temp, fakeDeck = pDeck->GetCardStack();
-    fGameStarted = true;
+    GameStarted();
 
     if (fakeDeck.NumCards() != 0 && deck.NumCards() != 0)
     {
@@ -195,6 +206,7 @@ bool CARDLIBPROC StackDragProc(CardRegion &stackobj, int numDragCards)
 /* Game finished successfully */
 void GameFinished()
 {
+    LwgShellGameEnd(g_shell, TRUE, FALSE, 0);
     SpiderWnd.EmptyStacks();
 
     MessageBox(SpiderWnd, MsgWin, szAppName, MB_OK | MB_ICONINFORMATION);
@@ -271,7 +283,7 @@ bool CARDLIBPROC StackDropProc(CardRegion &stackobj, CardStack &dragcards)
     }
     /* Flip the top card of the source stack */
     TurnStackCard(*from);
-    fGameStarted = true;
+    GameStarted();
     return true;
 }
 

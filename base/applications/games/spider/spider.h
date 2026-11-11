@@ -2,6 +2,7 @@
 #define _SPIDER_PCH_
 
 #include <cardlib.h>
+#include <leewayui/game.h>
 
 #include "resource.h"
 
@@ -29,8 +30,15 @@ extern DWORD dwDifficulty;
 extern TCHAR MsgDeal[];
 extern TCHAR MsgWin[];
 
+extern LwgShell *g_shell;
+
 void CreateSpider(void);
 void NewGame(void);
+void GameStarted(void);     /* first move of a game: sets fGameStarted, starts the shell clock */
+void SpiSetVariant(void);   /* statistics variant = difficulty (1, 2 or 4 suits) */
+void SpiUpdateStatus(void);
+void SpiSaveGame(void);
+bool SpiResumeGame(void);
 
 bool CARDLIBPROC RowStackDragProc(CardRegion &stackobj, int iNumCards);
 bool CARDLIBPROC RowStackDropProc(CardRegion &stackobj,  const CardStack &dragcards);

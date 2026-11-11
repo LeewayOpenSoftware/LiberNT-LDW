@@ -63,6 +63,7 @@ BEGIN
         MENUITEM "&New Game\tF2", IDM_GAME_NEW
         MENUITEM SEPARATOR
         MENUITEM "&Deck...", IDM_GAME_DECK
+        MENUITEM "&Statistics...", IDM_GAME_STATS
         MENUITEM SEPARATOR
         MENUITEM "E&xit", IDM_GAME_EXIT
     END

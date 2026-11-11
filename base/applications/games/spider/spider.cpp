@@ -26,6 +26,7 @@ TCHAR MsgDeal[128];
 DWORD dwDifficulty;
 
 CardWindow SpiderWnd;
+LwgShell *g_shell = NULL;
 
 typedef struct _CardBack
 {
@@ -37,6 +38,12 @@ typedef struct _CardBack
 } CARDBACK, *PCARDBACK;
 
 LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
+
+static void SpiTick(UINT32 seconds, void *context)
+{
+    (void)seconds; (void)context;
+    SpiUpdateStatus();
+}
 
 void MakePath(TCHAR *szDest, UINT nDestLen, const TCHAR *szExt)
 {
@@ -141,7 +148,8 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPTSTR szCmdLine, int iCm
 
     hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDR_ACCELERATOR1));
 
-    DialogBox(hInstance, MAKEINTRESOURCE(IDD_DIFFICULTY), hwnd, DifficultyDlgProc);
+    if (!SpiResumeGame())
+        DialogBox(hInstance, MAKEINTRESOURCE(IDD_DIFFICULTY), hwnd, DifficultyDlgProc);
 
     while (GetMessage(&msg, NULL,0,0))
     {
@@ -305,7 +313,12 @@ VOID ShowDeckOptionsDlg(HWND hwnd)
 
 LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
-    static int nWidth, nHeight;
+    static int nWidth, nHeight, nStatusHeight;
+    LRESULT lShellResult;
+
+    // timer, statistics command, DPI and theme changes go through the shell first
+    if (g_shell && LwgShellHandleMessage(g_shell, iMsg, wParam, lParam, &lShellResult))
+        return lShellResult;
 
     switch (iMsg)
     {
@@ -314,9 +327,34 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
             // For now, the Help dialog is disabled because of lacking of HTML Help support
             EnableMenuItem(GetMenu(hwnd), IDM_HELP_CONTENTS, MF_BYCOMMAND | MF_GRAYED);
 
+            // G0 game shell: themed frame (status bar), game clock, statistics, save/resume
+            {
+                LwgShellDesc sd;
+                RECT rcClient, rcStatus;
+                LeewayUIFrameRects fr;
+
+                ZeroMemory(&sd, sizeof(sd));
+                sd.struct_size = sizeof(sd);
+                sd.owner = hwnd;
+                sd.instance = hInstance;
+                sd.game_id = L"Spider";
+                sd.title = szAppName;
+                sd.save_tag = LWG_TAG('S', 'P', 'D', '1');
+                sd.save_version = 1;
+                if (FAILED(LwgShellCreate(&sd, &g_shell)))
+                    return -1;
+                LwgShellSetTickHandler(g_shell, SpiTick, NULL);
+                LeewayFrameShowStatusBar(LwgShellGetFrame(g_shell), TRUE, FALSE);
+                GetClientRect(hwnd, &rcClient);
+                LwgShellLayout(g_shell, &rcClient, &fr);
+                GetWindowRect(LeewayFrameGetStatusWindow(LwgShellGetFrame(g_shell)), &rcStatus);
+                nStatusHeight = rcStatus.bottom - rcStatus.top;
+            }
+
             SpiderWnd.Create(hwnd, 0, WS_CHILD | WS_VISIBLE, 0, 0, 100, 100);
             dwDifficulty = IDC_DIF_ONECOLOR;
             CreateSpider();
+            SpiSetVariant();
 
             SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER);
 
@@ -326,6 +364,8 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
         }
 
         case WM_DESTROY:
+            LwgShellDestroy(g_shell);
+            g_shell = NULL;
             PostQuitMessage(0);
             return 0;
 
@@ -333,7 +373,14 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
             nWidth  = LOWORD(lParam);
             nHeight = HIWORD(lParam);
 
-            MoveWindow(SpiderWnd, 0, 0, nWidth, nHeight, TRUE);
+            {
+                RECT rcClient = { 0, 0, nWidth, nHeight };
+                LeewayUIFrameRects fr;
+
+                LwgShellLayout(g_shell, &rcClient, &fr);
+                MoveWindow(SpiderWnd, fr.work.left, fr.work.top, fr.work.right - fr.work.left,
+                           fr.work.bottom - fr.work.top, TRUE);
+            }
             return 0;
 
         case WM_GETMINMAXINFO:
@@ -346,7 +393,8 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
                                     GetSystemMetrics(SM_CYMENU) +
                                     2 * Y_BORDER +
                                     3 * __cardheight +
-                                    6 * yRowStackCardOffset;
+                                    6 * yRowStackCardOffset +
+                                    nStatusHeight;
             return 0;
         }
 
@@ -378,22 +426,10 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
             return 0;
 
         case WM_CLOSE:
-            if (fGameStarted == false)
-            {
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            else
-            {
-                int ret;
-
-                ret = MessageBox(hwnd, MsgQuit, szAppName, MB_YESNO|MB_ICONQUESTION);
-                if (ret == IDYES)
-                {
-                    WinHelp(hwnd, szHelpPath, HELP_QUIT, 0);
-                    DestroyWindow(hwnd);
-                }
-            }
+            // an open game is saved and resumed at the next start (no loss is recorded)
+            SpiSaveGame();
+            WinHelp(hwnd, szHelpPath, HELP_QUIT, 0);
+            DestroyWindow(hwnd);
             return 0;
     }
     return DefWindowProc (hwnd, iMsg, wParam, lParam);
