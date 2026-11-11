@@ -935,9 +935,17 @@ WriteRunBytes(_In_ PVolume DiskVolume,
 static BOOLEAN
 AttributeContentIsOrdered(_In_ PAttribute Attribute)
 {
+    /*
+     * A security descriptor, EA set or reparse point that reads back as
+     * zeros or as a previous owner's bytes fails to parse, which denies or
+     * breaks every open of the file: the same class as a broken list.
+     */
     return Attribute->AttributeType == TypeIndexAllocation ||
            Attribute->AttributeType == TypeAttributeList ||
-           Attribute->AttributeType == TypeBitmap;
+           Attribute->AttributeType == TypeBitmap ||
+           Attribute->AttributeType == TypeSecurityDescriptor ||
+           Attribute->AttributeType == TypeEA ||
+           Attribute->AttributeType == TypeReparsePoint;
 }
 
 /*
@@ -1094,6 +1102,11 @@ FileRecord::NormalizeSecurityAttributeList()
     Status = BuildNonResidentMappingSegment(Attribute, Runs, 0, 0, 0,
                                             ClusterCount * ClusterSize,
                                             Length, Length, 0);
+    if (!NT_SUCCESS(Status))
+        goto Restore;
+    /* A record naming a list extent that never landed loses every
+     * attribute of the file (r149): order it after the list content. */
+    Status = OrderRecordAfterRunBytes(DiskVolume, this, Runs, 0, Length);
     if (!NT_SUCCESS(Status))
         goto Restore;
     WriteAttempted = TRUE;
@@ -1351,6 +1364,15 @@ Publish:
         Standard->SecurityId = 0;
     }
     Status = PrepareAutomaticTimestamps(NTFS_BASIC_INFO_CHANGE_TIME, NULL);
+    if (!NT_SUCCESS(Status))
+        goto Restore;
+    /* The record names the descriptor written above: order it after it
+     * (synchronously when a mapping update spreads the pointer). */
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      MappingUpdate ? NULL : AttributeOwner,
+                                      NewRuns,
+                                      0,
+                                      BufferLength);
     if (!NT_SUCCESS(Status))
         goto Restore;
     if (MappingUpdate)
@@ -2348,6 +2370,15 @@ FileRecord::MaterializeWofCompressedData(
     Status = PrepareAutomaticTimestamps(
         NTFS_BASIC_INFO_CHANGE_TIME,
         NULL);
+    if (!NT_SUCCESS(Status))
+        goto Restore;
+
+    /* The record names the decompressed content written above. */
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      MappingUpdate ? NULL : this,
+                                      MaterializedRuns,
+                                      0,
+                                      LogicalSize);
     if (!NT_SUCCESS(Status))
         goto Restore;
 
@@ -4126,6 +4157,15 @@ FileRecord::SetSparse(_In_ AttributeType AttrType,
     Status = PrepareAutomaticTimestamps(
         NTFS_BASIC_INFO_CHANGE_TIME,
         NULL);
+    if (!NT_SUCCESS(Status))
+        goto Restore;
+    /* Holes now map to clusters zeroed above; a record that lands first
+     * would show their previous content. */
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      MappingUpdate ? NULL : this,
+                                      AllocatedRuns,
+                                      0,
+                                      ~(ULONGLONG)0);
     if (!NT_SUCCESS(Status))
         goto Restore;
     Status = MappingUpdate
