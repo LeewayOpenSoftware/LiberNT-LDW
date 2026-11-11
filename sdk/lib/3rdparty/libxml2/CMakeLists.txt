@@ -32,7 +32,6 @@ list(APPEND SOURCE
     parserInternals.c
     pattern.c
     relaxng.c
-    SAX.c
     SAX2.c
     threads.c
     tree.c
@@ -46,7 +45,6 @@ list(APPEND SOURCE
     xmlsave.c
     xmlschemas.c
     xmlschemastypes.c
-    xmlunicode.c
     xpath.c
     xpointer.c
     xmlstring.c
@@ -68,6 +66,11 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         # '=': conversion from 'size_t' to 'int', possible loss of data
         target_compile_options(libxml2 PRIVATE "/wd4267")
     endif()
+endif()
+
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    # 2.15 keeps a few set-but-unused globals (xmlLittleEndian); upstream does not build with -Werror
+    target_compile_options(libxml2 PRIVATE -Wno-unused-but-set-variable)
 endif()
 
 target_include_directories(libxml2
