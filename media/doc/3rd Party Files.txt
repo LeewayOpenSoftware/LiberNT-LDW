@@ -323,9 +323,10 @@ URL: https://savannah.nongnu.org/projects/lwip/
 
 Title: FreeType
 Path: sdk/lib/3rdparty/freetype
-Used Version: 2.10.0
+Used Version: 2.15.0
 License: FTL (https://spdx.org/licenses/FTL.html)
-URL: https://freetype.org/
+URL: https://freetype.org/, https://download.savannah.gnu.org/releases/freetype/
+Modifications: the 21 modules listed in CMakeLists.txt only (no sdf, svg, hvf, dlg; ftmodule.h guards their entries); __REACTOS__ changes move large stack objects to the heap for win32k, add FT_Bitmap_Convert_ReactOS_Hack, the CORE-12549 cmap check, our ftoption.h settings and the ftdebug.c guards for rosglue.c; see the [FREETYPE] update commits for the list
 
 Title: dosfstools
 Path: sdk/lib/fslib/vfatlib/check
