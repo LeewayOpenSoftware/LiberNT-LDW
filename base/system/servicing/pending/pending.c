@@ -1841,13 +1841,14 @@ S1WriteBootState(_In_ PCSTR Text)
         S1VolumeFlush();
 }
 
-/* "ARMED" plus one "old <target>" line per swapped driver: on a fallback boot freeldr and the kernel load
- * those from their .old pre-image (S1-BOOT-DRIVERS-DESIGN.md). The trio needs no line: the fallback entry
- * names its .old files itself. The first five bytes stay "ARMED" for the boot-try loader. */
+/* "ARMED" plus one "old <target>" line per swapped file other than the trio: on a fallback boot freeldr, the
+ * kernel, smss and wininit load those from their .old pre-image (S1-BOOT-DRIVERS-DESIGN.md,
+ * S1-GROUP3-DESIGN.md). The trio needs no line: the fallback entry names its .old files itself. The first
+ * five bytes stay "ARMED" for the boot-try loader. */
 static VOID
 S1BootStateArmedText(_In_ const S1_PLAN *Plan, _Out_writes_z_(Cch) PSTR Out, _In_ size_t Cch)
 {
-    static const char Drivers[] = "Windows\\System32\\drivers\\";
+    static const PCSTR Trio[] = { "ntoskrnl.exe", "ntkrnlmp.exe", "ntkrnlpa.exe", "ntkrpamp.exe", "bootvid.dll" };
     size_t Used, i;
 
     if (Cch < 7)
@@ -1868,8 +1869,25 @@ S1BootStateArmedText(_In_ const S1_PLAN *Plan, _Out_writes_z_(Cch) PSTR Out, _In
             continue;
         while (*Target == '\\' || *Target == '/')
             Target++;
-        if (_strnicmp(Target, Drivers, sizeof(Drivers) - 1) != 0)
-            continue;
+        {
+            /* the trio needs no line (the fallback entry names its .old files); everything else is listed:
+             * drivers for the loader and the kernel, ntdll/win32k/the critical processes for the kernel,
+             * smss and wininit */
+            const char *Base = strrchr(Target, '\\');
+            size_t k;
+            BOOLEAN IsTrio = FALSE;
+
+            Base = Base ? Base + 1 : Target;
+            for (k = 0; k < RTL_NUMBER_OF(Trio); k++)
+            {
+                if (_stricmp(Base, Trio[k]) == 0)
+                    IsTrio = TRUE;
+            }
+            if (_strnicmp(Base, "hal", 3) == 0 && strlen(Base) > 4 && _stricmp(Base + strlen(Base) - 4, ".dll") == 0)
+                IsTrio = TRUE;
+            if (IsTrio)
+                continue;
+        }
         Len = strlen(Target);
         if (Used + 4 + Len + 1 >= Cch)
             break;

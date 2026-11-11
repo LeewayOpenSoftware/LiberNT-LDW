@@ -114,7 +114,8 @@ static BOOL BootBaseIs(const WCHAR *base, const WCHAR *const *names, size_t n)
     return FALSE;
 }
 
-#define LN_BOOT_GROUPS_ENABLED ((1 << 1) | (1 << 2))    /* bit n = group n; 1 = kernel trio, 2 = drivers */
+/* bit n = group n; 1 = kernel trio, 2 = drivers, 3 = ntdll, win32k and the critical processes (S1-GROUP3-DESIGN.md) */
+#define LN_BOOT_GROUPS_ENABLED ((1 << 1) | (1 << 2) | (1 << 3))
 
 int LnTargetBootGroup(const WCHAR *rel)
 {
@@ -122,8 +123,10 @@ int LnTargetBootGroup(const WCHAR *rel)
      * with /DEBUG, so a bad kdcom would fail under Fallback too. It is refused until a loader switch exists. */
     static const WCHAR *kernel[] = { L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe",
                                      L"bootvid.dll" };
+    /* ci.dll is NOT here: it loads at phase 0, before any file our code reads, so no fallback covers it (owner
+     * decision 2026-11-11: refused until a loader switch exists) */
     static const WCHAR *critical[] = { L"ntdll.dll", L"smss.exe", L"csrss.exe", L"wininit.exe", L"winlogon.exe",
-                                       L"services.exe", L"lsass.exe", L"ci.dll", L"win32k.sys", L"win32kbase.sys",
+                                       L"services.exe", L"lsass.exe", L"win32k.sys", L"win32kbase.sys",
                                        L"win32kfull.sys" };
     const WCHAR *base = wcsrchr(rel, L'\\');
     size_t bl;
@@ -549,9 +552,9 @@ BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)
     group = LnTargetBootGroup(rel);
     if (!group)
         return FALSE;
-    /* Groups 1 (trio, review M3) and 2 (drivers under System32\drivers: on a fallback boot the loader and
-     * the kernel take the listed drivers from their .old pre-image, S1-BOOT-DRIVERS-DESIGN.md). ntdll/win32k/
-     * the critical processes have no fallback at all and wait for the control-set design. */
+    /* Groups 1 (trio, review M3), 2 (drivers: on a fallback boot the loader and the kernel take the listed
+     * drivers from their .old pre-image, S1-BOOT-DRIVERS-DESIGN.md) and 3 (ntdll, win32k, the critical
+     * processes: the kernel, smss and wininit do the same, S1-GROUP3-DESIGN.md). */
     if (!((1 << group) & LN_BOOT_GROUPS_ENABLED))
         return FALSE;
     if (group == 2)

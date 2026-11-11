@@ -192,9 +192,13 @@ static void TestPaths(void)
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\halmacpi.dll", -1));
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\bootvid.dll", -1));
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\kdcom.dll", -1));                       /* no loader fallback (N3) */
-    /* review M3: ntdll, win32k and boot-start drivers (ntfs.sys) have no loader fallback: not in the first delivery */
-    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
-    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
+    /* group 3 (S1-GROUP3-DESIGN.md): ntdll, win32k and the critical processes; ci.dll stays out (phase 0) */
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\smss.exe", -1) && LnTargetBootItemAllowed(L"Windows\\System32\\lsass.exe", -1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ci.dll", -1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", 1));                     /* not a service driver */
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\ntdll.dll") == 3 && LnTargetBootGroup(L"Windows\\System32\\ci.dll") == 0);
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));                   /* group 2 */
     CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.sys", 1));
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.sys", -1));               /* Start required */

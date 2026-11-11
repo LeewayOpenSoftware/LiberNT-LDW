@@ -1042,9 +1042,11 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     size_t len = 0;
     DWORD err;
     BOOL any = FALSE;
-    int group = 0, g;
+    int group = 0, g, mask = 0;
     size_t total = 0;
 
+    /* targets[] collects the trio files only: group 3 may ride with the trio (ntdll and the kernel are
+     * coupled), drivers go in a package of their own, and the fallback-entry check below needs the trio */
     for (i = 0; i < m->itemCount; i++)
     {
         if (!m->items[i].bootClass)
@@ -1052,17 +1054,18 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
         any = TRUE;
         total++;
         g = LnTargetBootGroup(m->items[i].target);
-        if (group && g != group)
-        {
-            strcpy(why, "one boot-class group per transaction: the kernel trio and drivers go in separate packages");
-            return LN_E_PRECONDITION;
-        }
-        group = g;
-        if (n < RTL_NUMBER_OF(targets))
+        mask |= 1 << g;
+        if (g == 1 && n < RTL_NUMBER_OF(targets))
             targets[n++] = m->items[i].target;
     }
     if (!any)
         return ERROR_SUCCESS;
+    if ((mask & (1 << 2)) && mask != (1 << 2))
+    {
+        strcpy(why, "drivers go in a boot-class package of their own");
+        return LN_E_PRECONDITION;
+    }
+    group = (mask & (1 << 1)) ? 1 : ((mask & (1 << 3)) ? 3 : 2);
     if (t->mode != LnTargetOnline)
     {
         strcpy(why, "a boot-class update is applied online only");
@@ -1098,19 +1101,19 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
         strcpy(why, "cannot read freeldr.ini");
         return LN_E_PRECONDITION;
     }
-    if (group == 2)
+    if (total > 8)
     {
-        /* drivers: the trio stays, but a fallback boot must exist (the entry and its .old files), because
-         * that boot is what loads the swapped drivers from their .old pre-image if the new ones do not boot */
+        strcpy(why, "at most 8 boot-class files per transaction");
+        free(ini);
+        return LN_E_PRECONDITION;
+    }
+    if (group == 2 || group == 3)
+    {
+        /* drivers, or group 3 without the trio: the trio stays, but a fallback boot must exist (the entry and
+         * its .old files), because that boot is what loads the swapped files from their .old pre-image */
         char old[3][80];
         size_t k;
 
-        if (total > 8)
-        {
-            strcpy(why, "at most 8 boot-class drivers per transaction");
-            free(ini);
-            return LN_E_PRECONDITION;
-        }
         if (!LnFreeldrFallbackPresent((const char *)ini, len, old, why, whyCch))
         {
             free(ini);
@@ -1183,6 +1186,105 @@ typedef struct _LN_SYS_MODULE_EX
 #define LN_STATUS_INVALID_INFO_CLASS ((LONG)0xC0000003L)
 
 /* Query a system information class into a growing buffer. Returns the NTSTATUS; *out is malloc'd on success. */
+static LONG QuerySystemInfoGrow(ULONG infoClass, BYTE **out, ULONG *outLen);
+
+/* SystemProcessInformation, the fields we read (the layout is the NT one: three LARGE_INTEGERs precede the
+ * times; ImageName and UniqueProcessId follow the times) */
+typedef struct _LN_SYS_PROCESS
+{
+    ULONG NextEntryOffset;
+    ULONG NumberOfThreads;
+    LARGE_INTEGER Spare[3];
+    LARGE_INTEGER CreateTime, UserTime, KernelTime;
+    struct { USHORT Length, MaximumLength; WCHAR *Buffer; } ImageName;   /* UNICODE_STRING */
+    LONG BasePriority;
+    HANDLE UniqueProcessId;
+} LN_SYS_PROCESS;
+
+/* Group 3 critical process (smss, csrss, wininit, winlogon, services, lsass): no process may run from a
+ * *.old image; at least one process of that name must run; when its image headers can be read, they must
+ * carry the new file's identity (a protected process that cannot be opened passes on the name alone, logged). */
+static DWORD CheckRunningProcess(const LN_TARGET *t, const char *txid, const WCHAR *base, DWORD size, DWORD sum,
+                                 DWORD ts, char *why)
+{
+    typedef LONG (NTAPI *PFN_QIP)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    PFN_QIP qip = (PFN_QIP)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+    BYTE *buf = NULL;
+    ULONG cb = 0;
+    const BYTE *p;
+    size_t bl = wcslen(base), found = 0, verified = 0;
+    DWORD result = ERROR_SUCCESS;
+
+    if (QuerySystemInfoGrow(5 /* SystemProcessInformation */, &buf, &cb) < 0)
+    {
+        strcpy(why, "cannot read the process list");
+        return LN_E_PRECONDITION;
+    }
+    for (p = buf;;)
+    {
+        const LN_SYS_PROCESS *e = (const LN_SYS_PROCESS *)p;
+        size_t nl;
+
+        if (p + sizeof(*e) > buf + cb)
+            break;
+        nl = e->ImageName.Length / sizeof(WCHAR);
+        if (e->ImageName.Buffer && nl >= 4 && !_wcsnicmp(e->ImageName.Buffer + nl - 4, L".old", 4))
+        {
+            strcpy(why, "a critical process runs from a *.old image: the previous set is running");
+            result = LN_E_PRECONDITION;
+            break;
+        }
+        if (e->ImageName.Buffer && nl == bl && !_wcsnicmp(e->ImageName.Buffer, base, bl))
+        {
+            HANDLE h;
+
+            found++;
+            h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, (DWORD)(ULONG_PTR)e->UniqueProcessId);
+            if (h && qip)
+            {
+                struct { LONG ExitStatus; PVOID Peb; ULONG_PTR Affinity; LONG Priority; ULONG_PTR Pid, ParentPid; } pbi;
+                ULONG got = 0;
+                PVOID imageBase = NULL;
+                BYTE hdr[1024];
+                SIZE_T rd = 0;
+                DWORD lsize = 0, lsum = 0, lts = 0;
+
+                memset(&pbi, 0, sizeof(pbi));
+                if (qip(h, 0 /* ProcessBasicInformation */, &pbi, sizeof(pbi), &got) >= 0 && pbi.Peb &&
+                    ReadProcessMemory(h, (const BYTE *)pbi.Peb + 2 * sizeof(PVOID), &imageBase, sizeof(imageBase), &rd) &&
+                    imageBase && ReadProcessMemory(h, imageBase, hdr, sizeof(hdr), &rd) && rd == sizeof(hdr) &&
+                    LnPeIdentity(hdr, sizeof(hdr), &lsize, &lsum, &lts))
+                {
+                    if (lsize != size || lsum != sum || lts != ts)
+                    {
+                        strcpy(why, "a critical process does not run the new file: TimeDateStamp/CheckSum/SizeOfImage differ");
+                        result = LN_E_PRECONDITION;
+                    }
+                    else
+                        verified++;
+                }
+                CloseHandle(h);
+            }
+            else if (h)
+                CloseHandle(h);
+            if (result)
+                break;
+        }
+        if (!e->NextEntryOffset)
+            break;
+        p += e->NextEntryOffset;
+    }
+    free(buf);
+    if (!result && !found)
+    {
+        strcpy(why, "a critical process of the new set is not running");
+        result = LN_E_PRECONDITION;
+    }
+    if (!result && !verified)
+        LogLine(t, txid, "confirm: a critical process could not be opened; its name was checked, not its image identity");
+    return result;
+}
+
 static LONG QuerySystemInfoGrow(ULONG infoClass, BYTE **out, ULONG *outLen)
 {
     typedef LONG (NTAPI *PFN_QSI)(ULONG, PVOID, ULONG, PULONG);
@@ -1291,6 +1393,7 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const char *txid, const LN_M
         HANDLE h;
         ULONG idx = (ULONG)-1;
         const WCHAR *base;
+        size_t bl;
 
         if (!m->items[k].bootClass)
             continue;
@@ -1318,8 +1421,45 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const char *txid, const LN_M
          * by its file name, and it must be loaded (a Start 0/1 driver that is not running is not confirmed) */
         base = wcsrchr(m->items[k].target, L'\\');
         base = base ? base + 1 : m->items[k].target;
-        if (LnTargetBootGroup(m->items[k].target) == 2)
+        if (LnTargetBootGroup(m->items[k].target) == 3 && _wcsicmp(base, L"ntdll.dll") == 0)
         {
+            /* the system DLL: this process maps it; its headers in memory carry the running identity */
+            HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+            WCHAR path[MAX_PATH];
+            DWORD n = nt ? GetModuleFileNameW(nt, path, MAX_PATH) : 0;
+            DWORD lsize = 0, lsum = 0, lts = 0;
+
+            if (!nt || n == 0 || n >= MAX_PATH)
+            {
+                strcpy(why, "cannot find the running ntdll");
+                result = LN_E_PRECONDITION;
+                goto out;
+            }
+            if (n >= 4 && !_wcsicmp(path + n - 4, L".old"))
+            {
+                strcpy(why, "the running ntdll is a *.old file: the previous set is running");
+                result = LN_E_PRECONDITION;
+                goto out;
+            }
+            if (!LnPeIdentity((const BYTE *)nt, 1024, &lsize, &lsum, &lts) || lsize != size || lsum != sum || lts != ts)
+            {
+                strcpy(why, "the running ntdll is not the new file: TimeDateStamp/CheckSum/SizeOfImage differ");
+                result = LN_E_PRECONDITION;
+                goto out;
+            }
+            continue;
+        }
+        if (LnTargetBootGroup(m->items[k].target) == 3 && (bl = wcslen(base)) > 4 && _wcsicmp(base + bl - 4, L".exe") == 0)
+        {
+            /* a critical process: it must be running, from a file of that name, with the new identity */
+            result = CheckRunningProcess(t, txid, base, size, sum, ts, why);
+            if (result)
+                goto out;
+            continue;
+        }
+        if (LnTargetBootGroup(m->items[k].target) != 1)
+        {
+            /* a driver, or win32k: the loaded module with that file name */
             char nb[64];
             size_t q;
 
@@ -1335,7 +1475,7 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const char *txid, const LN_M
             }
             if (idx >= count)
             {
-                strcpy(why, "a boot-class driver is not loaded: the new set did not bring it up");
+                strcpy(why, "a boot-class module is not loaded: the new set did not bring it up");
                 result = LN_E_PRECONDITION;
                 goto out;
             }
