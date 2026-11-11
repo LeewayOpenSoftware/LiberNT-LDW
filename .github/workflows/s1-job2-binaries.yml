@@ -85,6 +85,7 @@ jobs:
           -DDIAGDATA_CHANNEL= \
           -DLIBERNT_BUILD_UPDATE_PENDING=ON \
           -DLIBERNT_BUILD_S1_LABSTUBS=ON \
+          -DLIBERNT_BUILD_UPDATE_CLI=ON \
           -DENABLE_CCACHE=1
         echo "outdir=output-Clang-amd64-debug" >> "$GITHUB_OUTPUT"
 

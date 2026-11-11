@@ -70,3 +70,11 @@ add_subdirectory(xcopy)
 add_subdirectory(i2cloop)
 add_subdirectory(smbiosprobe)
 add_subdirectory(wmiprobe)
+
+# LiberNT Update servicing CLI (init/add-package/apply/confirm/query). Not on the ISO by default
+# (delivered via the update kit/bootstrap); CI turns it ON to publish libernt-update.exe as a Job 2
+# artifact, like the applier (LIBERNT_BUILD_UPDATE_PENDING) and the lab stubs (LIBERNT_BUILD_S1_LABSTUBS).
+option(LIBERNT_BUILD_UPDATE_CLI "Build the libernt-update servicing CLI (not part of the ISO)" OFF)
+if(LIBERNT_BUILD_UPDATE_CLI)
+    add_subdirectory(libernt-update)
+endif()
