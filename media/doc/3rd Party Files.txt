@@ -365,9 +365,10 @@ URL: https://github.com/win-iconv/win-iconv
 
 Title: LibXML
 Path: sdk/lib/3rdparty/libxml2
-Used Version: 2.10.3
-License: MIT (https://spdx.org/licenses/MIT.htmlf)
-URL: http://xmlsoft.org, ftp://xmlsoft.org/libxml2/
+Used Version: 2.13.9
+License: MIT (https://spdx.org/licenses/MIT.html)
+URL: https://gitlab.gnome.org/GNOME/libxml2, https://download.gnome.org/sources/libxml2/
+Modifications: subset of the sources (no c14n, legacy, nanohttp/ftp, schematron, xlink, xmlmodule, xmlwriter, xzlib) with our generated include/libxml/xmlversion.h and include/win32config.h; libxml.h includes win32config.h; Wine's extra _private2 pointer in the tree.h node structures, the non-determinist content-model check of xmlschemas.c disabled, the xmlschemastypes.c digit test fixed, two LIBXML_ATTR_FORMAT annotations dropped (all __REACTOS__-free, see the libxml2 update commit)
 
 Title: STLport
 Path: sdk/lib/3rdparty/stlport
