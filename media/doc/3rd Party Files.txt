@@ -35,10 +35,11 @@ Modifications: added .spec file
 
 Title: libpng
 Path: dll/3rdparty/libpng
-Used Version: 1.6.51
-License: PNG Reference Library version 2
-URL: http://libpng.sourceforge.net/
-Modifications: added .spec file
+Path: sdk/include/reactos/libs/libpng
+Used Version: 1.6.59
+License: PNG Reference Library version 2 (https://spdx.org/licenses/libpng-2.0.html)
+URL: http://www.libpng.org/pub/png/libpng.html
+Modifications: added .spec file; pnglibconf.h is scripts/pnglibconf.h.prebuilt with PNG_CONSOLE_IO_SUPPORTED undefined; pngrutil.c png_read_IDAT_data zeroes the rest of the row when the zlib stream ended early (__REACTOS__)
 
 Title: libtiff
 Path: dll/3rdparty/libtiff
