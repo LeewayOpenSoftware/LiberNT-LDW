@@ -134,9 +134,11 @@ typedef struct _LN_TARGET
 DWORD LnTargetOpen(LN_TARGET *t, LN_TARGET_MODE mode, const WCHAR *imageRoot, BOOL create);
 WCHAR *LnTargetPath(const LN_TARGET *t, const WCHAR *relInServicing);       /* free() */
 WCHAR *LnTargetFile(const LN_TARGET *t, const WCHAR *relInRoot);            /* free() */
-/* Stage 1 white list: DLL/EXE of user components outside the critical processes and the boot path,
- * and .sys drivers under System32\drivers with a declared Start of 2 (auto) to 4. driverStart is -1
- * for anything that is not a driver. The kernel, the HAL and boot-start/system-start drivers are refused. */
+/* Stage 1 white list: DLL/EXE of user components outside the critical processes and the boot path
+ * (under System32, SysWOW64, Program Files, Program Files (x86), Windows\ImmersiveControlPanel, plus
+ * Windows\explorer.exe by exact name), and .sys drivers under System32\drivers with a declared Start of
+ * 2 (auto) to 4. driverStart is -1 for anything that is not a driver. The kernel, the HAL and
+ * boot-start/system-start drivers are refused. */
 BOOL LnTargetItemAllowed(const WCHAR *relInRoot, int driverStart);
 BOOL LnTargetPathAllowed(const WCHAR *relInRoot);                          /* LnTargetItemAllowed(rel, -1) */
 /* Parents must not be reparse points, and the real path must equal the lexical one (8.3, junctions). */

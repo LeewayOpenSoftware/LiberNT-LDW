@@ -44,7 +44,13 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
 {
     static const WCHAR *roots[] =
     {
-        L"Windows\\System32\\", L"Windows\\SysWOW64\\", L"Program Files\\", L"Program Files (x86)\\"
+        L"Windows\\System32\\", L"Windows\\SysWOW64\\", L"Program Files\\", L"Program Files (x86)\\",
+        L"Windows\\ImmersiveControlPanel\\"          /* the settings app and its modules, nothing else under Windows\ */
+    };
+    /* files directly under Windows\ are admitted one by one, by exact name: the shell is the only one */
+    static const WCHAR *exactFiles[] =
+    {
+        L"Windows\\explorer.exe"
     };
     static const WCHAR *deniedPrefix[] =
     {
@@ -67,6 +73,11 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
     for (i = 0; i < sizeof(roots) / sizeof(roots[0]); i++)
     {
         if (StartsWithNoCase(rel, roots[i]))
+            inRoot = TRUE;
+    }
+    for (i = 0; i < sizeof(exactFiles) / sizeof(exactFiles[0]); i++)
+    {
+        if (!_wcsicmp(rel, exactFiles[i]))
             inRoot = TRUE;
     }
     if (!inRoot)

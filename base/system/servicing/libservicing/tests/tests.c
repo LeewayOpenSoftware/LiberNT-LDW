@@ -177,6 +177,17 @@ static void TestPaths(void)
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\services.exe") && !LnTargetPathAllowed(L"Windows\\System32\\lsass.exe"));
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\ci.dll"));
     CHECK(!LnTargetPathAllowed(L"LiberNT\\Servicing\\journal\\x.dll"));
+    /* the shell and the settings app live directly under Windows\ (card libernt-update-target-roots) */
+    CHECK(LnTargetPathAllowed(L"Windows\\explorer.exe") && LnTargetPathAllowed(L"windows\\EXPLORER.EXE"));
+    CHECK(LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\SystemSettings.exe"));
+    CHECK(LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\x\\helper.dll"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\settings.pri"));          /* DLL/EXE only */
+    CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel"));                        /* the directory itself */
+    CHECK(!LnTargetPathAllowed(L"Windows\\explorer.dll") && !LnTargetPathAllowed(L"Windows\\regedit.exe"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\explorer.exe.dll") && !LnTargetPathAllowed(L"Windows\\explorer.exe\\x.dll"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\Explorer.exe ") && !LnTargetPathAllowed(L"Windows\\..\\Windows\\explorer.exe"));
+    CHECK(!LnTargetItemAllowed(L"Windows\\explorer.exe", 3));                                /* Start only for a .sys */
+    CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\smss.exe"));               /* denied names hold */
     CHECK(!LnTargetPathAllowed(L"Users\\x\\a.dll"));
     /* drivers: only System32\drivers and only Start >= 2 */
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\drivers\\lnfix.sys"));                       /* no declared Start */
