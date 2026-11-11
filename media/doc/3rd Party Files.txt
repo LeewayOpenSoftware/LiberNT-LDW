@@ -303,6 +303,13 @@ Used Version: 2012-05-03
 License: GPL-3.0-or-later (https://spdx.org/licenses/GPL-3.0-or-later.html)
 URL: http://savannah.gnu.org/projects/freefont/
 
+Title: FAudio (XAudio2 reimplementation, used by xaudio2_9)
+Path: sdk/lib/3rdparty/faudio
+Used Version: 26.08
+License: Zlib (https://spdx.org/licenses/Zlib.html, sdk/lib/3rdparty/faudio/LICENSE)
+URL: https://github.com/FNA-XNA/FAudio
+Modifications: no dllexport on the API (static link), NULL master-voice guards and Win32 platform error handling under __REACTOS__, LOG format fixes, a cast for the resample offset; see the [FAUDIO] update commits
+
 Title: GNU adns
 Path: sdk/lib/3rdparty/adns
 Used Version: 1.0 REV 5
