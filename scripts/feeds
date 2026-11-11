@@ -4,7 +4,8 @@
 #
 # Check out the external source feeds declared in feeds.conf into submodules/.
 # Each feed tracks its branch head, so an update fast-forwards the working copy
-# to the current tip of the configured branch.
+# to the current tip of the configured branch. A feed pinned to a full commit id
+# (or a tag) stays on it.
 
 set -u
 
@@ -134,8 +135,20 @@ feed_update() {
 		fi
 		echo "feeds: cloning $_name from $_url ($_branch)"
 		mkdir -p "$FEEDS_DIR" || fail "could not create $FEEDS_DIR"
-		git clone --depth 1 --single-branch --branch "$_branch" "$_url" "$_dir" ||
-			fail "could not clone $_name"
+		case "$_branch" in
+		????????????????????????????????????????)
+			# A full commit id cannot be cloned with --branch: fetch it directly.
+			case "$_branch" in *[!0-9a-f]*) fail "$_name: bad ref $_branch" ;; esac
+			git init --quiet "$_dir" && git -C "$_dir" remote add origin "$_url" &&
+				git -C "$_dir" fetch --depth 1 origin "$_branch" &&
+				git -C "$_dir" checkout --quiet --detach FETCH_HEAD ||
+				fail "could not clone $_name at $_branch"
+			;;
+		*)
+			git clone --depth 1 --single-branch --branch "$_branch" "$_url" "$_dir" ||
+				fail "could not clone $_name"
+			;;
+		esac
 	else
 		# Never discard local work: a dirty or diverged feed is left as it is.
 		if [ -n "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]; then
