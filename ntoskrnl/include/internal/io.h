@@ -1428,6 +1428,14 @@ IopInitializeSystemDrivers(
     VOID
 );
 
+/* LiberNT Update fallback boot: Path -> its <stem>.old when pending\bootstate lists the file (TAG_IO buffer) */
+BOOLEAN
+NTAPI
+IopS1OldFileName(
+    _In_ PCUNICODE_STRING Path,
+    _Out_ PUNICODE_STRING Out
+);
+
 VOID
 NTAPI
 IopDeleteDriver(

@@ -838,9 +838,9 @@ IopS1ReadOldDriverList(VOID)
         DPRINT1("Fallback boot: %lu boot-class driver(s) load from their .old pre-image\n", IopS1OldDriverCount);
 }
 
-/* ImagePath names a listed driver and <stem>.old exists: ImagePath becomes that file (new TAG_IO buffer,
- * the old one is freed). Otherwise ImagePath is left alone. */
-static VOID
+/* ImagePath names a listed file and <stem>.old exists: ImagePath becomes that file (new TAG_IO buffer, the
+ * old one is freed) and TRUE is returned. Otherwise ImagePath is left alone. */
+static BOOLEAN
 IopS1SubstituteOldDriver(
     _Inout_ PUNICODE_STRING ImagePath)
 {
@@ -869,21 +869,21 @@ IopS1SubstituteOldDriver(
     }
     BaseChars = (ULONG)(ImagePath->Buffer + Chars - Base);
     if (BaseChars == 0 || BaseChars >= IOP_S1_NAME_CCH)
-        return;
+        return FALSE;
     for (i = 0; i < IopS1OldDriverCount; i++)
     {
         if (wcslen(IopS1OldDrivers[i]) == BaseChars && _wcsnicmp(IopS1OldDrivers[i], Base, BaseChars) == 0)
             break;
     }
     if (i == IopS1OldDriverCount)
-        return;
+        return FALSE;
 
     StemChars = Dot ? (ULONG)(Dot - ImagePath->Buffer) : Chars;
     Candidate.Length = (USHORT)((StemChars + 4) * sizeof(WCHAR));
     Candidate.MaximumLength = Candidate.Length + sizeof(UNICODE_NULL);
     Candidate.Buffer = ExAllocatePoolWithTag(NonPagedPool, Candidate.MaximumLength, TAG_IO);
     if (!Candidate.Buffer)
-        return;
+        return FALSE;
     RtlCopyMemory(Candidate.Buffer, ImagePath->Buffer, StemChars * sizeof(WCHAR));
     RtlCopyMemory(Candidate.Buffer + StemChars, L".old", 5 * sizeof(WCHAR));
 
@@ -898,12 +898,44 @@ IopS1SubstituteOldDriver(
     {
         DPRINT1("Fallback boot: '%wZ' has no .old pre-image, loading it as named\n", ImagePath);
         ExFreePoolWithTag(Candidate.Buffer, TAG_IO);
-        return;
+        return FALSE;
     }
     ZwClose(FileHandle);
     DPRINT1("Fallback boot: loading '%wZ' instead of '%wZ'\n", &Candidate, ImagePath);
     ExFreePool(ImagePath->Buffer);                  /* TAG_IO or the caller's registry buffer */
     *ImagePath = Candidate;
+    return TRUE;
+}
+
+/* The same rule for a file the kernel opens by a fixed path (ntdll.dll, smss.exe, win32k.sys): on a fallback
+ * boot, when Path is listed and its <stem>.old exists, Out gets that path in a TAG_IO buffer (free it with
+ * ExFreePool) and TRUE is returned. S1-GROUP3-DESIGN.md. */
+BOOLEAN
+NTAPI
+IopS1OldFileName(
+    _In_ PCUNICODE_STRING Path,
+    _Out_ PUNICODE_STRING Out)
+{
+    UNICODE_STRING Copy;
+
+    Out->Length = Out->MaximumLength = 0;
+    Out->Buffer = NULL;
+    if (IopS1OldDriverCount == 0 || Path->Length == 0)
+        return FALSE;
+    Copy.Length = Path->Length;
+    Copy.MaximumLength = Path->Length + sizeof(UNICODE_NULL);
+    Copy.Buffer = ExAllocatePoolWithTag(NonPagedPool, Copy.MaximumLength, TAG_IO);
+    if (!Copy.Buffer)
+        return FALSE;
+    RtlCopyMemory(Copy.Buffer, Path->Buffer, Path->Length);
+    Copy.Buffer[Path->Length / sizeof(WCHAR)] = UNICODE_NULL;
+    if (!IopS1SubstituteOldDriver(&Copy))
+    {
+        ExFreePoolWithTag(Copy.Buffer, TAG_IO);
+        return FALSE;
+    }
+    *Out = Copy;
+    return TRUE;
 }
 
 /*

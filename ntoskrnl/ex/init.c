@@ -483,6 +483,7 @@ ExpLoadInitialProcess(IN PINIT_BUFFER InitBuffer,
     PWSTR p;
     UNICODE_STRING NullString = RTL_CONSTANT_STRING(L"");
     UNICODE_STRING SmssName, Environment, SystemDriveString, DebugString;
+    UNICODE_STRING OldSmss = { 0, 0, NULL };
     PVOID EnvironmentPtr = NULL;
     PRTL_USER_PROCESS_INFORMATION ProcessInformation;
     PRTL_USER_PROCESS_PARAMETERS ProcessParams = NULL;
@@ -641,8 +642,13 @@ ExpLoadInitialProcess(IN PINIT_BUFFER InitBuffer,
     /* Prepare the prefetcher */
     //CcPfBeginBootPhase(150);
 
-    /* Create SMSS process */
+    /* Create SMSS process (LiberNT fallback boot: an unconfirmed swap of smss starts from its .old) */
     SmssName = ProcessParams->ImagePathName;
+    if (IopS1OldFileName(&SmssName, &OldSmss))
+    {
+        DPRINT1("Fallback boot: session manager is '%wZ'\n", &OldSmss);
+        SmssName = OldSmss;
+    }
     Status = RtlCreateUserProcess(&SmssName,
                                   OBJ_CASE_INSENSITIVE,
                                   RtlDeNormalizeProcessParams(ProcessParams),
@@ -653,6 +659,8 @@ ExpLoadInitialProcess(IN PINIT_BUFFER InitBuffer,
                                   NULL,
                                   NULL,
                                   ProcessInformation);
+    if (OldSmss.Buffer)
+        ExFreePool(OldSmss.Buffer);
     if (!NT_SUCCESS(Status))
     {
         /* Failed, display error */

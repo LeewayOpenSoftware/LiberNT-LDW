@@ -2404,13 +2404,25 @@ SSI_DEF(SystemExtendServiceTableInformation)
                                       sizeof(Win32kName));
     }
 
-    /* Load the image */
-    Status = MmLoadSystemImage((PUNICODE_STRING)Buffer,
-                               NULL,
-                               NULL,
-                               0,
-                               (PVOID)&ModuleObject,
-                               &ImageBase);
+    /* Load the image (LiberNT fallback boot: an unconfirmed swap of win32k loads from its .old) */
+    {
+        UNICODE_STRING OldImage;
+        PUNICODE_STRING Name = (PUNICODE_STRING)Buffer;
+
+        if (IopS1OldFileName(Name, &OldImage))
+        {
+            DPRINT1("Fallback boot: loading '%wZ'\n", &OldImage);
+            Name = &OldImage;
+        }
+        Status = MmLoadSystemImage(Name,
+                                   NULL,
+                                   NULL,
+                                   0,
+                                   (PVOID)&ModuleObject,
+                                   &ImageBase);
+        if (Name == &OldImage)
+            ExFreePool(OldImage.Buffer);
+    }
 
     if (Status == STATUS_IMAGE_ALREADY_LOADED) return STATUS_SUCCESS;
     if (!NT_SUCCESS(Status)) return Status;

@@ -94,6 +94,13 @@ extern UNICODE_STRING SmpDebugKeyword, SmpASyncKeyword, SmpAutoChkKeyword;
 extern PVOID SmpHeap;
 extern ULONG SmBaseTag;
 extern UNICODE_STRING SmpSystemRoot;
+
+/* smfallback.c: LiberNT Update fallback boot */
+NTSTATUS
+NTAPI
+SmpS1OldImageName(IN PUNICODE_STRING FileName,
+                  OUT PUNICODE_STRING OldName,
+                  OUT PBOOLEAN Substituted);
 extern PWCHAR SmpDefaultEnvironment;
 extern UNICODE_STRING SmpDefaultLibPath;
 extern LIST_ENTRY SmpSetupExecuteList;
