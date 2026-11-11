@@ -70,9 +70,11 @@ Modifications: portable C build and bounded bitstream reads, see README.md
 
 Title: Libxslt
 Path: dll/3rdparty/libxslt
-Used Version: 1.1.37
+Path: sdk/include/reactos/libs/libxslt
+Used Version: 1.1.45
 License: MIT (https://spdx.org/licenses/MIT.html)
-URL: http://xmlsoft.org
+URL: https://gitlab.gnome.org/GNOME/libxslt, https://download.gnome.org/sources/libxslt/
+Modifications: added .spec file; xsltconfig.h is our generated configuration; Wine's userData pointer in xsltTransformContext (xsltInternals.h); libxslt.h without the large-file macros and keyed on _WIN32; win32config.h uses HAVE_STAT
 
 Title: mbed TLS
 Path: dll/3rdparty/mbedtls
