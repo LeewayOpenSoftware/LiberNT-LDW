@@ -38,7 +38,8 @@ list(APPEND SOURCE
 add_library(libxslt MODULE ${SOURCE})
 set_module_type(libxslt win32dll)
 target_link_libraries(libxslt libxml2 iconv-static zlib)
-add_importlibs(libxslt msvcrt ws2_32 kernel32)
+# libxml2 2.15 seeds its hash tables with BCryptGenRandom (dict.c)
+add_importlibs(libxslt msvcrt ws2_32 bcrypt kernel32)
 
 if(MSVC)
     add_importlibs(libxslt ntdll)

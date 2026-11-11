@@ -2,6 +2,10 @@
 add_definitions(
     -D_WINE
     -DLIBXML_STATIC
+    # libxml2 2.15 deprecates xmlNewCharEncodingHandler and the tree indent globals this module
+    # uses (as Wine's msxml3 does); keep them without the attribute until the code moves on
+    -DXML_DEPRECATED=
+    -DXML_DEPRECATED_MEMBER=
     -DCOM_NO_WINDOWS_H)
 
 include_directories(
@@ -83,7 +87,7 @@ if(MSVC)
     endif()
 endif()
 
-add_importlibs(msxml3 libxslt urlmon ws2_32 shlwapi oleaut32 ole32 user32 advapi32 msvcrt kernel32 ntdll)
+add_importlibs(msxml3 libxslt urlmon ws2_32 shlwapi oleaut32 ole32 user32 advapi32 bcrypt msvcrt kernel32 ntdll)
 # msxml3_v1.tlb needs stdole2.tlb.
 add_dependencies(msxml3 msxml_message_resources xmlparser_idlheader saxreader_extensions_idlheader stdole2)
 add_pch(msxml3 precomp.h "${PCH_SKIP_SOURCE}")
