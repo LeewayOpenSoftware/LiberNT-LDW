@@ -13479,6 +13479,14 @@ DxgkpCompleteAdapterStart(
                          Fallback,
                          ReassertStatus,
                          InbvCheckDisplayOwnership() ? "owned" : "lost");
+            if (Fallback != NULL)
+                DXGKRNL_INFO("K2STATE: fallback %p vidpn=%d mode=%lux%lu shadow=%p "
+                             "postva=%p postsize=%Iu postmode=%lux%lu\n",
+                             Fallback, (int)Fallback->VidPnCommitted,
+                             Fallback->CommittedWidth, Fallback->CommittedHeight,
+                             Fallback->ShadowFb, Fallback->PostDisplayVirtualAddress,
+                             (SIZE_T)Fallback->PostDisplayMappingSize,
+                             Fallback->PostDisplayWidth, Fallback->PostDisplayHeight);
             if (OwnerDeviceObject != NULL)
                 ObDereferenceObject(OwnerDeviceObject);
             KeReleaseMutex(&g_PostDisplayOwnershipMutex, FALSE);

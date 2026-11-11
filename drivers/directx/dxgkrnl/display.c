@@ -116,6 +116,8 @@ static BOOLEAN g_DisplayInitialModePending;
 static PVOID g_DisplayWin32kPhysDisp;
 static PVIDEO_WIN32K_CALLOUT g_DisplayWin32kCallout;
 static volatile LONG g_PresentShadowTraceCount = 0;
+/* K2: per-exit-reason counters for DxgkpPresentSourceRects; logged at INFO level. */
+static volatile LONG g_PresentExitCount[5];
 static volatile LONG g_PresentDirtyTraceCount = 0;
 static volatile LONG g_ScanoutCopyCount = 0;
 static volatile LONG g_PresentCallCount = 0;
@@ -3448,6 +3450,34 @@ Cleanup:
     return Status;
 }
 
+/* Log the first few exits per reason, then every 1024th, with the state that decides them. */
+static VOID
+DxgkpPresentExitDiag(
+    _In_ ULONG Reason,
+    _In_ PCSTR Name,
+    _In_ PDXGKRNL_ADAPTER Adapter,
+    _In_opt_ const DXGKRNL_SHARED_SURFACE_SNAPSHOT *Snapshot,
+    _In_ NTSTATUS Status)
+{
+    LONG Seq = InterlockedIncrement(&g_PresentExitCount[Reason]);
+
+    if (Seq > 8 && (Seq & 1023) != 0)
+        return;
+    DXGKRNL_INFO("K2PRESENT: %s #%ld adapter %p fb=%d inbv=%s vidpn=%d "
+                 "shadow=%p pitch=%lu size=%lu mode=%lux%lu postva=%p "
+                 "postsize=%Iu status 0x%08lX\n",
+                 Name, Seq, Adapter, (int)Adapter->IsBasicDisplayFallback,
+                 InbvCheckDisplayOwnership() ? "owned" : "lost",
+                 Snapshot != NULL ? (int)Snapshot->VidPnCommitted : -1,
+                 Snapshot != NULL ? Snapshot->ShadowFb : NULL,
+                 Snapshot != NULL ? (ULONG)Snapshot->ShadowFbPitch : 0,
+                 Snapshot != NULL ? (ULONG)Snapshot->ShadowFbSize : 0,
+                 Adapter->CommittedWidth, Adapter->CommittedHeight,
+                 Snapshot != NULL ? Snapshot->PostDisplayVirtualAddress : NULL,
+                 Snapshot != NULL ? (SIZE_T)Snapshot->PostDisplayMappingSize : 0,
+                 Status);
+}
+
 /* ========================================================================
  * DxgkpPresentShadowFb
  *
@@ -3484,10 +3514,16 @@ DxgkpPresentSourceRects(
     if (Adapter == NULL)
         return STATUS_INVALID_PARAMETER;
     if (DxgkpBootLogHoldsDisplay())
+    {
+        DxgkpPresentExitDiag(0, "dropped-inbv-owned", Adapter, NULL, STATUS_SUCCESS);
         return STATUS_SUCCESS;
+    }
     Status = DxgkpAcquireSharedSurfaceSnapshot(Adapter, &SharedSurface);
     if (!NT_SUCCESS(Status))
+    {
+        DxgkpPresentExitDiag(1, "snapshot-failed", Adapter, NULL, Status);
         return Status;
+    }
     if (Source != NULL)
     {
         SharedSurface.ShadowFb = Source;
@@ -3499,6 +3535,7 @@ DxgkpPresentSourceRects(
         (!SharedSurface.VidPnCommitted && !SharedSurface.HeadlessDesktop))
     {
         Status = STATUS_UNSUCCESSFUL;
+        DxgkpPresentExitDiag(2, "no-shadow-or-vidpn", Adapter, &SharedSurface, Status);
         goto Cleanup;
     }
 
@@ -3576,6 +3613,7 @@ DxgkpPresentSourceRects(
     if (SharedSurface.CommittedWidth == 0 || SharedSurface.CommittedHeight == 0 || ShadowPitch < (LONG)(SharedSurface.CommittedWidth * 4) || SharedSurface.ShadowFbSize < ((SIZE_T)(SharedSurface.CommittedHeight - 1) * (ULONG)ShadowPitch) + ((SIZE_T)SharedSurface.CommittedWidth * 4))
     {
         Status = STATUS_INVALID_BUFFER_SIZE;
+        DxgkpPresentExitDiag(3, "bad-geometry", Adapter, &SharedSurface, Status);
         goto Cleanup;
     }
 
@@ -3615,6 +3653,8 @@ DxgkpPresentSourceRects(
         }
     }
     ElapsedUs = DxgkpDisplayTraceElapsedUs(Start100ns);
+    DxgkpPresentExitDiag(4, Handled ? PresentPath : "miniport-declined",
+                         Adapter, &SharedSurface, Status);
     InterlockedIncrement(&g_PresentCallCount);
     InterlockedAdd64(&g_PresentCallTotalUs, (LONGLONG)ElapsedUs);
     DxgkpUpdateMaximum64(&g_PresentCallMaxUs, ElapsedUs);
