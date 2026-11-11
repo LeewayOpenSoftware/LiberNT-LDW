@@ -7,18 +7,8 @@
 /* $Header: /tmp_amd/presto/export/kbs/jutta/src/gsm/RCS/gsm_destroy.c,v 1.3 1994/11/28 19:52:25 jutta Exp $ */
 
 #include "gsm.h"
-#include "config.h"
 #include "proto.h"
-
-#ifdef	HAS_STDLIB_H
-#	include	<stdlib.h>
-#else
-#	ifdef	HAS_MALLOC_H
-#		include 	<malloc.h>
-#	else
-		extern void free();
-#	endif
-#endif
+#include <stdlib.h>
 
 void gsm_destroy P1((S), gsm S)
 {

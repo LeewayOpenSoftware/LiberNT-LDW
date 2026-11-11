@@ -6,15 +6,7 @@
 
 /* $Header: /tmp_amd/presto/export/kbs/jutta/src/gsm/RCS/code.c,v 1.3 1996/07/02 09:59:05 jutta Exp $ */
 
-#include	"config.h"
-
-
-#ifdef	HAS_STRING_H
-#include	<string.h>
-#else
-#	include "proto.h"
-	extern char	* memcpy P((char *, char *, int));
-#endif
+#include <string.h>
 
 #include	"private.h"
 #include	"gsm.h"
