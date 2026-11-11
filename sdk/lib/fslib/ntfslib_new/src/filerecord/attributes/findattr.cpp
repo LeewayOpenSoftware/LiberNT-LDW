@@ -900,6 +900,16 @@ FileRecord::ClearDataRunCache()
         FreeDataRun(Entry->Runs);
         delete Entry;
     }
+
+    /*
+     * The base object caches the composite run list of an attribute that
+     * lives in this extension record, keyed by the attribute's address in
+     * this record's buffer. Whatever made this record drop its runs (a
+     * mapping rewritten in place, a buffer restored on rollback) made that
+     * entry stale too.
+     */
+    if (BaseRecordOwner)
+        BaseRecordOwner->ClearDataRunCache();
 }
 
 ULONGLONG

@@ -1362,7 +1362,10 @@ NtfsLockReplacedTarget(_In_ PVolumeContextBlock VolCB,
         for (Index = 0; Index < Target->Count; Index++)
             CcPurgeCacheSection(&Target->Streams[Index]->SectionObjectPointers, NULL, 0, FALSE);
         for (Index = 0; Index < Target->Count; Index++)
+        {
             ExAcquireResourceExclusiveLite(&Target->Streams[Index]->PagingIoResource, TRUE);
+            NtfsDropPagingExtent(Target->Streams[Index]);
+        }
         Target->PagingHeld = TRUE;
     }
     else
@@ -2824,6 +2827,7 @@ NtfsSetDispositionInformation(_In_ PVolumeContextBlock VolCB,
     KeEnterCriticalRegion();
     ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsSetDisposition(VolCB, FileCB, FileObject, Flags);
     NtfsReleaseMetadata(VolCB);
@@ -2954,6 +2958,7 @@ NtfsFsdSetInformation(_In_ PDEVICE_OBJECT VolumeDeviceObject,
     }
 
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     PagingResourceAcquired = TRUE;
     NtfsAcquireMetadata(VolCB);
     MetadataResourceAcquired = TRUE;

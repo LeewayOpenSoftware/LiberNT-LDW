@@ -37,9 +37,29 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
+# fail STEP: report where the run stopped and check the volume. With
+# NTFSLIB_KEEP_FAILED set to a directory, the image as formatted and the
+# image as left are copied there for a replay.
+fail()
+{
+    echo "index spill: $1 failed" >&2
+    if test "$mounted" -eq 1; then
+        unmount_fixture >/dev/null 2>&1 || true
+        mounted=0
+    fi
+    "$frontend" --check "$image" >&2 || true
+    if test -n "${NTFSLIB_KEEP_FAILED:-}"; then
+        mkdir -p "$NTFSLIB_KEEP_FAILED"
+        cp "$workdir/formatted.ntfs" "$NTFSLIB_KEEP_FAILED/index-spill-formatted.ntfs"
+        cp "$image" "$NTFSLIB_KEEP_FAILED/index-spill-failed.ntfs"
+    fi
+    exit 1
+}
+
 mkdir "$mountpoint"
 truncate -s 256M "$image"
 "$mkntfs" -F -Q -q -L INDEXSPILL "$image"
+cp "$image" "$workdir/formatted.ntfs"
 
 "$frontend" --writable "$image" "$mountpoint" || exit 77
 mounted=1
@@ -55,16 +75,20 @@ mkdir "$mountpoint/target" "$mountpoint/staging"
 index=0
 while test "$index" -lt "$count"; do
     name=$(printf 'controller_shared_button_image_%04d_knockout.png' "$index")
-    head -c 5000 /dev/zero > "$mountpoint/target/$name"
+    head -c 5000 /dev/zero > "$mountpoint/target/$name" ||
+        fail "write of target file $index"
     index=$((index + 1))
 done
 
 index=0
 while test "$index" -lt "$count"; do
     name=$(printf 'controller_shared_button_image_%04d_knockout.png' "$index")
-    mv "$mountpoint/target/$name" "$mountpoint/target/$name.old"
-    head -c 5000 /dev/zero > "$mountpoint/staging/$name"
-    mv "$mountpoint/staging/$name" "$mountpoint/target/$name"
+    mv "$mountpoint/target/$name" "$mountpoint/target/$name.old" ||
+        fail "rename of target file $index"
+    head -c 5000 /dev/zero > "$mountpoint/staging/$name" ||
+        fail "write of staging file $index"
+    mv "$mountpoint/staging/$name" "$mountpoint/target/$name" ||
+        fail "move of staging file $index"
     index=$((index + 1))
 done
 

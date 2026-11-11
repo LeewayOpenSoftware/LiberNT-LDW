@@ -239,6 +239,7 @@ NtfsDeleteExternalBacking(
      * write an extent it resolved earlier after dropping the metadata lock
      * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
     if (NT_SUCCESS(Status))
@@ -466,6 +467,7 @@ NtfsSetCompression(_In_ PDEVICE_OBJECT VolumeDeviceObject,
      * write an extent it resolved earlier after dropping the metadata lock
      * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsFileRecordSetCompression(
         FileCB->FileRec,
@@ -579,6 +581,7 @@ NtfsSetZeroData(_In_ PDEVICE_OBJECT VolumeDeviceObject,
      * write an extent it resolved earlier after dropping the metadata lock
      * (write.c, read.c). Order: Main -> PagingIo -> Metadata. */
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsFileRecordSetZeroData(
         FileCB->FileRec,
@@ -2066,6 +2069,7 @@ NtfsMoveFile(
     KeEnterCriticalRegion();
     ExAcquireResourceExclusiveLite(NtfsGetMainResource(FileCB), TRUE);
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     NtfsAcquireMetadata(VolCB);
     Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
     if (NT_SUCCESS(Status))

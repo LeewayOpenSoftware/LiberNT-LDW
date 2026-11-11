@@ -620,6 +620,16 @@ NtfsFileRecordSetFileAllocationSize(
     _In_ ULONGLONG NewAllocationSize);
 
 /*
+ * Give back the clusters an append at end of file reserved beyond the
+ * unnamed data stream's end (growth is done in 1 MB steps), as NTFS does when
+ * the last handle is closed. An allocation size set explicitly is kept.
+ * Call it when the caller is done writing through this record.
+ */
+NTSTATUS
+NtfsFileRecordTrimSpeculativeAllocation(
+    _In_ NtfsFileRecord *FileRecord);
+
+/*
  * Implements the stream semantics of FSCTL_SET_SPARSE. Marking a stream
  * sparse does not discard allocation. Clearing sparse fully allocates every
  * hole before removing the sparse state.

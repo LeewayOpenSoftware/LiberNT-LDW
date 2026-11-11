@@ -1975,6 +1975,9 @@ WriteFileFromHost(NtfsFuseState* State,
         Status = STATUS_END_OF_FILE;
         goto NtfsError;
     }
+    Status = NtfsFileRecordTrimSpeculativeAllocation(File);
+    if (!NT_SUCCESS(Status))
+        goto NtfsError;
 
     Result = 0;
     goto Done;
@@ -3897,11 +3900,26 @@ NtfsFuseOpen(const char* Path, struct fuse_file_info* FileInfo)
 static int
 NtfsFuseRelease(const char* Path, struct fuse_file_info* FileInfo)
 {
+    PNtfsFileRecord File = HandleRecord(FileInfo);
+    int Result = 0;
+
     UNREFERENCED_PARAMETER(Path);
     if (!(FileInfo->fh & NTFS_FUSE_CACHED_RECORD_BIT))
-        NtfsFileRecordDestroy(HandleRecord(FileInfo));
+    {
+        /* As NTFS does at cleanup, give back what an append reserved past
+         * the end of the data; otherwise every file written in two pieces
+         * keeps a whole 1 MB growth step. */
+        if (File && FuseState()->Writable)
+        {
+            NTSTATUS Status = NtfsFileRecordTrimSpeculativeAllocation(File);
+
+            if (!NT_SUCCESS(Status))
+                Result = -NtStatusToErrno(Status);
+        }
+        NtfsFileRecordDestroy(File);
+    }
     FileInfo->fh = 0;
-    return 0;
+    return Result;
 }
 
 static int

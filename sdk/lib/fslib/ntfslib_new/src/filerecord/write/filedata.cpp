@@ -3665,6 +3665,12 @@ FileRecord::SetFileAllocationSize(
     AttributeOwner = GetAttributeOwner(TargetAttribute);
     if (!AttributeOwner)
         return STATUS_FILE_CORRUPT_ERROR;
+    /* An explicit allocation size is the caller's: never trim it later. */
+    if (TargetAttribute->NameLength == 0)
+    {
+        SpeculativeAllocation = FALSE;
+        AttributeOwner->SpeculativeAllocation = FALSE;
+    }
     if (AttributeOwner != this &&
          (TargetAttribute->AttributeType !=
               TypeData ||
@@ -5842,6 +5848,57 @@ Done:
     return Status;
 }
 
+/*
+ * An append at end of file grows the unnamed data stream by a whole growth
+ * step (ExtendNonResidentData) so that sequential writers do not fragment.
+ * When the writer is done, give back what lies beyond the data's last
+ * cluster, as NTFS does at cleanup; without this every small file written
+ * in two pieces kept 1 MB.
+ */
+NTSTATUS
+FileRecord::TrimSpeculativeAllocation()
+{
+    PAttribute TargetAttribute;
+    PFileRecord AttributeOwner;
+    ULONGLONG ClusterSize;
+    ULONGLONG Needed;
+
+    TargetAttribute = GetAttribute(TypeData, NULL);
+    if (!TargetAttribute)
+    {
+        SpeculativeAllocation = FALSE;
+        return STATUS_SUCCESS;
+    }
+    AttributeOwner = GetAttributeOwner(TargetAttribute);
+    if (!SpeculativeAllocation &&
+        !(AttributeOwner && AttributeOwner->SpeculativeAllocation))
+    {
+        return STATUS_SUCCESS;
+    }
+    SpeculativeAllocation = FALSE;
+    if (AttributeOwner)
+        AttributeOwner->SpeculativeAllocation = FALSE;
+
+    if (!DiskVolume || DiskVolume->IsReadOnly ||
+        !TargetAttribute->IsNonResident ||
+        TargetAttribute->Flags != 0)
+    {
+        return STATUS_SUCCESS;
+    }
+    ClusterSize = BytesPerCluster(DiskVolume);
+    if (ClusterSize == 0 ||
+        TargetAttribute->NonResident.DataSize >
+            ~(ULONGLONG)0 - (ClusterSize - 1))
+    {
+        return STATUS_SUCCESS;
+    }
+    Needed = (TargetAttribute->NonResident.DataSize + ClusterSize - 1) /
+             ClusterSize * ClusterSize;
+    if (TargetAttribute->NonResident.AllocatedSize <= Needed)
+        return STATUS_SUCCESS;
+    return SetFileAllocationSize(TypeData, NULL, Needed);
+}
+
 NTSTATUS
 FileRecord::ExtendNonResidentData(
     _In_ PAttribute TargetAttribute,
@@ -5866,6 +5923,7 @@ FileRecord::ExtendNonResidentData(
     ULONGLONG MinimumRequiredClusters;
     ULONGLONG ExistingClusters;
     ULONGLONG GrowthClusters;
+    BOOLEAN Speculative = FALSE;
     ULONG AddedClusterCount;
     ULONG MaxRuns;
     NTSTATUS Status;
@@ -5952,6 +6010,7 @@ FileRecord::ExtendNonResidentData(
         {
             RequiredClusters =
                 ExistingClusters + GrowthClusters;
+            Speculative = TRUE;
         }
     }
     AddedClusterCount =
@@ -5990,6 +6049,7 @@ FileRecord::ExtendNonResidentData(
         RequiredClusters != MinimumRequiredClusters)
     {
         RequiredClusters = MinimumRequiredClusters;
+        Speculative = FALSE;
         AddedClusterCount =
             (ULONG)(RequiredClusters - ExistingClusters);
         NewAllocatedSize = RequiredClusters * ClusterSize;
@@ -6085,7 +6145,11 @@ FileRecord::ExtendNonResidentData(
         : DiskVolume->MFT->
             WriteFileRecordToMFT(this);
     if (NT_SUCCESS(Status))
+    {
+        if (Speculative)
+            SpeculativeAllocation = TRUE;
         goto Done;
+    }
 
 Rollback:
     NTSTATUS RestoreStatus;

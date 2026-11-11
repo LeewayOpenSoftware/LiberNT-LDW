@@ -113,20 +113,32 @@ kill_daemon
 wait "$writer_pid" 2>/dev/null || true
 verify_twin
 
-# The surviving volume must be fully readable by NTFS-3G as well.
-"$ntfs3g" "$image" "$checkpoint" -o ro
-checkmounted=1
-attempt=0
-while ! mountpoint -q "$checkpoint" && test "$attempt" -lt 50; do
-    sleep 0.1
-    attempt=$((attempt + 1))
-done
-mountpoint -q "$checkpoint"
-for expected in "$twin"/*; do
-    cmp "$checkpoint/$(basename "$expected")" "$expected"
-done
-"$fusermount3" -u "$checkpoint" 2>/dev/null || umount "$checkpoint"
-checkmounted=0
+# The surviving volume must be fully readable by NTFS-3G as well. NTFS-3G
+# mounts only as root or when installed setuid, which CI runners are not:
+# there the mount is refused before it reads the volume, and the ntfsfix and
+# ntfscat checks above stand alone. Any other mount failure fails the test.
+ntfs3g_checked=0
+if "$ntfs3g" "$image" "$checkpoint" -o ro 2>"$workdir/ntfs3g.err"; then
+    checkmounted=1
+    attempt=0
+    while ! mountpoint -q "$checkpoint" && test "$attempt" -lt 50; do
+        sleep 0.1
+        attempt=$((attempt + 1))
+    done
+    mountpoint -q "$checkpoint"
+    for expected in "$twin"/*; do
+        cmp "$checkpoint/$(basename "$expected")" "$expected"
+    done
+    "$fusermount3" -u "$checkpoint" 2>/dev/null || umount "$checkpoint"
+    checkmounted=0
+    ntfs3g_checked=1
+elif grep -q "privilege to mount" "$workdir/ntfs3g.err"; then
+    echo "crash consistency: NTFS-3G may not mount here, read-back cross-check skipped"
+else
+    cat "$workdir/ntfs3g.err" >&2
+    exit 1
+fi
 
 echo "crash consistency: $rounds kill rounds plus one mid-write kill," \
-    "every acknowledged byte intact, volume consistent throughout"
+    "every acknowledged byte intact, volume consistent throughout" \
+    "(NTFS-3G cross-check: $ntfs3g_checked)"

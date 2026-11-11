@@ -715,6 +715,7 @@ NtfsOpenNamedDataStream(
         }
     }
     ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+    NtfsDropPagingExtent(FileCB->StreamCB);
     PagingAcquired = TRUE;
     NtfsAcquireMetadata(VolCB);
     MetadataAcquired = TRUE;
@@ -1225,6 +1226,7 @@ NtfsReferenceStreamContext(
     StreamCB->CommonFCBHeader.PagingIoResource = &StreamCB->PagingIoResource;
     StreamCB->CommonFCBHeader.IsFastIoPossible = FastIoIsPossible;
     FsRtlInitializeFileLock(&StreamCB->FileLock, NULL, NULL);
+    KeInitializeSpinLock(&StreamCB->ExtentLock);
     DataAttribute = NtfsFileRecordGetAttribute(File, RequestedType, RequestedStream);
     if (DataAttribute)
     {
@@ -3385,6 +3387,7 @@ NtfsFsdCreate(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         else
         {
             ExAcquireResourceExclusiveLite(NtfsGetPagingIoResource(FileCB), TRUE);
+            NtfsDropPagingExtent(FileCB->StreamCB);
             NtfsAcquireMetadata(VolCB);
             Status = NtfsFileRecordSetFileDataSize(FileCB->FileRec, FileCB->RequestedType, FileCB->RequestedStream, 0);
             if (NT_SUCCESS(Status) && !FileCB->RequestedStream)

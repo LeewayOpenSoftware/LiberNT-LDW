@@ -656,6 +656,7 @@ NtfsFinalizePendingDelete(_In_ PVolumeContextBlock VolCB,
             PStreamContextBlock Stream = DeleteStreams[StreamIndex];
 
             ExAcquireResourceExclusiveLite(&Stream->PagingIoResource, TRUE);
+            NtfsDropPagingExtent(Stream);
             Stream->Deleted = TRUE;
             Stream->SizePending = FALSE;
             ExReleaseResourceLite(&Stream->PagingIoResource);
@@ -858,6 +859,7 @@ DeleteDone:
         if (!RecordDeleted && !StreamDeleted)
         {
             ExAcquireResourceExclusiveLite(&Stream->PagingIoResource, TRUE);
+            NtfsDropPagingExtent(Stream);
             Stream->Deleted = FALSE;
             ExReleaseResourceLite(&Stream->PagingIoResource);
         }

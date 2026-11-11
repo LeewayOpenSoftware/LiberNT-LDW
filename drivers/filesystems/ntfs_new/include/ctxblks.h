@@ -343,6 +343,22 @@ typedef struct _SCB
     /* System time of the last automatic write-time stamp by a cached
      * write of this stream (write.c, NtfsCachedWrite). */
     LONGLONG LastWriteStampTime;
+    /*
+     * The last allocated extent a paging read resolved (read.c), so that
+     * page-ins inside it skip the volume-wide metadata lock. It is filled
+     * and used only under PagingIoResource shared, and NtfsDropPagingExtent
+     * clears it right after every exclusive acquisition: every path that
+     * frees, moves, compresses, zeroes or shrinks the stream, or marks it
+     * deleted, holds PagingIoResource exclusive. ExtentLock orders the
+     * shared holders among themselves.
+     */
+    KSPIN_LOCK ExtentLock;
+    BOOLEAN ExtentValid;
+    ULONG ExtentClusterSize;
+    ULONGLONG ExtentFirstVcn;
+    ULONGLONG ExtentNextVcn;
+    ULONGLONG ExtentLcn;
+    ULONGLONG ExtentValidData;
     NTFS_NATIVE_SCB NativeScb;
 } StreamContextBlock, *PStreamContextBlock;
 
@@ -524,6 +540,22 @@ PERESOURCE
 NtfsGetPagingIoResource(_In_ PFileContextBlock FileCB)
 {
     return FileCB->StreamCB ? &FileCB->StreamCB->PagingIoResource : &FileCB->PagingIoResource;
+}
+
+/* Forget the paging-read extent of a stream. The caller holds the stream's
+ * PagingIoResource exclusive. */
+static inline
+VOID
+NtfsDropPagingExtent(_In_opt_ PStreamContextBlock StreamCB)
+{
+    KIRQL OldIrql;
+
+    if (!StreamCB)
+        return;
+    ASSERT(ExIsResourceAcquiredExclusiveLite(&StreamCB->PagingIoResource));
+    KeAcquireSpinLock(&StreamCB->ExtentLock, &OldIrql);
+    StreamCB->ExtentValid = FALSE;
+    KeReleaseSpinLock(&StreamCB->ExtentLock, OldIrql);
 }
 
 NTSTATUS

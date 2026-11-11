@@ -204,6 +204,137 @@ NtfsLockReadBuffer(
     return Status;
 }
 
+/* The allocated extent a direct read resolved, kept by paging reads in the
+ * stream (StreamContextBlock.Extent*). */
+typedef struct _NTFS_PAGING_EXTENT
+{
+    ULONG ClusterSize;
+    ULONGLONG FirstVcn;
+    ULONGLONG NextVcn;
+    ULONGLONG Lcn;
+    ULONGLONG ValidData;
+} NTFS_PAGING_EXTENT, *PNTFS_PAGING_EXTENT;
+
+/* Whether the IRP's buffer can be handed to the storage device as is. */
+static
+BOOLEAN
+NtfsDirectReadBufferUsable(
+    _In_ PVolumeContextBlock VolCB,
+    _In_ PIRP Irp,
+    _In_ ULONGLONG FileOffset,
+    _In_ ULONG Length)
+{
+    return VolCB->StorageDevice &&
+           VolCB->BytesPerSector &&
+           Irp->MdlAddress &&
+           !Irp->MdlAddress->Next &&
+           MmGetMdlByteCount(Irp->MdlAddress) >= Length &&
+           ((ULONG_PTR)MmGetMdlVirtualAddress(Irp->MdlAddress) &
+            VolCB->StorageDevice->AlignmentRequirement) == 0 &&
+           Length % VolCB->BytesPerSector == 0 &&
+           FileOffset % VolCB->BytesPerSector == 0;
+}
+
+/* Disk offset of FileOffset inside Extent, if the whole range lies in it. */
+static
+BOOLEAN
+NtfsMapInExtent(
+    _In_ PNTFS_PAGING_EXTENT Extent,
+    _In_ ULONGLONG FileOffset,
+    _In_ ULONG Length,
+    _Out_ PULONGLONG DiskOffset)
+{
+    ULONGLONG ClusterSize = Extent->ClusterSize;
+    ULONGLONG StartingVcn, InClusterOffset, Available, PhysicalCluster;
+
+    if (!ClusterSize ||
+        FileOffset > ~(ULONGLONG)0 - Length ||
+        FileOffset + Length > Extent->ValidData)
+    {
+        return FALSE;
+    }
+    StartingVcn = FileOffset / ClusterSize;
+    InClusterOffset = FileOffset % ClusterSize;
+    if (StartingVcn < Extent->FirstVcn || StartingVcn >= Extent->NextVcn)
+        return FALSE;
+
+    Available = Extent->NextVcn - StartingVcn;
+    if (Available > ~(ULONGLONG)0 / ClusterSize)
+        return FALSE;
+    Available *= ClusterSize;
+    if (Available < InClusterOffset ||
+        Available - InClusterOffset < Length)
+    {
+        return FALSE;
+    }
+
+    PhysicalCluster = StartingVcn - Extent->FirstVcn;
+    if (Extent->Lcn > ~(ULONGLONG)0 - PhysicalCluster)
+        return FALSE;
+    PhysicalCluster += Extent->Lcn;
+    if (PhysicalCluster > ~(ULONGLONG)0 / ClusterSize)
+        return FALSE;
+    *DiskOffset = PhysicalCluster * ClusterSize;
+    if (*DiskOffset > ~(ULONGLONG)0 - InClusterOffset)
+        return FALSE;
+    *DiskOffset += InClusterOffset;
+    return TRUE;
+}
+
+/*
+ * A page-in inside the extent the stream's last paging read resolved needs
+ * no metadata: while this read holds PagingIoResource shared, nothing can
+ * free, move or shrink that extent (NtfsDropPagingExtent).
+ */
+static
+BOOLEAN
+NtfsLookupPagingExtent(
+    _In_ PVolumeContextBlock VolCB,
+    _In_ PStreamContextBlock StreamCB,
+    _In_ PIRP Irp,
+    _In_ ULONGLONG FileOffset,
+    _In_ ULONG Length,
+    _Out_ PULONGLONG DiskOffset)
+{
+    NTFS_PAGING_EXTENT Extent;
+    BOOLEAN Valid;
+    KIRQL OldIrql;
+
+    ASSERT(ExIsResourceAcquiredSharedLite(&StreamCB->PagingIoResource));
+    if (!NtfsDirectReadBufferUsable(VolCB, Irp, FileOffset, Length))
+        return FALSE;
+
+    KeAcquireSpinLock(&StreamCB->ExtentLock, &OldIrql);
+    Valid = StreamCB->ExtentValid && !StreamCB->Deleted;
+    Extent.ClusterSize = StreamCB->ExtentClusterSize;
+    Extent.FirstVcn = StreamCB->ExtentFirstVcn;
+    Extent.NextVcn = StreamCB->ExtentNextVcn;
+    Extent.Lcn = StreamCB->ExtentLcn;
+    Extent.ValidData = StreamCB->ExtentValidData;
+    KeReleaseSpinLock(&StreamCB->ExtentLock, OldIrql);
+
+    return Valid && NtfsMapInExtent(&Extent, FileOffset, Length, DiskOffset);
+}
+
+static
+VOID
+NtfsKeepPagingExtent(
+    _In_ PStreamContextBlock StreamCB,
+    _In_ PNTFS_PAGING_EXTENT Extent)
+{
+    KIRQL OldIrql;
+
+    ASSERT(ExIsResourceAcquiredSharedLite(&StreamCB->PagingIoResource));
+    KeAcquireSpinLock(&StreamCB->ExtentLock, &OldIrql);
+    StreamCB->ExtentClusterSize = Extent->ClusterSize;
+    StreamCB->ExtentFirstVcn = Extent->FirstVcn;
+    StreamCB->ExtentNextVcn = Extent->NextVcn;
+    StreamCB->ExtentLcn = Extent->Lcn;
+    StreamCB->ExtentValidData = Extent->ValidData;
+    StreamCB->ExtentValid = TRUE;
+    KeReleaseSpinLock(&StreamCB->ExtentLock, OldIrql);
+}
+
 static
 NTSTATUS
 NtfsTryDirectRead(
@@ -213,16 +344,15 @@ NtfsTryDirectRead(
     _In_ ULONGLONG FileOffset,
     _In_ ULONG Length,
     _Out_ PBOOLEAN Handled,
-    _Out_ PULONGLONG SubmitDiskOffset)
+    _Out_ PULONGLONG SubmitDiskOffset,
+    _Out_opt_ PNTFS_PAGING_EXTENT Resolved)
 {
     PAttribute Attribute;
     NtfsRetrievalExtent Extent;
+    NTFS_PAGING_EXTENT Mapped;
     ULONGLONG ReturnedStartingVcn;
     ULONGLONG StartingVcn;
     ULONGLONG ClusterSize;
-    ULONGLONG InClusterOffset;
-    ULONGLONG Available;
-    ULONGLONG PhysicalCluster;
     ULONGLONG DiskOffset;
     ULONG ExtentCount;
     NTSTATUS Status;
@@ -239,38 +369,25 @@ NtfsTryDirectRead(
             return Status;
         }
     }
-    if (!VolCB->StorageDevice ||
-        !VolCB->BytesPerSector ||
-        !Irp->MdlAddress ||
-        Irp->MdlAddress->Next ||
-        MmGetMdlByteCount(Irp->MdlAddress) < Length ||
-        ((ULONG_PTR)MmGetMdlVirtualAddress(Irp->MdlAddress) &
-         VolCB->StorageDevice->AlignmentRequirement) != 0 ||
-        Length % VolCB->BytesPerSector != 0 ||
-        FileOffset % VolCB->BytesPerSector != 0)
-    {
+    if (!NtfsDirectReadBufferUsable(VolCB, Irp, FileOffset, Length))
         return STATUS_SUCCESS;
-    }
 
     Attribute = NtfsFileRecordGetAttribute(FileCB->FileRec,
                                            FileCB->RequestedType,
                                            FileCB->RequestedStream);
     if (!Attribute ||
         !Attribute->IsNonResident ||
-        (Attribute->Flags & (ATTR_COMPRESSION_MASK | ATTR_ENCRYPTED)) ||
-        FileOffset > ~(ULONGLONG)0 - Length ||
-        FileOffset + Length > Attribute->NonResident.InitalizedDataSize)
+        (Attribute->Flags & (ATTR_COMPRESSION_MASK | ATTR_ENCRYPTED)))
     {
         return STATUS_SUCCESS;
     }
 
     ClusterSize = (ULONGLONG)VolCB->BytesPerSector *
                   NtfsVolumeGetSectorsPerCluster(VolCB->DiskVolume);
-    if (!ClusterSize)
+    if (!ClusterSize || ClusterSize > MAXULONG)
         return STATUS_SUCCESS;
 
     StartingVcn = FileOffset / ClusterSize;
-    InClusterOffset = FileOffset % ClusterSize;
     ExtentCount = 1;
     Status = NtfsFileRecordQueryRetrievalPointers(FileCB->FileRec,
                                                   FileCB->RequestedType,
@@ -288,33 +405,19 @@ NtfsTryDirectRead(
         return STATUS_SUCCESS;
     }
 
-    Available = Extent.NextVcn - StartingVcn;
-    if (Available > ~(ULONGLONG)0 / ClusterSize)
+    Mapped.ClusterSize = (ULONG)ClusterSize;
+    Mapped.FirstVcn = ReturnedStartingVcn;
+    Mapped.NextVcn = Extent.NextVcn;
+    Mapped.Lcn = (ULONGLONG)Extent.Lcn;
+    Mapped.ValidData = Attribute->NonResident.InitalizedDataSize;
+    if (!NtfsMapInExtent(&Mapped, FileOffset, Length, &DiskOffset))
         return STATUS_SUCCESS;
-    Available *= ClusterSize;
-    if (Available < InClusterOffset ||
-        Available - InClusterOffset < Length)
-    {
-        return STATUS_SUCCESS;
-    }
-
-    PhysicalCluster = StartingVcn - ReturnedStartingVcn;
-    if ((ULONGLONG)Extent.Lcn >
-        ~(ULONGLONG)0 - PhysicalCluster)
-    {
-        return STATUS_SUCCESS;
-    }
-    PhysicalCluster += (ULONGLONG)Extent.Lcn;
-    if (PhysicalCluster > ~(ULONGLONG)0 / ClusterSize)
-        return STATUS_SUCCESS;
-    DiskOffset = PhysicalCluster * ClusterSize;
-    if (DiskOffset > ~(ULONGLONG)0 - InClusterOffset)
-        return STATUS_SUCCESS;
-    DiskOffset += InClusterOffset;
 
     /* The caller sends the read with NtfsFinishDirectRead. */
     *Handled = TRUE;
     *SubmitDiskOffset = DiskOffset;
+    if (Resolved)
+        *Resolved = Mapped;
     return STATUS_SUCCESS;
 }
 
@@ -539,6 +642,24 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
          BooleanFlagOn(Irp->Flags, IRP_NOCACHE) ||
          BooleanFlagOn(FileObject->Flags, FO_NO_INTERMEDIATE_BUFFERING)))
     {
+        NTFS_PAGING_EXTENT Resolved;
+        BOOLEAN KeepExtent = PagingIo && FileCB->StreamCB;
+
+        /* A page-in inside the extent the last one resolved goes straight
+         * to the disk, without the volume-wide metadata lock. */
+        if (KeepExtent &&
+            NtfsLookupPagingExtent(VolCB,
+                                   FileCB->StreamCB,
+                                   Irp,
+                                   (ULONGLONG)ReadOffset.QuadPart,
+                                   RequestedLength,
+                                   &DirectDiskOffset))
+        {
+            DirectRead = TRUE;
+            Status = NtfsFinishDirectRead(VolCB, Irp, DirectDiskOffset, RequestedLength);
+            goto DirectReadSent;
+        }
+
         NtfsAcquireMetadata(VolCB);
         Status = NtfsRefreshDirectoryRecord(VolCB, FileCB);
         if (!NT_SUCCESS(Status))
@@ -552,7 +673,13 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
                                    (ULONGLONG)ReadOffset.QuadPart,
                                    RequestedLength,
                                    &DirectRead,
-                                   &DirectDiskOffset);
+                                   &DirectDiskOffset,
+                                   KeepExtent ? &Resolved : NULL);
+        if (KeepExtent && DirectRead && NT_SUCCESS(Status) &&
+            !FileCB->StreamCB->Deleted)
+        {
+            NtfsKeepPagingExtent(FileCB->StreamCB, &Resolved);
+        }
         /*
          * The transfer itself needs no metadata, only the extent resolved
          * above. A paging read holds PagingIoResource shared, and every path
@@ -570,6 +697,7 @@ NtfsFsdRead(_In_ PDEVICE_OBJECT VolumeDeviceObject,
         NtfsReleaseMetadata(VolCB);
         if (DirectRead && NT_SUCCESS(Status) && DirectDiskOffset != MAXULONGLONG)
             Status = NtfsFinishDirectRead(VolCB, Irp, DirectDiskOffset, RequestedLength);
+DirectReadSent:
         if (DirectRead)
         {
             if (NT_SUCCESS(Status))

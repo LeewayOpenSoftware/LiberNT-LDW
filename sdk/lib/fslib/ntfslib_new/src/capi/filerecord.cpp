@@ -473,6 +473,18 @@ NtfsFileRecordSetFileAllocationSize(
 }
 
 NTSTATUS
+NtfsFileRecordTrimSpeculativeAllocation(
+    _In_ PNtfsFileRecord Fr)
+{
+    if (!Fr)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS MutationStatus = reinterpret_cast<PFileRecord>(Fr)->
+        TrimSpeculativeAllocation();
+    reinterpret_cast<PFileRecord>(Fr)->VerifyShapeAfterMutation(MutationStatus);
+    return MutationStatus;
+}
+
+NTSTATUS
 NtfsFileRecordSetSparse(
     _In_ PNtfsFileRecord Fr,
     _In_ AttributeType AttrType,
