@@ -11,7 +11,7 @@ target_link_libraries(leewayui_ribbon_test
     leewayui_static
 )
 
-add_importlibs(leewayui_ribbon_test user32 gdi32 msvcrt kernel32)
+add_importlibs(leewayui_ribbon_test user32 gdi32 advapi32 uxtheme msvcrt kernel32)
 
 add_dependencies(leewayui_ribbon_test psdk)
 
