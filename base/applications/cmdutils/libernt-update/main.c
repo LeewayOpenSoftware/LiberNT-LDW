@@ -29,6 +29,7 @@ static void Usage(void)
     fputs("usage: libernt-update [--image <root>] <command> [arguments]\n"
           "  init [--trust-cer <file.cer>] | query | verify <dir> | add-package <dir>\n"
           "  add-package --from <url>   fetch the package over HTTP, then verify and stage it\n"
+          "  add-package --exe <file>   verify and stage a standalone package .exe (its signed contents)\n"
           "  apply <id> <version> [--confirm] | confirm <id> <version> | rollback <id> <version>\n"
           "  remove-package <id> <version> | pending | export-log <dest-dir>\n", stderr);
 }
@@ -52,6 +53,9 @@ static const char *ErrName(DWORD e)
         case LN_E_VERIFY_FINAL: return "final-hash-mismatch";
         case LN_E_NO_TRUST_ANCHOR: return "no-trust-anchor";
         case LN_E_NO_BOOT_APPLIER: return "boot-updater-not-installed";
+        case LN_E_PACKAGE_INVALID: return "package-exe-damaged";
+        case LN_E_NOT_APPLICABLE: return "not-applicable";
+        case LN_E_SUPERSEDED: return "superseded";
         default: return "win32-error";
     }
 }
@@ -251,6 +255,14 @@ int wmain(int argc, WCHAR **argv)
                 return Fail("verify", err);
             printf("verified: %s %s (%u payloads), manifest.sig valid for the pinned certificate\n", m.packageId, m.releaseVersion, (unsigned)m.itemCount);
             LnManifestFree(&m);
+            return 0;
+        }
+        if (a + 1 < argc && !wcscmp(argv[a], L"--exe"))
+        {
+            err = LnServicingAddPackageExe(&t, argv[a + 1], txid);
+            if (err)
+                return Fail("add-package --exe", err);
+            printf("staged, transaction %s\n", txid);
             return 0;
         }
         if (a + 1 < argc && !wcscmp(argv[a], L"--from"))

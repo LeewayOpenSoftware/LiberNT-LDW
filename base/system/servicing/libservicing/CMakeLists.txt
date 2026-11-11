@@ -19,6 +19,7 @@ list(APPEND SOURCE
     pending.c
     servicing.c
     fetch.c
+    package.c
     ../pending/s1core.c)
 
 add_library(libservicing ${SOURCE})

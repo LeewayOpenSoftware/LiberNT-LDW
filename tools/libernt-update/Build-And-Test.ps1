@@ -32,7 +32,7 @@ if (-not (Test-Path (Join-Path $KeyDir 'Leeway-LiberNT-Update-DEV.pfx')) -or -no
 
 # ---- 1. COMPILATION ---------------------------------------------------------
 Write-Host '=== COMPILATION ==='
-$srcs = 'sha256','util','json','target','manifest','verify','journal','store','pending','servicing','fetch' | ForEach-Object { Join-Path $lib "$_.c" }
+$srcs = 'sha256','util','json','target','manifest','verify','journal','store','pending','servicing','fetch','package' | ForEach-Object { Join-Path $lib "$_.c" }
 $srcs += (Join-Path $repo 'base\system\servicing\pending\s1core.c')    # the portable core shared with the boot applier
 $common = @('--target=x86_64-w64-mingw32', '-O1', '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-sign-compare', '-municode')
 $libs = @('-lwintrust', '-lcrypt32', '-ladvapi32', '-lws2_32')
@@ -54,6 +54,8 @@ $exe = Join-Path $OutDir 'libernt-update.exe'
 $tst = Join-Path $OutDir 'libservicing-tests.exe'
 if (-not (Invoke-Cc ($common + $srcs + @((Join-Path $cli 'main.c'), '-o', $exe) + $libs) 'libernt-update.exe')) { $compileOk = $false }
 if (-not (Invoke-Cc ($common + @('-DLN_TESTING') + $srcs + @((Join-Path $lib 'tests\tests.c'), '-o', $tst) + $libs + @('-lole32')) 'libservicing-tests.exe (with the test hooks)')) { $compileOk = $false }
+$stub = Join-Path $OutDir 'libernt-update-package.exe'
+if (-not (Invoke-Cc (@('--target=x86_64-w64-mingw32', '-O1', '-Wall', '-Wextra', '-municode', '-mwindows', (Join-Path $repo 'base\applications\libernt-update-package\main.c'), '-o', $stub, '-lshell32', '-luser32', '-ladvapi32')) 'libernt-update-package.exe (package stub)')) { $compileOk = $false }
 Write-Host ("COMPILATION: " + $(if ($compileOk) { 'OK' } else { 'FAILED' }))
 if (-not $compileOk) { exit 1 }
 
@@ -64,6 +66,15 @@ if (-not $SkipFixtures) {
     $mk = Join-Path $here 'New-FixturePackage.ps1'
     $good = @(@{ Target = 'Windows\System32\lnfixture.dll'; Content = 'version one' })
     & $mk -OutDir "$fx\good1" -PackageId ln.fixture -Version 1.0 -Items $good -KeyDir $KeyDir | Out-Null
+    # standalone package .exe fixtures (LNPK): good, damaged in each way, and the applicability pair
+    $mkexe = Join-Path $here 'New-UpdatePackageExe.ps1'
+    & $mkexe -OutFile "$fx\kb-good.exe" -Stub $stub -PackageDir "$fx\good1" | Out-Null
+    & $mkexe -OutFile "$fx\kb-truncated.exe" -Stub $stub -PackageDir "$fx\good1" -Truncate | Out-Null
+    & $mkexe -OutFile "$fx\kb-toc-tamper.exe" -Stub $stub -PackageDir "$fx\good1" -TamperToc | Out-Null
+    & $mkexe -OutFile "$fx\kb-payload-tamper.exe" -Stub $stub -PackageDir "$fx\good1" -TamperPayload | Out-Null
+    & $mkexe -OutFile "$fx\kb-badmagic.exe" -Stub $stub -PackageDir "$fx\good1" -BadMagic | Out-Null
+    & $mkexe -OutFile "$fx\kb-requires.exe" -Stub $stub -PackageId ln.kbreq -Version 1.0 -KeyDir $KeyDir -Items @(@{ Target = 'Windows\System32\lnkbreq.dll'; Content = 'needs the fixture' }) -Applicability @{ requires = @('ln.fixture>=1.0') } | Out-Null
+    & $mkexe -OutFile "$fx\kb-supersedes.exe" -Stub $stub -PackageId ln.kbsup -Version 2.0 -KeyDir $KeyDir -Items @(@{ Target = 'Windows\System32\lnkbsup.dll'; Content = 'newer' }) -Applicability @{ supersedes = @('ln.fixture') } | Out-Null
     & $mk -OutDir "$fx\tampered-payload" -PackageId ln.fixture -Version 1.0 -Items $good -KeyDir $KeyDir -TamperPayloadAfterSigning | Out-Null
     & $mk -OutDir "$fx\tampered-manifest" -PackageId ln.fixture -Version 1.0 -Items $good -KeyDir $KeyDir -TamperManifestAfterSigning | Out-Null
     & $mk -OutDir "$fx\tampered-sig" -PackageId ln.fixture -Version 1.0 -Items $good -KeyDir $KeyDir -TamperManifestSigAfterSigning | Out-Null

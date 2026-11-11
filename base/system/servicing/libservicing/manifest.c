@@ -55,7 +55,33 @@ void LnManifestFree(LN_MANIFEST *m)
         free(m->items[i].target);
     }
     free(m->items);
+    free(m->requires);
+    free(m->supersedes);
     memset(m, 0, sizeof(*m));
+}
+
+/* "id", or "id<op>ver": both parts are ids (IsId); ver is "" when absent */
+static BOOL SplitVersionRule(const char *s, const char *op, char id[65], char ver[65])
+{
+    const char *sep = strstr(s, op);
+    size_t n = sep ? (size_t)(sep - s) : strlen(s);
+
+    id[0] = ver[0] = 0;
+    if (n == 0 || n > 64)
+        return FALSE;
+    memcpy(id, s, n);
+    id[n] = 0;
+    if (!IsId(id, 64))
+        return FALSE;
+    if (sep)
+    {
+        if (strlen(sep + strlen(op)) > 64)
+            return FALSE;
+        strcpy(ver, sep + strlen(op));
+        if (!IsId(ver, 64))
+            return FALSE;
+    }
+    return TRUE;
 }
 
 DWORD LnManifestParse(const char *text, size_t len, LN_MANIFEST *m)
@@ -101,6 +127,60 @@ DWORD LnManifestParse(const char *text, size_t len, LN_MANIFEST *m)
     s = LnJsonGetString(root, "certificateSha256");
     if (!s || !LnIsSha256Hex(s)) goto bad;
     strcpy(m->certificateSha256, s);
+
+    {
+        const LN_JSON *app = LnJsonGet(root, "applicability"), *arr, *e;
+        size_t n;
+
+        if (app && app->type != LnJsonObject)
+            goto bad;
+        arr = app ? LnJsonGet(app, "requires") : NULL;
+        if (arr)
+        {
+            if (arr->type != LnJsonArray)
+                goto bad;
+            for (n = 0, e = arr->child; e; e = e->next)
+                n++;
+            if (n > 64)
+                goto bad;
+            if (n && !(m->requires = calloc(n, sizeof(LN_REQUIRES))))
+            {
+                err = ERROR_NOT_ENOUGH_MEMORY;
+                goto fail;
+            }
+            for (e = arr->child; e; e = e->next)
+            {
+                LN_REQUIRES *r = &m->requires[m->requiresCount];
+
+                if (e->type != LnJsonString || !SplitVersionRule(e->str, ">=", r->packageId, r->minVersion))
+                    goto bad;
+                m->requiresCount++;
+            }
+        }
+        arr = app ? LnJsonGet(app, "supersedes") : NULL;
+        if (arr)
+        {
+            if (arr->type != LnJsonArray)
+                goto bad;
+            for (n = 0, e = arr->child; e; e = e->next)
+                n++;
+            if (n > 64)
+                goto bad;
+            if (n && !(m->supersedes = calloc(n, sizeof(LN_SUPERSEDES))))
+            {
+                err = ERROR_NOT_ENOUGH_MEMORY;
+                goto fail;
+            }
+            for (e = arr->child; e; e = e->next)
+            {
+                LN_SUPERSEDES *r = &m->supersedes[m->supersedesCount];
+
+                if (e->type != LnJsonString || !SplitVersionRule(e->str, "<=", r->packageId, r->maxVersion))
+                    goto bad;
+                m->supersedesCount++;
+            }
+        }
+    }
 
     payloads = LnJsonGet(root, "payloads");
     if (!payloads || payloads->type != LnJsonArray)

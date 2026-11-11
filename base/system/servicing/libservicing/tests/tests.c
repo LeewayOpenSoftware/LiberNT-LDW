@@ -1711,6 +1711,103 @@ static void TestFetch(void)
     CHECK_ERR(ERROR_INVALID_DATA, LnFetchFile(L"http://127.0.0.1/x\xE9y", dest));
 }
 
+static void TestPackageExe(void)
+{
+    LN_TARGET t;
+    WCHAR *p, *g, *target, *t2, *t3;
+    char tx[65], *man;
+    size_t ml;
+    BOOL reboot;
+    LN_MANIFEST m;
+
+    Section("package .exe (LNPK): intake, apply, confirm, uninstall by id; damaged containers; applicability");
+    SetEnvironmentVariableW(L"LNUPDATE_SYSTEM_DIRS", L"");                 /* inline applies in this block */
+    CHECK(OpenImage(&t, L"kb"));
+    InstallTrust(&t);
+    target = LnTargetFile(&t, L"Windows\\System32\\lnfixture.dll");
+    WriteText(target, "original");
+
+    p = Fx(L"kb-good.exe");
+    CHECK_ERR(0, LnPackageExeInspect(p, &man, &ml));
+    CHECK(man && ml > 0 && strstr(man, "\"ln.fixture\""));
+    free(man);
+    CHECK_ERR(0, LnServicingAddPackageExe(&t, p, tx));
+    CHECK(tx[0]);
+    CHECK_ERR(0, LnStoreLoadManifest(&t, "ln.fixture", "1.0", &m));                  /* imported like a directory package */
+    LnManifestFree(&m);
+    CHECK_ERR(0, LnServicingAddPackageExe(&t, p, tx));                               /* idempotent */
+    CHECK(FileIs(target, "original"));                                                /* intake touches nothing */
+    free(p);
+    CHECK_ERR(0, LnServicingApplyPackage(&t, "ln.fixture", "1.0", &reboot, tx));
+    CHECK(FileIs(target, "version one"));
+    CHECK_ERR(0, LnServicingConfirmHealth(&t, "ln.fixture", "1.0"));
+    CHECK_ERR(0, LnServicingRemovePackage(&t, "ln.fixture", "1.0"));                /* uninstall by id */
+    CHECK(FileIs(target, "original"));
+
+    /* a damaged container never reaches the store or the target */
+    p = Fx(L"kb-truncated.exe");
+    CHECK_ERR(LN_E_PACKAGE_INVALID, LnServicingAddPackageExe(&t, p, tx));
+    free(p);
+    p = Fx(L"kb-toc-tamper.exe");
+    CHECK_ERR(LN_E_PACKAGE_INVALID, LnServicingAddPackageExe(&t, p, tx));
+    free(p);
+    p = Fx(L"kb-payload-tamper.exe");
+    CHECK_ERR(LN_E_PACKAGE_INVALID, LnServicingAddPackageExe(&t, p, tx));
+    free(p);
+    p = Fx(L"kb-badmagic.exe");
+    CHECK_ERR(LN_E_PACKAGE_INVALID, LnServicingAddPackageExe(&t, p, tx));
+    free(p);
+    CHECK_ERR(LN_E_PACKAGE_INVALID, LnServicingAddPackageExe(&t, g_cer, tx));        /* not a container at all */
+    CHECK_ERR(LN_E_NOT_FOUND, LnStoreLoadManifest(&t, "ln.fixture", "1.0", &m));
+    CHECK(FileIs(target, "original"));
+    free(target);
+
+    /* requires: the named package must be installed, staged is not enough */
+    CHECK(OpenImage(&t, L"kbapp"));
+    InstallTrust(&t);
+    target = LnTargetFile(&t, L"Windows\\System32\\lnfixture.dll");
+    t2 = LnTargetFile(&t, L"Windows\\System32\\lnkbreq.dll");
+    WriteText(target, "original");
+    WriteText(t2, "original");
+    p = Fx(L"kb-requires.exe");
+    g = Fx(L"good1");
+    CHECK_ERR(LN_E_NOT_APPLICABLE, LnServicingAddPackageExe(&t, p, tx));
+    CHECK_ERR(0, LnServicingAddPackage(&t, g, tx));
+    CHECK_ERR(LN_E_NOT_APPLICABLE, LnServicingAddPackageExe(&t, p, tx));
+    CHECK_ERR(0, LnServicingApplyPackage(&t, "ln.fixture", "1.0", &reboot, tx));
+    CHECK_ERR(0, LnServicingAddPackageExe(&t, p, tx));
+    CHECK_ERR(0, LnServicingApplyPackage(&t, "ln.kbreq", "1.0", &reboot, tx));
+    CHECK(FileIs(t2, "needs the fixture"));
+    free(p);
+    free(g);
+    free(target);
+    free(t2);
+
+    /* supersedes: an installed newer package refuses the old one until it is removed */
+    CHECK(OpenImage(&t, L"kbsup"));
+    InstallTrust(&t);
+    target = LnTargetFile(&t, L"Windows\\System32\\lnfixture.dll");
+    t3 = LnTargetFile(&t, L"Windows\\System32\\lnkbsup.dll");
+    WriteText(target, "original");
+    WriteText(t3, "original");
+    p = Fx(L"kb-supersedes.exe");
+    g = Fx(L"good1");
+    CHECK_ERR(0, LnServicingAddPackageExe(&t, p, tx));
+    CHECK_ERR(0, LnServicingAddPackage(&t, g, tx));                                   /* staged only: not yet superseded */
+    CHECK_ERR(0, LnServicingRemovePackage(&t, "ln.fixture", "1.0"));
+    CHECK_ERR(0, LnServicingApplyPackage(&t, "ln.kbsup", "2.0", &reboot, tx));
+    CHECK_ERR(LN_E_SUPERSEDED, LnServicingAddPackage(&t, g, tx));
+    CHECK_ERR(0, LnServicingRemovePackage(&t, "ln.kbsup", "2.0"));
+    CHECK_ERR(0, LnServicingAddPackage(&t, g, tx));
+    free(p);
+    free(g);
+    free(target);
+    free(t3);
+
+    CHECK(LnVersionCompare("1.10", "1.9") > 0 && LnVersionCompare("1.0", "1.0.1") < 0);
+    CHECK(LnVersionCompare("2", "2.0") < 0 && LnVersionCompare("1.0", "1.0") == 0 && LnVersionCompare("1.0b", "1.0a") > 0);
+}
+
 int wmain(int argc, WCHAR **argv)
 {
     WCHAR tmp[MAX_PATH];
@@ -1771,6 +1868,7 @@ int wmain(int argc, WCHAR **argv)
     TestAttemptOwnership();
     TestSystemDefer();
     TestFetch();
+    TestPackageExe();
 
     printf("\n%d checks, %d failed\n", g_checks, g_failed);
     LnRemoveTree(g_work);

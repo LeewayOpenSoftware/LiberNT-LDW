@@ -31,6 +31,7 @@ param(
     [Parameter(Mandatory)][string]$Version,
     [Parameter(Mandatory)][hashtable[]]$Items,
     [string]$Type = 'system-component',
+    [hashtable]$Applicability,
     [string]$KeyDir = (Join-Path $env:USERPROFILE '.leeway-dev-signing'),
     [string]$SigningPfx,
     [string]$SigningPasswordFile,
@@ -79,6 +80,7 @@ $manifest = [ordered]@{
     certificateSha256 = $certSha
     payloads          = $payloads
 }
+if ($Applicability) { $manifest.applicability = $Applicability }
 $manifestPath = Join-Path $OutDir 'manifest.json'
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6), $utf8)
 

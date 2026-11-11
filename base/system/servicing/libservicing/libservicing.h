@@ -43,6 +43,9 @@ extern "C" {
 #define LN_E_BAD_SIGNATURE      (LN_E_BASE + 14)  /* manifest.sig does not verify with the pinned key */
 #define LN_E_NO_BOOT_APPLIER    (LN_E_BASE + 15)  /* a reboot is required but the boot updater is not installed */
 #define LN_E_INSECURE_TARGET    (LN_E_BASE + 13)  /* servicing tree owner/DACL is not SYSTEM + Administrators only */
+#define LN_E_PACKAGE_INVALID    (LN_E_BASE + 16)  /* standalone package .exe: trailer, table or an entry is damaged */
+#define LN_E_NOT_APPLICABLE     (LN_E_BASE + 17)  /* a package it requires is not installed */
+#define LN_E_SUPERSEDED         (LN_E_BASE + 18)  /* an installed package supersedes it */
 #define LN_SHA256_HEX_LEN   64
 #define LN_MAX_ITEMS        4096
 
@@ -152,6 +155,10 @@ typedef struct _LN_ITEM
     BOOL isDelete;
 } LN_ITEM;
 
+/* "applicability" (optional): requires ["id>=ver" | "id"], supersedes ["id" | "id<=ver"] */
+typedef struct _LN_REQUIRES { char packageId[65]; char minVersion[65]; } LN_REQUIRES;
+typedef struct _LN_SUPERSEDES { char packageId[65]; char maxVersion[65]; } LN_SUPERSEDES;
+
 typedef struct _LN_MANIFEST
 {
     char packageId[65];
@@ -160,6 +167,10 @@ typedef struct _LN_MANIFEST
     char architecture[16];
     char baseVersion[32];         /* optional, copied into plan.target.base (default "0") */
     char certificateSha256[65];
+    LN_REQUIRES *requires;        /* applicability.requires */
+    size_t requiresCount;
+    LN_SUPERSEDES *supersedes;    /* applicability.supersedes */
+    size_t supersedesCount;
     LN_ITEM *items;
     size_t itemCount;
     char manifestSha256[65];      /* of manifest.json bytes */
@@ -236,6 +247,15 @@ DWORD LnStoreList(const LN_TARGET *t, char (**ids)[130], size_t *count);   /* "i
  * past the data): the walk advances with wcslen over each entry. */
 BOOL LnBootExecuteListed(const WCHAR *multiSz, size_t bytes);
 DWORD LnServicingAddPackage(const LN_TARGET *t, const WCHAR *pkgDir, char txId[65]);
+/* ---- package.c: standalone package .exe (LNPK, lnpk.h) and applicability ------------------------------ */
+/* The container is checked (trailer, table, entry hashes), extracted into inbox\ under the servicing tree and
+ * handed to LnServicingAddPackage; the inbox copy is removed whatever happens. The stub is never trusted. */
+DWORD LnServicingAddPackageExe(const LN_TARGET *t, const WCHAR *exePath, char txId[65]);
+DWORD LnPackageExeInspect(const WCHAR *exePath, char **manifestJson, size_t *len);   /* free(); table-hash checked */
+/* requires: each named package installed (applied, confirmed or waiting for its boot) at or above the version;
+ * supersedes: no installed package may list this one. why[] gets the reason on failure. */
+DWORD LnPackageCheckApplicability(const LN_TARGET *t, const LN_MANIFEST *m, char why[200]);
+int LnVersionCompare(const char *a, const char *b);                        /* dotted numeric, then text */
 /* Applies a package that is already in the store. Idempotent: the same request resumes or returns. */
 DWORD LnServicingApplyPackage(const LN_TARGET *t, const char *packageId, const char *version,
                               BOOL *rebootRequired, char txId[65]);

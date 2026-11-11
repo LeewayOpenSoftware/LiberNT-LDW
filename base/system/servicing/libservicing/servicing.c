@@ -302,6 +302,18 @@ DWORD LnServicingAddPackage(const LN_TARGET *t, const WCHAR *pkgDir, char txId[6
         Journal(&c, "failed", "error", ErrText(err, buf));              /* rejected before staging */
         goto cleanup;
     }
+    {
+        char why[200];
+
+        err = LnPackageCheckApplicability(t, &c.m, why);        /* requires / supersedes against the store */
+        if (err)
+        {
+            if (why[0])
+                LogLine(t, c.txid, why);
+            Journal(&c, "failed", "error", ErrText(err, buf));
+            goto cleanup;
+        }
+    }
 
     err = LnJournalRead(t, &j);
     if (err)
