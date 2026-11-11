@@ -9,7 +9,7 @@ add_executable(lxterm
     gz.c
     ${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/lzma/LzmaDec.c
     lxterm.rc)
-target_compile_definitions(lxterm PRIVATE _7ZIP_ST)
+target_compile_definitions(lxterm PRIVATE Z7_ST)
 set_module_type(lxterm win32cui UNICODE)
 target_link_libraries(lxterm lxlaunch zlib uuid)
 add_importlibs(lxterm winhttp bcrypt shell32 user32 iphlpapi advapi32 msvcrt kernel32 ntdll)

@@ -314,6 +314,13 @@ License: Zlib (https://spdx.org/licenses/Zlib.html, sdk/lib/3rdparty/faudio/LICE
 URL: https://github.com/FNA-XNA/FAudio
 Modifications: no dllexport on the API (static link), NULL master-voice guards and Win32 platform error handling under __REACTOS__, LOG format fixes, a cast for the resample offset; see the [FAUDIO] update commits
 
+Title: LZMA SDK (decoder in symz for the compressed symbol store, encoder in the symz host tool, decoder in lxterm)
+Path: sdk/lib/3rdparty/lzma
+Used Version: 25.01
+License: Public domain (lzma-sdk.txt)
+URL: https://www.7-zip.org/sdk.html
+Modifications: none (subset: LzmaDec, LzmaEnc, LzFind and their headers; built single-threaded with Z7_ST)
+
 Title: GNU adns
 Path: sdk/lib/3rdparty/adns
 Used Version: 1.0 REV 5

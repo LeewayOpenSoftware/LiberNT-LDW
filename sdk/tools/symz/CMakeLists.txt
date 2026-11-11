@@ -6,5 +6,5 @@ add_host_tool(symz
 target_include_directories(symz PRIVATE
     ${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/lzma
     ${REACTOS_SOURCE_DIR}/sdk/include/reactos)
-target_compile_definitions(symz PRIVATE _7ZIP_ST)
+target_compile_definitions(symz PRIVATE Z7_ST)
 target_link_libraries(symz PRIVATE host_includes)
