@@ -10,7 +10,7 @@
  * boot does not reach the desktop. That is the condition the fallback boot (kernel loads smss.old) and the
  * rollback recover. No corruption, no fault: a signed component that cleanly declines to run.
  */
-#include <ntddk.h>
+#include <ntndk.h>
 
 VOID
 NTAPI
