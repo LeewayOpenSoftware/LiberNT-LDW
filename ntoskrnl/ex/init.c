@@ -1581,6 +1581,11 @@ Phase1InitializationDiscard(IN PVOID Context)
     /* Set to phase 1 */
     ExpInitializationPhase = 1;
 
+    /* [S1 BOOT-CLASS LAB FIXTURE - NOT FOR SHIPPING] Deliberate early bugcheck right after
+     * phase-0 init (phase 1 just entered, long before smss) so the K3 fallback leg proves the
+     * box falls back to ntkrnlmp.old. Dwight, 2026-11-11 (god task f8b5e9). Never ship this. */
+    KeBugCheckEx(0xDEAD0001, 0, 0, 0, 0);
+
     /* Set us at maximum priority */
     KeSetPriorityThread(KeGetCurrentThread(), HIGH_PRIORITY);
 
