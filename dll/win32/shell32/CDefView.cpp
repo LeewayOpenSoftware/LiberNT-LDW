@@ -2203,10 +2203,9 @@ int CDefView::LV_AddItem(PCUITEMID_CHILD pidl)
             lvItem.pszText = text;
         }
     }
-    /* Image lookup can enter the shell namespace. Keep that work out of the
-       first visible paint and inside the bounded enumeration batches. */
-    lvItem.iImage = SHMapPIDLToSystemImageListIndex(m_pSFParent, pidl, 0);
-    SyncViewImageList();
+    /* Icons resolve on demand (LVN_GETDISPINFO); the owned view image list is
+       synced there once the system list has grown. */
+    lvItem.iImage = I_IMAGECALLBACK;
     lvItem.stateMask = LVIS_CUT;
     if (m_HasCutItems)
     {
@@ -3983,6 +3982,7 @@ LRESULT CDefView::OnNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandl
             if (lpdi->item.mask & LVIF_IMAGE)
             {
                 lpdi->item.iImage = SHMapPIDLToSystemImageListIndex(m_pSFParent, pidl, 0);
+                SyncViewImageList();
             }
             if (lpdi->item.mask & LVIF_STATE)
             {

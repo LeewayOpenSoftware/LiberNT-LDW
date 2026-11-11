@@ -123,7 +123,8 @@ private:
     void UpdateAddress();
     void NavigateToAddress(LPCWSTR text);
     void EditAddress();
-    void UpdateStatus();
+    void UpdateStatus(BOOL mouseIdle = FALSE);
+    BOOL DeferSelectionUpdate();
     void UpdateCommands();
     IShellView *CurrentView();
     BOOL CommandEnabled(CabinetCommand command);
@@ -194,6 +195,7 @@ private:
     HWND m_DetailsBar;
     HWND m_ViewBar;
     HWND m_Status;
+    POINT m_SelectionMousePosition;
     HWND m_DetailsIcon;
     HWND m_DetailsName;
     HWND m_DetailsList;
