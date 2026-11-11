@@ -3659,11 +3659,120 @@ QSI_DEF(SystemFirmwareTableInformation)
     return Status;
 }
 
+/*
+ * Fill one RTL_PROCESS_MODULE_INFORMATION_EX entry. BaseInfo is exactly what
+ * class 11 returns for the same entry. The checksum, time stamp and preferred
+ * base come from the image's own PE headers: in a kernel-mode loader entry
+ * TimeDateStamp shares its storage with LoadedImports, and CheckSum is only
+ * filled in by the boot loader, so neither field can be trusted here.
+ */
+static
+NTSTATUS
+ExpConvertLdrModuleToRtlModuleEx(
+    _In_ ULONG ModuleCount,
+    _In_ PLDR_DATA_TABLE_ENTRY LdrEntry,
+    _Out_ PRTL_PROCESS_MODULE_INFORMATION_EX ModuleInfo)
+{
+    PIMAGE_NT_HEADERS NtHeaders;
+    NTSTATUS Status;
+
+    Status = ExpConvertLdrModuleToRtlModule(ModuleCount, LdrEntry, &ModuleInfo->BaseInfo);
+
+    ModuleInfo->ImageCheckSum = 0;
+    ModuleInfo->TimeDateStamp = 0;
+    ModuleInfo->DefaultBase = NULL;
+    NtHeaders = RtlImageNtHeader(LdrEntry->DllBase);
+    if (NtHeaders)
+    {
+        ModuleInfo->ImageCheckSum = NtHeaders->OptionalHeader.CheckSum;
+        ModuleInfo->TimeDateStamp = NtHeaders->FileHeader.TimeDateStamp;
+        ModuleInfo->DefaultBase = (PVOID)(ULONG_PTR)NtHeaders->OptionalHeader.ImageBase;
+    }
+    return Status;
+}
+
+/*
+ * Walk one loader list for class 77. Entries are written back to back and
+ * chained by NextOffset; the last entry written has NextOffset 0. RequiredLength
+ * always grows by one entry per module, so a short buffer still learns the
+ * size it needs.
+ */
+static
+VOID
+ExpQueryModuleInformationExList(
+    _In_ PLIST_ENTRY ListHead,
+    _Inout_ PULONG ModuleCount,
+    _Inout_ PULONG RequiredLength,
+    _In_ ULONG Length,
+    _Inout_ PRTL_PROCESS_MODULE_INFORMATION_EX *ModuleInfo,
+    _Inout_ PRTL_PROCESS_MODULE_INFORMATION_EX *LastWritten,
+    _Inout_ PNTSTATUS Status)
+{
+    PLIST_ENTRY NextEntry;
+
+    for (NextEntry = ListHead->Flink; NextEntry != ListHead; NextEntry = NextEntry->Flink)
+    {
+        PLDR_DATA_TABLE_ENTRY LdrEntry = CONTAINING_RECORD(NextEntry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+
+        *RequiredLength += sizeof(RTL_PROCESS_MODULE_INFORMATION_EX);
+        if (Length >= *RequiredLength)
+        {
+            NTSTATUS One = ExpConvertLdrModuleToRtlModuleEx(*ModuleCount, LdrEntry, *ModuleInfo);
+
+            /* A path cut to fit FullPathName (STATUS_BUFFER_OVERFLOW) is still
+             * a complete entry, as in class 11. */
+            if (!NT_SUCCESS(One) && One != STATUS_BUFFER_OVERFLOW && NT_SUCCESS(*Status))
+                *Status = One;
+            (*ModuleInfo)->NextOffset = sizeof(RTL_PROCESS_MODULE_INFORMATION_EX);
+            *LastWritten = *ModuleInfo;
+            (*ModuleInfo)++;
+        }
+        else
+        {
+            *Status = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        (*ModuleCount)++;
+    }
+}
+
 /* Class 77 - Extended module information */
 QSI_DEF(SystemModuleInformationEx)
 {
-    /* For now return STATUS_INVALID_INFO_CLASS to avoid crashing in wine tests */
-    return STATUS_INVALID_INFO_CLASS;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG ModuleCount = 0;
+    ULONG RequiredLength = 0;
+    PRTL_PROCESS_MODULE_INFORMATION_EX ModuleInfo = (PRTL_PROCESS_MODULE_INFORMATION_EX)Buffer;
+    PRTL_PROCESS_MODULE_INFORMATION_EX LastWritten = NULL;
+
+    /* Same lists, same order and same lock as class 11. The caller's buffer is
+     * written under the lock, so release it even if a write faults. */
+    KeEnterCriticalRegion();
+    ExAcquireResourceExclusiveLite(&PsLoadedModuleResource, TRUE);
+    _SEH2_TRY
+    {
+        ExpQueryModuleInformationExList(&PsLoadedModuleList, &ModuleCount, &RequiredLength, Size,
+                                        &ModuleInfo, &LastWritten, &Status);
+        ExpQueryModuleInformationExList(&MmLoadedUserImageList, &ModuleCount, &RequiredLength, Size,
+                                        &ModuleInfo, &LastWritten, &Status);
+        if (LastWritten)
+            LastWritten->NextOffset = 0;
+    }
+    _SEH2_FINALLY
+    {
+        ExReleaseResourceLite(&PsLoadedModuleResource);
+        KeLeaveCriticalRegion();
+    }
+    _SEH2_END;
+
+    /* No module at all still needs room for one entry */
+    if (RequiredLength == 0)
+    {
+        RequiredLength = sizeof(RTL_PROCESS_MODULE_INFORMATION_EX);
+        if (Size < RequiredLength)
+            Status = STATUS_INFO_LENGTH_MISMATCH;
+    }
+    *ReqSize = RequiredLength;
+    return Status;
 }
 
 /* Class 105 - Processor Brand String */
