@@ -28,8 +28,8 @@
 #define FAUDIO_H
 
 #ifdef _WIN32
-#define FAUDIOAPI __declspec(dllexport)
-#define FAUDIOCALL __cdecl
+#define FAUDIOAPI
+#define FAUDIOCALL
 #else
 #define FAUDIOAPI
 #define FAUDIOCALL

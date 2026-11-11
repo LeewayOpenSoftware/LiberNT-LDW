@@ -42,14 +42,6 @@
 
 #define _SPEAKER_POSITIONS_ /* Defined by SDK. */
 #include "FAudio_internal.h"
-
-#ifdef _MSC_VER
-DEFINE_GUID(IID_IAudioClient,         0x1CB9AD4C, 0xDBFA, 0x4c32, 0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2);
-DEFINE_GUID(IID_IAudioRenderClient,   0xF294ACFC, 0x3146, 0x4483, 0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2);
-DEFINE_GUID(IID_IMMDeviceEnumerator,  0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
-DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
-#endif
-
 DEFINE_MEDIATYPE_GUID(MFAudioFormat_XMAudio2, FAUDIO_FORMAT_XMAUDIO2);
 
 static CRITICAL_SECTION faudio_cs = { NULL, -1, 0, 0, 0, 0 };
@@ -218,7 +210,7 @@ static HRESULT FAudio_DefaultDeviceIndex(
 	HRESULT hr;
 	uint32_t i, count;
 	WCHAR *default_guid;
-	WCHAR *device_guid; 
+	WCHAR *device_guid;
 
 	/* Open the default device and get its GUID. */
 	hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(
@@ -327,7 +319,7 @@ static HRESULT FAudio_OpenDevice(uint32_t deviceIndex, IMMDevice **device)
 	} else {
 		/* Otherwise, just open the device. */
 		actualIndex = deviceIndex;
-	
+
 	}
 	hr = IMMDeviceCollection_Item(deviceCollection, actualIndex, device);
 	if (FAILED(hr))
@@ -372,9 +364,20 @@ void FAudio_PlatformInit(
 
 	args = FAudio_malloc(sizeof(*args));
 	FAudio_assert(!!args && "Failed to allocate FAudio thread args!");
+	if (!args)
+	{
+		FAudio_PlatformRelease();
+		return;
+	}
 
 	data = FAudio_malloc(sizeof(*data));
 	FAudio_assert(!!data && "Failed to allocate FAudio platform data!");
+	if (!data)
+	{
+		FAudio_free(args);
+		FAudio_PlatformRelease();
+		return;
+	}
 	FAudio_zero(data, sizeof(*data));
 
 	args->format.Format.wFormatTag = mixFormat->Format.wFormatTag;
@@ -403,6 +406,15 @@ void FAudio_PlatformInit(
 	FAudio_assert(!!data->stopEvent && "Failed to create FAudio thread stop event!");
 
 	hr = FAudio_OpenDevice(deviceIndex, &device);
+	if (FAILED(hr))
+	{
+		CloseHandle(data->stopEvent);
+		CloseHandle(audioEvent);
+		FAudio_free(data);
+		FAudio_free(args);
+		FAudio_PlatformRelease();
+		return;
+	}
 	FAudio_assert(!FAILED(hr) && "Failed to get audio device!");
 
 	hr = IMMDevice_Activate(
@@ -593,6 +605,11 @@ uint32_t FAudio_PlatformGetDeviceDetails(
 	if (FAILED(hr = IMMDevice_OpenPropertyStore(device, STGM_READ, &properties)))
 	{
 		IMMDevice_Release(device);
+	if (FAILED(hr))
+	{
+		FAudio_PlatformRelease();
+		return hr;
+	}
 		return hr;
 	}
 	if (FAILED(hr = IPropertyStore_GetValue(properties, (PROPERTYKEY *)&DEVPKEY_Device_FriendlyName, &deviceName)))
@@ -914,7 +931,7 @@ FAudioIOStream* FAudio_memopen(void *mem, int len)
 uint8_t* FAudio_memptr(FAudioIOStream *io, size_t offset)
 {
 	struct FAudio_mem *memio = io->data;
-	return memio->mem + offset;
+	return (uint8_t *)memio->mem + offset;
 }
 
 void FAudio_close(FAudioIOStream *io)
@@ -986,8 +1003,17 @@ static void XNA_SongSubmitBuffer(FAudioVoiceCallback *callback, void *pBufferCon
 
 		if (songBufferSize < buffer_size)
 		{
+			uint8_t *newBuffer = FAudio_realloc(songBuffer, buffer_size);
+			if (newBuffer == NULL)
+			{
+				IMFMediaBuffer_Unlock(media_buffer);
+				IMFMediaBuffer_Release(media_buffer);
+				IMFSample_Release(sample);
+				LOG_FUNC_EXIT(songAudio);
+				return;
+			}
 			songBufferSize = buffer_size;
-			songBuffer = FAudio_realloc(songBuffer, songBufferSize);
+			songBuffer = newBuffer;
 			FAudio_assert(songBuffer != NULL && "Failed to allocate song buffer!");
 		}
 		FAudio_memcpy(songBuffer, buffer_ptr, buffer_size);
@@ -1071,7 +1097,7 @@ FAUDIOAPI float XNA_PlaySong(const char *name)
 	IMFAttributes *attributes = NULL;
 	IMFMediaType *media_type = NULL;
 	UINT32 channels, samplerate;
-	UINT64 duration;
+	INT64 duration;
 	PROPVARIANT var;
 	HRESULT hr;
 	WCHAR filename_w[MAX_PATH];

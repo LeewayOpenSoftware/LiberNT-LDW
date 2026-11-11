@@ -56,7 +56,7 @@ static HRESULT FAudio_WMAMF_ProcessInput(
 
 	copy_size = (DWORD)min(buffer->AudioBytes - impl->input_pos, impl->input_size);
 	if (!copy_size) return S_FALSE;
-	LOG_INFO(voice->audio, "pushing %x bytes at %x", copy_size, impl->input_pos);
+	LOG_INFO(voice->audio, "pushing %lx bytes at %Ix", copy_size, impl->input_pos);
 
 	hr = MFCreateSample(&sample);
 	FAudio_assert(!FAILED(hr) && "Failed to create sample!");
@@ -84,7 +84,7 @@ static HRESULT FAudio_WMAMF_ProcessInput(
 	if (hr == MF_E_NOTACCEPTING) return S_OK;
 	if (FAILED(hr))
 	{
-		LOG_ERROR(voice->audio, "IMFTransform_ProcessInput returned %#x", hr);
+		LOG_ERROR(voice->audio, "IMFTransform_ProcessInput returned %#lx", hr);
 		return hr;
 	}
 
@@ -111,7 +111,7 @@ static HRESULT FAudio_WMAMF_ProcessOutput(
 		if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return S_FALSE;
 		if (FAILED(hr))
 		{
-			LOG_ERROR(voice->audio, "IMFTransform_ProcessInput returned %#x", hr);
+			LOG_ERROR(voice->audio, "IMFTransform_ProcessInput returned %#lx", hr);
 			return hr;
 		}
 
@@ -143,7 +143,7 @@ static HRESULT FAudio_WMAMF_ProcessOutput(
 		}
 		FAudio_memcpy(impl->output_buf + impl->output_pos, copy_buf, copy_size);
 		impl->output_pos += copy_size;
-		LOG_INFO(voice->audio, "pulled %x bytes at %x", copy_size, impl->output_pos);
+		LOG_INFO(voice->audio, "pulled %lx bytes at %Ix", copy_size, impl->output_pos);
 		hr = IMFMediaBuffer_Unlock(media_buffer);
 		FAudio_assert(!FAILED(hr) && "Failed to unlock buffer bytes!");
 
@@ -232,7 +232,7 @@ void decode_wma(FAudioVoice *voice, struct queued_buffer *buffer, float *dst, ui
 	FAudio_zero((char *)dst + copy_size, samples_size - copy_size);
 	LOG_INFO(
 		voice->audio,
-		"decoded %x / %x bytes, copied %x / %x bytes",
+		"decoded %Ix / %Ix bytes, copied %Ix / %Ix bytes",
 		impl->output_pos,
 		impl->output_size,
 		copy_size,

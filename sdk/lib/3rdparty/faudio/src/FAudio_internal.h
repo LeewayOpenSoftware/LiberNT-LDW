@@ -231,6 +231,8 @@ extern void FAudio_Log(char const *msg);
 			#else /* VS2010- */
 				#define restrict
 			#endif
+		#else
+			#define restrict
 		#endif
 	#endif
 #endif
