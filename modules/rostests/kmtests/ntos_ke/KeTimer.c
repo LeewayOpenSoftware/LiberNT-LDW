@@ -177,6 +177,51 @@ TestTimerBucketCancellation(VOID)
     }
 }
 
+static VOID
+TestAbsoluteTimerSystemTimeJump(VOID)
+{
+    KTIMER Near, Far, Periodic;
+    LARGE_INTEGER Now, Due, Jump, Old, After, Restore;
+    NTSTATUS Status;
+
+    KeInitializeTimer(&Near);
+    KeInitializeTimer(&Far);
+    KeInitializeTimer(&Periodic);
+
+    /* Two absolute timers half a minute out, one two hours out */
+    KeQuerySystemTime(&Now);
+    Due.QuadPart = Now.QuadPart + 30 * 10000000LL;
+    ok_bool_false(KeSetTimer(&Near, Due, NULL), "Near timer already inserted");
+    ok_bool_false(KeSetTimerEx(&Periodic, Due, 1000, NULL), "Periodic timer already inserted");
+    Due.QuadPart = Now.QuadPart + 2 * 3600 * 10000000LL;
+    ok_bool_false(KeSetTimer(&Far, Due, NULL), "Far timer already inserted");
+
+    /* Move the clock a minute ahead: the near ones fall due, the far one moves */
+    Jump.QuadPart = Now.QuadPart + 60 * 10000000LL;
+    Status = ZwSetSystemTime(&Jump, &Old);
+    ok_eq_hex(Status, STATUS_SUCCESS);
+    if (!NT_SUCCESS(Status))
+    {
+        KeCancelTimer(&Near);
+        KeCancelTimer(&Periodic);
+        KeCancelTimer(&Far);
+        return;
+    }
+
+    ok_bool_true(KeReadStateTimer(&Near), "Near timer not signaled after the clock passed it");
+    ok_bool_false(KeCancelTimer(&Near), "Near timer still inserted after it fired");
+    ok_bool_true(KeReadStateTimer(&Periodic), "Periodic timer not signaled after the clock passed it");
+    ok_bool_true(KeCancelTimer(&Periodic), "Periodic timer not re-armed after it fired");
+    ok_bool_false(KeReadStateTimer(&Far), "Far timer signaled by a one minute jump");
+    ok_bool_true(KeCancelTimer(&Far), "Far timer lost from the table");
+
+    /* Put the clock back, keeping the time that passed meanwhile */
+    KeQuerySystemTime(&After);
+    Restore.QuadPart = Old.QuadPart + (After.QuadPart - Jump.QuadPart);
+    Status = ZwSetSystemTime(&Restore, NULL);
+    ok_eq_hex(Status, STATUS_SUCCESS);
+}
+
 START_TEST(KeTimer)
 {
     KTIMER Timer;
@@ -199,4 +244,5 @@ START_TEST(KeTimer)
     KmtSetIrql(PASSIVE_LEVEL);
     TestInterruptedTimerWait();
     TestTimerBucketCancellation();
+    TestAbsoluteTimerSystemTimeJump();
 }

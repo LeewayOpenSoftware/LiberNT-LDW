@@ -1283,13 +1283,21 @@ FORCEINLINE
 BOOLEAN
 KxRemoveTreeTimer(IN PKTIMER Timer)
 {
-    ULONG Hand = KiComputeTimerTableIndex(Timer->DueTime.QuadPart);
+    ULONG Hand;
     PKSPIN_LOCK_QUEUE LockQueue;
     PKTIMER_TABLE_ENTRY TimerEntry;
     BOOLEAN Removed = FALSE;
 
-    /* Acquire timer lock */
-    LockQueue = KiAcquireTimerLock(Hand);
+    /* The bucket follows the due time; re-check it under its lock because
+     * KeSetSystemTime moves absolute timers with the table frozen, not the
+     * object locked */
+    for (;;)
+    {
+        Hand = KiComputeTimerTableIndex(Timer->DueTime.QuadPart);
+        LockQueue = KiAcquireTimerLock(Hand);
+        if (Hand == KiComputeTimerTableIndex(Timer->DueTime.QuadPart)) break;
+        KiReleaseTimerLock(LockQueue);
+    }
 
     /* Only de-table if still inserted; the bucket lock makes this atomic */
     if (Timer->Header.Inserted)

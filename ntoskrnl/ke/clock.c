@@ -351,9 +351,9 @@ KeSetSystemTime(IN PLARGE_INTEGER NewTime,
     LARGE_INTEGER DeltaTime;
     PLIST_ENTRY ListHead, NextEntry;
     PKTIMER Timer;
-    PKSPIN_LOCK_QUEUE LockQueue;
-    LIST_ENTRY TempList, TempList2;
-    ULONG Hand, i;
+    PKSPIN_LOCK_QUEUE LockQueue[LOCK_QUEUE_TIMER_TABLE_LOCKS];
+    LIST_ENTRY TempList;
+    ULONG Hand, i, Lock;
 
     /* Sanity checks */
     ASSERT((NewTime->HighPart & 0xF0000000) == 0);
@@ -389,72 +389,66 @@ KeSetSystemTime(IN PLARGE_INTEGER NewTime,
     /* Check if we need to adjust interrupt time */
     if (FixInterruptTime) ASSERT(FALSE);
 
-    /* Setup a temporary list of absolute timers */
-    InitializeListHead(&TempList);
+    /*
+     * Freeze the timer table: every bucket lock, lowest first. Setters,
+     * cancels and the expiration DPC all wait on a bucket lock before they
+     * touch a tabled timer, so nothing below is set, cancelled, expired or
+     * freed under us, and no timer object lock is needed (those must not be
+     * held in bulk: multi-object waits take several in address order).
+     */
+    for (Lock = 0; Lock < LOCK_QUEUE_TIMER_TABLE_LOCKS; Lock++)
+    {
+        LockQueue[Lock] = KiAcquireTimerLock(Lock << LOCK_QUEUE_TIMER_LOCK_SHIFT);
+    }
 
-    /* Loop current timers */
+    /* Collect the absolute timers */
+    InitializeListHead(&TempList);
     for (i = 0; i < TIMER_TABLE_SIZE; i++)
     {
-        /* Loop the entries in this table and lock the timers */
         ListHead = &KiTimerTableListHead[i].Entry;
-        LockQueue = KiAcquireTimerLock(i);
         NextEntry = ListHead->Flink;
         while (NextEntry != ListHead)
         {
-            /* Get the timer */
             Timer = CONTAINING_RECORD(NextEntry, KTIMER, TimerListEntry);
             NextEntry = NextEntry->Flink;
-
-            /* Is it absolute? */
             if (Timer->Header.Absolute)
             {
-                /* Remove it from the timer list */
                 KiRemoveEntryTimer(Timer);
-
-                /* Insert it into our temporary list */
                 InsertTailList(&TempList, &Timer->TimerListEntry);
             }
         }
-
-        /* Release the lock */
-        KiReleaseTimerLock(LockQueue);
     }
 
-    /* Setup a temporary list of expired timers */
-    InitializeListHead(&TempList2);
-
-    /* Loop absolute timers */
+    /* Shift each one by the delta and table it again; one that is now due
+     * stays tabled and the expiration pass below fires it */
     while (TempList.Flink != &TempList)
     {
-        /* Get the timer */
         Timer = CONTAINING_RECORD(TempList.Flink, KTIMER, TimerListEntry);
         RemoveEntryList(&Timer->TimerListEntry);
-
-        /* Update the due time and handle */
         if (DeltaTime.QuadPart > 0 && (ULONGLONG)DeltaTime.QuadPart >= Timer->DueTime.QuadPart)
             Timer->DueTime.QuadPart = 0;
         else
             Timer->DueTime.QuadPart -= DeltaTime.QuadPart;
         Hand = KiComputeTimerTableIndex(Timer->DueTime.QuadPart);
         Timer->Header.Hand = (UCHAR)Hand;
-
-        /* Lock the timer and re-insert it */
-        LockQueue = KiAcquireTimerLock(Hand);
-        if (KiInsertTimerTable(Timer, Hand))
-        {
-            /* Remove it from the timer list */
-            KiRemoveEntryTimer(Timer);
-
-            /* Insert it into our temporary list */
-            InsertTailList(&TempList2, &Timer->TimerListEntry);
-        }
-
-        /* Release the lock */
-        KiReleaseTimerLock(LockQueue);
+        KiInsertTimerTable(Timer, Hand);
     }
 
-    /* Process expired timers. This releases the dispatcher lock. */
-    KiTimerListExpire(&TempList2, OldIrql);
+    /* Thaw the table, highest lock first */
+    for (Lock = LOCK_QUEUE_TIMER_TABLE_LOCKS; Lock > 0; Lock--)
+    {
+        KiReleaseTimerLock(LockQueue[Lock - 1]);
+    }
+
+    /* Expire what the shift made due through the DPC routine, which takes
+     * the object lock per timer. A start more than a table away from the
+     * tick makes it walk every bucket. */
+    KiExitDispatcher(DISPATCH_LEVEL);
+    KiTimerExpiration(NULL,
+                      NULL,
+                      UlongToPtr(KeTickCount.LowPart + TIMER_TABLE_SIZE / 2),
+                      NULL);
+    KeLowerIrql(OldIrql);
 
     /* Revert affinity */
     KeRevertToUserAffinityThread();
