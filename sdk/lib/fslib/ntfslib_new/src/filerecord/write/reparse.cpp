@@ -516,7 +516,11 @@ FileRecord::UpdateReparsePoint(
     }
 
     if (OldRuns)
-        Status = DiskVolume->ReleaseClusters(OldRuns);
+    {
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(OldRuns);
+    }
     if (NT_SUCCESS(Status) && (Delete || !HadReparsePoint))
     {
         Status = NtfsUpdateReparseIndex(

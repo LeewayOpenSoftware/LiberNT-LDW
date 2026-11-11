@@ -1186,9 +1186,21 @@ MasterFileTable::ReleaseFileRecordSet(
     }
     if (NT_SUCCESS(Status) && ReleaseRuns)
     {
-        NTSTATUS ReleaseStatus =
-            DiskVolume->ReleaseClusters(
-                ReleaseRuns);
+        /*
+         * The deallocated records must be durable before their clusters can
+         * be handed to another file: one record block, or a flush when
+         * extension records were deallocated too.
+         */
+        NTSTATUS ReleaseStatus = ExtentCount != 0
+            ? DiskVolume->FlushVolume()
+            : DiskVolume->CommitRecord(File);
+
+        if (NT_SUCCESS(ReleaseStatus))
+        {
+            ReleaseStatus =
+                DiskVolume->ReleaseClusters(
+                    ReleaseRuns);
+        }
         if (!NT_SUCCESS(ReleaseStatus))
         {
             DPRINT1(

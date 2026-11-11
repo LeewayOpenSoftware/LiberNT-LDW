@@ -1201,9 +1201,12 @@ FileRecord::ReplaceListedExtendedAttributes(
 
         if (OldOwnerCommitted)
         {
-            if (OldEaRuns)
+            if (OldEaRuns &&
+                NT_SUCCESS(CommitBeforeRelease()))
+            {
                 (void)DiskVolume->
                     ReleaseClusters(OldEaRuns);
+            }
             if (OldOwner != this &&
                 EaExtensionRecordIsEmpty(
                     OldOwner))
@@ -1618,7 +1621,11 @@ FileRecord::UpdateExtendedAttributes(
     }
 
     if (OldEaRuns)
-        Status = DiskVolume->ReleaseClusters(OldEaRuns);
+    {
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(OldEaRuns);
+    }
     goto Done;
 
 Restore:

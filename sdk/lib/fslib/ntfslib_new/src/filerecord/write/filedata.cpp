@@ -1012,6 +1012,29 @@ OrderRecordAfterRunBytes(_In_ PVolume DiskVolume,
     return STATUS_SUCCESS;
 }
 
+/*
+ * Clusters a record has just dropped are reusable as soon as they are
+ * released: the next allocation can hand them to another file, whose record
+ * and content can reach the disk before this record's rewrite does, since
+ * the kernel environment's cache commits dirty blocks in no dependency
+ * order. A cut then leaves two records naming the same clusters, and this
+ * file exposing the other file's bytes. So the record that no longer names
+ * the runs is made durable before they are released. Without an attribute
+ * list every attribute lives in this record, which is the only record the
+ * caller rewrote: commit its block. With a list, or from an extension
+ * record, the rewrite may span the list and several records: flush.
+ */
+NTSTATUS
+FileRecord::CommitBeforeRelease()
+{
+    if ((Header && Header->BaseFileRecord != 0) ||
+        FindAttributeInRecord(TypeAttributeList, NULL, NULL))
+    {
+        return DiskVolume->FlushVolume();
+    }
+    return DiskVolume->CommitRecord(this);
+}
+
 static NTSTATUS
 ZeroRunBytes(_In_ PVolume DiskVolume,
              _In_ PDataRun Runs,
@@ -1377,7 +1400,7 @@ Publish:
     if (!NT_SUCCESS(Status))
         goto Restore;
     Committed = TRUE;
-    if (OldRuns)
+    if (OldRuns && NT_SUCCESS(CommitBeforeRelease()))
         (void)DiskVolume->ReleaseClusters(OldRuns);
     ClearDataRunCache();
     ClearExtentCache();
@@ -1931,7 +1954,9 @@ FileRecord::DeleteNamedDataStream(_In_ PWSTR StreamName)
     }
     else if (OldRuns)
     {
-        Status = DiskVolume->ReleaseClusters(OldRuns);
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(OldRuns);
     }
     FreeDataRun(OldRuns);
     NtfsReleaseRecordScratch(DiskVolume, RecordBackup, RecordBufferSize);
@@ -2369,7 +2394,14 @@ FileRecord::MaterializeWofCompressedData(
     InvalidateWofCompression();
 
     ReleaseStatus = STATUS_SUCCESS;
-    if (OldLogicalRuns &&
+    if ((OldLogicalRuns && !ReuseLogicalRuns) ||
+        OldBackingRuns ||
+        OldReparseRuns)
+    {
+        ReleaseStatus = CommitBeforeRelease();
+    }
+    if (NT_SUCCESS(ReleaseStatus) &&
+        OldLogicalRuns &&
         !ReuseLogicalRuns)
     {
         Status = DiskVolume->ReleaseClusters(
@@ -2377,7 +2409,7 @@ FileRecord::MaterializeWofCompressedData(
         if (!NT_SUCCESS(Status))
             ReleaseStatus = Status;
     }
-    if (OldBackingRuns)
+    if (NT_SUCCESS(ReleaseStatus) && OldBackingRuns)
     {
         Status = DiskVolume->ReleaseClusters(
             OldBackingRuns);
@@ -2387,7 +2419,7 @@ FileRecord::MaterializeWofCompressedData(
             ReleaseStatus = Status;
         }
     }
-    if (OldReparseRuns)
+    if (NT_SUCCESS(ReleaseStatus) && OldReparseRuns)
     {
         Status = DiskVolume->ReleaseClusters(
             OldReparseRuns);
@@ -4590,8 +4622,12 @@ FileRecord::SetZeroData(
     Committed = TRUE;
     if (ReleasedRuns)
     {
-        Status = DiskVolume->ReleaseClusters(
-            ReleasedRuns);
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+        {
+            Status = DiskVolume->ReleaseClusters(
+                ReleasedRuns);
+        }
     }
     goto Done;
 
@@ -5500,7 +5536,7 @@ FileRecord::ResizeSparseData(
     Committed = TRUE;
     if (ReleasedRuns)
     {
-        Status = DiskVolume->FlushVolume();
+        Status = CommitBeforeRelease();
         if (NT_SUCCESS(Status))
         {
             Status = DiskVolume->ReleaseClusters(
@@ -5798,7 +5834,7 @@ FileRecord::ResizeNonResidentStream(
 
     if (ReleasedRuns)
     {
-        Status = DiskVolume->FlushVolume();
+        Status = CommitBeforeRelease();
         if (NT_SUCCESS(Status))
         {
             Status = DiskVolume->ReleaseClusters(
@@ -7112,7 +7148,7 @@ FileRecord::WriteCompressedUnits(_Inout_ PAttribute* Attribute,
 
     if (OldPhysicalRuns)
     {
-        Status = DiskVolume->FlushVolume();
+        Status = CommitBeforeRelease();
         if (NT_SUCCESS(Status))
             Status = DiskVolume->ReleaseClusters(OldPhysicalRuns);
     }
@@ -7442,7 +7478,11 @@ FileRecord::ShrinkCompressedUnits(_Inout_ PAttribute* Attribute,
     ClearDataRunCache();
     *Attribute = TargetAttribute;
     if (ReleasedRuns)
-        Status = DiskVolume->ReleaseClusters(ReleasedRuns);
+    {
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(ReleasedRuns);
+    }
     goto Done;
 
 Restore:
@@ -8267,7 +8307,11 @@ UpdateRecord:
     AttributeOwner->ClearDataRunCache();
     Committed = TRUE;
     if (OldPhysicalRuns)
-        Status = DiskVolume->ReleaseClusters(OldPhysicalRuns);
+    {
+        Status = CommitBeforeRelease();
+        if (NT_SUCCESS(Status))
+            Status = DiskVolume->ReleaseClusters(OldPhysicalRuns);
+    }
     goto Done;
 
 Restore:

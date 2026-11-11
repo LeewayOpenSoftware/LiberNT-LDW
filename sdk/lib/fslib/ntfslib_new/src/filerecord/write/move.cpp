@@ -442,7 +442,11 @@ Replace:
     if (DiskVolume->MFT && this == DiskVolume->MFT->MFTFile)
         DiskVolume->MFT->MFTDataAttr = GetAttribute(TypeData, NULL);
     Committed = TRUE;
-    Status = DiskVolume->ReleaseClusters(ReleasedRuns);
+    /* The record naming the new location is durable before the old
+     * clusters can be reused (CommitBeforeRelease). */
+    Status = CommitBeforeRelease();
+    if (NT_SUCCESS(Status))
+        Status = DiskVolume->ReleaseClusters(ReleasedRuns);
 
 Done:
     if (Claimed && !Committed)

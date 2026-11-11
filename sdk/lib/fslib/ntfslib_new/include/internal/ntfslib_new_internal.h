@@ -1001,6 +1001,10 @@ public:
     NTSTATUS OrderAfter(_In_ ULONGLONG PointerOffset, _In_ ULONG PointerLength,
                         _In_ ULONGLONG PointeeOffset, _In_ ULONG PointeeLength);
 
+    /* Makes one file record durable: CommitRange of its block, or a full
+     * flush when its disk offset cannot be resolved. */
+    NTSTATUS CommitRecord(_In_ class FileRecord* Record);
+
     NTSTATUS
     Initialize(_In_ PUCHAR BootSectorData,
                _In_opt_ void* Context);
@@ -1381,6 +1385,11 @@ private:
 
     NTSTATUS
     LoadAttributeList();
+
+    /* Before clusters this record just dropped are released: makes the
+     * record(s) that no longer name them durable (see filedata.cpp). */
+    NTSTATUS
+    CommitBeforeRelease();
 
     PAttribute
     FindAttributeInRecord(_In_ AttributeType Type,
