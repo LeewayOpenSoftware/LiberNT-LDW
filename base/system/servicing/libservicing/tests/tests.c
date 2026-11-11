@@ -166,7 +166,7 @@ static void TestPaths(void)
 
     /* user components: DLL and EXE */
     CHECK(LnTargetPathAllowed(L"Windows\\System32\\a.dll") && LnTargetPathAllowed(L"Program Files\\App\\app.exe"));
-    CHECK(!LnTargetPathAllowed(L"Windows\\System32\\readme.txt") && !LnTargetPathAllowed(L"Windows\\System32\\a.dat"));
+    CHECK(LnTargetPathAllowed(L"Windows\\System32\\readme.txt") && LnTargetPathAllowed(L"Windows\\System32\\drivers\\etc\\hosts"));  /* any signed file */
     /* kernel, HAL, boot path, critical processes */
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\ntoskrnl.exe"));
     CHECK(!LnTargetPathAllowed(L"windows\\system32\\NTDLL.DLL"));
@@ -177,17 +177,21 @@ static void TestPaths(void)
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\services.exe") && !LnTargetPathAllowed(L"Windows\\System32\\lsass.exe"));
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\ci.dll"));
     CHECK(!LnTargetPathAllowed(L"LiberNT\\Servicing\\journal\\x.dll"));
-    /* the shell and the settings app live directly under Windows\ (card libernt-update-target-roots) */
+    /* any signed file under the system roots (S1-PACKAGE-EXE-DESIGN.md section 1): the whole Windows tree */
     CHECK(LnTargetPathAllowed(L"Windows\\explorer.exe") && LnTargetPathAllowed(L"windows\\EXPLORER.EXE"));
     CHECK(LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\SystemSettings.exe"));
-    CHECK(LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\x\\helper.dll"));
-    CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\settings.pri"));          /* DLL/EXE only */
-    CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel"));                        /* the directory itself */
-    CHECK(!LnTargetPathAllowed(L"Windows\\explorer.dll") && !LnTargetPathAllowed(L"Windows\\regedit.exe"));
-    CHECK(!LnTargetPathAllowed(L"Windows\\explorer.exe.dll") && !LnTargetPathAllowed(L"Windows\\explorer.exe\\x.dll"));
+    CHECK(LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\settings.pri") && LnTargetPathAllowed(L"Windows\\Fonts\\tahoma.ttf"));
+    CHECK(LnTargetPathAllowed(L"Windows\\regedit.exe") && LnTargetPathAllowed(L"Windows\\inf\\usbstor.inf"));
+    CHECK(LnTargetPathAllowed(L"Program Files (x86)\\App\\x.ocx") && LnTargetPathAllowed(L"Windows\\System32\\en-US\\a.dll.mui"));
     CHECK(!LnTargetPathAllowed(L"Windows\\Explorer.exe ") && !LnTargetPathAllowed(L"Windows\\..\\Windows\\explorer.exe"));
     CHECK(!LnTargetItemAllowed(L"Windows\\explorer.exe", 3));                                /* Start only for a .sys */
     CHECK(!LnTargetPathAllowed(L"Windows\\ImmersiveControlPanel\\smss.exe"));               /* denied names hold */
+    CHECK(!LnTargetPathAllowed(L"Windows\\System32\\config\\SOFTWARE") && !LnTargetPathAllowed(L"Windows\\ServiceProfiles\\LocalService\\NTUSER.DAT"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\System32\\config\\systemprofile\\x.dll"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\Temp\\ntuser.dat.LOG1") && !LnTargetPathAllowed(L"Windows\\x\\UsrClass.dat"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\x\\a.regtrans-ms") && !LnTargetPathAllowed(L"Windows\\x\\a.blf"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\System32\\boot\\x.dll") && !LnTargetPathAllowed(L"Windows\\System32\\LiberNTUpdatePending.exe"));
+    CHECK(!LnTargetPathAllowed(L"Windows\\rosload.exe") && !LnTargetPathAllowed(L"ProgramData\\x.dll") && !LnTargetPathAllowed(L"Windows"));
     CHECK(!LnTargetPathAllowed(L"Users\\x\\a.dll"));
     /* drivers: only System32\drivers and only Start >= 2 */
     CHECK(!LnTargetPathAllowed(L"Windows\\System32\\drivers\\lnfix.sys"));                       /* no declared Start */
@@ -251,7 +255,10 @@ static void TestManifest(void)
         MK("{\"path\":\"a.bin\",\"target\":\"Windows\\\\System32\\\\winlogon.exe\",\"sha256\":\"197c7c60ef8a8470a38d1a9212bdfde9cfe6fd4be910825fe6ac7880ac765d16\"}");
         CHECK_ERR(LN_E_FORBIDDEN_TARGET, LnManifestParse(text, strlen(text), &m));
         MK("{\"path\":\"a.bin\",\"target\":\"Windows\\\\System32\\\\a.txt\",\"sha256\":\"197c7c60ef8a8470a38d1a9212bdfde9cfe6fd4be910825fe6ac7880ac765d16\"}");
-        CHECK_ERR(LN_E_FORBIDDEN_TARGET, LnManifestParse(text, strlen(text), &m));
+        CHECK_ERR(0, LnManifestParse(text, strlen(text), &m));                 /* any signed file under the roots */
+        LnManifestFree(&m);
+        MK("{\"path\":\"a.bin\",\"target\":\"Windows\\\\System32\\\\config\\\\SAM\",\"sha256\":\"197c7c60ef8a8470a38d1a9212bdfde9cfe6fd4be910825fe6ac7880ac765d16\"}");
+        CHECK_ERR(LN_E_FORBIDDEN_TARGET, LnManifestParse(text, strlen(text), &m));   /* a hive never */
         /* a package id becomes a directory name in the store: no device names */
         {
             char bad[1400];

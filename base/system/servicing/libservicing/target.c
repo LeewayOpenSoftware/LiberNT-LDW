@@ -40,32 +40,34 @@ static BOOL StartsWithNoCase(const WCHAR *s, const WCHAR *prefix)
     return _wcsnicmp(s, prefix, wcslen(prefix)) == 0;
 }
 
+/* Any signed file under the system roots (owner order 2026-11-11, S1-PACKAGE-EXE-DESIGN.md section 1): the
+ * signed manifest vouches for the content; this list only decides where a file may land and which route
+ * carries it. */
 BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
 {
     static const WCHAR *roots[] =
     {
-        L"Windows\\System32\\", L"Windows\\SysWOW64\\", L"Program Files\\", L"Program Files (x86)\\",
-        L"Windows\\ImmersiveControlPanel\\"          /* the settings app and its modules, nothing else under Windows\ */
+        L"Windows\\", L"Program Files\\", L"Program Files (x86)\\"
     };
-    /* files directly under Windows\ are admitted one by one, by exact name: the shell is the only one */
-    static const WCHAR *exactFiles[] =
-    {
-        L"Windows\\explorer.exe"
-    };
+    /* hives and their logs, the boot folder, the servicing tree itself */
     static const WCHAR *deniedPrefix[] =
     {
-        L"Windows\\System32\\config\\", L"Windows\\System32\\boot\\", L"LiberNT\\"
+        L"Windows\\System32\\config\\", L"Windows\\System32\\boot\\", L"Windows\\ServiceProfiles\\", L"LiberNT\\"
     };
-    /* kernel, HAL, boot path and the critical processes: never replaced by the engine in stage 1 */
+    /* the boot path and the critical processes go through the boot-class route or not at all; the loader
+     * files, autochk and the boot applier are never replaced by a plan the applier itself executes */
     static const WCHAR *deniedName[] =
     {
         L"ntoskrnl.exe", L"ntkrnlmp.exe", L"ntkrnlpa.exe", L"ntkrpamp.exe", L"ntdll.dll", L"smss.exe",
         L"csrss.exe", L"wininit.exe", L"winlogon.exe", L"services.exe", L"lsass.exe", L"bootvid.dll",
         L"kdcom.dll", L"ci.dll", L"win32k.sys", L"win32kbase.sys", L"win32kfull.sys", L"autochk.exe",
-        L"ntldr", L"bootmgr", L"freeldr.sys", L"freeldr.ini"
+        L"ntldr", L"bootmgr", L"freeldr.sys", L"freeldr.ini", L"rosload.exe", L"LiberNTUpdatePending.exe"
     };
+    /* registry hive files wherever they sit (user and service profiles): by name prefix and by extension */
+    static const WCHAR *deniedNamePrefix[] = { L"ntuser.dat", L"usrclass.dat" };
+    static const WCHAR *deniedExt[] = { L".regtrans-ms", L".blf" };
     const WCHAR *base, *ext;
-    size_t i, bl;
+    size_t i, bl, el;
     BOOL inRoot = FALSE, isDriver;
 
     if (!LnIsSafeRelativePath(rel))
@@ -73,11 +75,6 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
     for (i = 0; i < sizeof(roots) / sizeof(roots[0]); i++)
     {
         if (StartsWithNoCase(rel, roots[i]))
-            inRoot = TRUE;
-    }
-    for (i = 0; i < sizeof(exactFiles) / sizeof(exactFiles[0]); i++)
-    {
-        if (!_wcsicmp(rel, exactFiles[i]))
             inRoot = TRUE;
     }
     if (!inRoot)
@@ -95,6 +92,17 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
             return FALSE;
     }
     bl = wcslen(base);
+    for (i = 0; i < sizeof(deniedNamePrefix) / sizeof(deniedNamePrefix[0]); i++)
+    {
+        if (!_wcsnicmp(base, deniedNamePrefix[i], wcslen(deniedNamePrefix[i])))
+            return FALSE;
+    }
+    for (i = 0; i < sizeof(deniedExt) / sizeof(deniedExt[0]); i++)
+    {
+        el = wcslen(deniedExt[i]);
+        if (bl > el && !_wcsicmp(base + bl - el, deniedExt[i]))
+            return FALSE;
+    }
     if (!_wcsnicmp(base, L"hal", 3) && bl > 4 && !_wcsicmp(base + bl - 4, L".dll"))
         return FALSE;                                   /* hal*.dll */
 
@@ -103,12 +111,10 @@ BOOL LnTargetItemAllowed(const WCHAR *rel, int driverStart)
     if (isDriver)
     {
         /* drivers: only under System32\drivers, and only auto (2) or demand (3) / disabled (4) start;
-         * boot-start (0) and system-start (1) drivers are part of the boot path */
+         * boot-start (0) and system-start (1) drivers are part of the boot path (class "boot" route) */
         return StartsWithNoCase(rel, L"Windows\\System32\\drivers\\") && driverStart >= 2 && driverStart <= 4;
     }
-    if (driverStart != -1)
-        return FALSE;                                   /* driverStart only makes sense for a .sys */
-    return !_wcsicmp(ext, L".dll") || !_wcsicmp(ext, L".exe");
+    return driverStart == -1;                           /* any other file; driverStart only makes sense for a .sys */
 }
 
 BOOL LnTargetPathAllowed(const WCHAR *rel)
