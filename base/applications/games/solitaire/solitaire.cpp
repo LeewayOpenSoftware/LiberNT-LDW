@@ -32,6 +32,7 @@ long lScore;
 UINT_PTR PlayTimer = 0;
 
 CardWindow SolWnd;
+LwgShell *g_shell = NULL;
 
 typedef struct _CardBack
 {
@@ -409,31 +410,18 @@ VOID ShowGameOptionsDlg(HWND hwnd)
 
         if ((dwOldOptions & OPTION_SHOW_STATUS) != (dwOptions & OPTION_SHOW_STATUS))
         {
-            int nWidth, nHeight, nStatusHeight;
+            RECT rc;
+            LeewayUIFrameRects fr;
 
+            LeewayFrameShowStatusBar(LwgShellGetFrame(g_shell), (dwOptions & OPTION_SHOW_STATUS) != 0, FALSE);
             GetClientRect(hwndMain, &rcMain);
-            nHeight = rcMain.bottom - rcMain.top;
-            nWidth = rcMain.right - rcMain.left;
+            LwgShellLayout(g_shell, &rcMain, &fr);
+            MoveWindow(SolWnd, fr.work.left, fr.work.top, fr.work.right - fr.work.left,
+                       fr.work.bottom - fr.work.top, TRUE);
 
-            if (dwOptions & OPTION_SHOW_STATUS)
-            {
-                RECT rc;
-
-                ShowWindow(hwndStatus, SW_SHOW);
-                GetWindowRect(hwndStatus, &rcStatus);
-                nStatusHeight = rcStatus.bottom - rcStatus.top;
-                MoveWindow(SolWnd, 0, 0, nWidth, nHeight-nStatusHeight, TRUE);
-                MoveWindow(hwndStatus, 0, nHeight-nStatusHeight, nWidth, nHeight, TRUE);
-
-                // Force the window to process WM_GETMINMAXINFO again
-                GetWindowRect(hwndMain, &rc);
-                SetWindowPos(hwndMain, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SWP_NOMOVE | SWP_NOZORDER);
-            }
-            else
-            {
-                ShowWindow(hwndStatus, SW_HIDE);
-                MoveWindow(SolWnd, 0, 0, nWidth, nHeight, TRUE);
-            }
+            // Force the window to process WM_GETMINMAXINFO again
+            GetWindowRect(hwndMain, &rc);
+            SetWindowPos(hwndMain, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SWP_NOMOVE | SWP_NOZORDER);
         }
     }
 }
@@ -614,23 +602,37 @@ VOID ShowDeckOptionsDlg(HWND hwnd)
 LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
     static int nWidth, nHeight, nStatusHeight;
+    LRESULT lShellResult;
+
+    // timer, statistics command, DPI and theme changes go through the shell first
+    if (g_shell && LwgShellHandleMessage(g_shell, iMsg, wParam, lParam, &lShellResult))
+        return lShellResult;
 
     switch(iMsg)
     {
         case WM_CREATE:
         {
-            int parts[] = { 150, -1 };
-            RECT rcStatus;
+            RECT rcStatus, rcClient;
+            LwgShellDesc sd;
+            LeewayUIFrameRects fr;
 
             // For now, the Help dialog item is disabled because of lacking of HTML Help support
             EnableMenuItem(GetMenu(hwnd), IDM_HELP_CONTENTS, MF_BYCOMMAND | MF_GRAYED);
 
-            hwndStatus = CreateStatusWindow(WS_CHILD | WS_VISIBLE | CCS_BOTTOM | SBARS_SIZEGRIP, _T("Ready"), hwnd, 0);
-
-            //SendMessage(hwndStatus, SB_SIMPLE, (WPARAM)TRUE, 0);
-
-            SendMessage(hwndStatus, SB_SETPARTS, 2, (LPARAM)parts);
-            SendMessage(hwndStatus, SB_SETTEXT, 0 | SBT_NOBORDERS, (LPARAM)"");
+            // G0 game shell: themed frame (status bar), game clock, statistics
+            ZeroMemory(&sd, sizeof(sd));
+            sd.struct_size = sizeof(sd);
+            sd.owner = hwnd;
+            sd.instance = hInstance;
+            sd.game_id = L"Solitaire";
+            sd.title = szAppName;
+            sd.save_tag = LWG_TAG('S', 'O', 'L', '1');
+            sd.save_version = 1;
+            if (FAILED(LwgShellCreate(&sd, &g_shell)))
+                return -1;
+            LwgShellSetVariant(g_shell, (dwOptions & OPTION_THREE_CARDS) ? L"Draw3" : L"Draw1");
+            hwndStatus = LeewayFrameGetStatusWindow(LwgShellGetFrame(g_shell));
+            LeewayFrameShowStatusBar(LwgShellGetFrame(g_shell), TRUE, FALSE);
 
             SolWnd.Create(hwnd, 0, WS_CHILD | WS_VISIBLE, 0, 0, 100, 100);
 
@@ -638,13 +640,15 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 
             // The status bar height is fixed and needed later in WM_SIZE and WM_GETMINMAXINFO
             // Force the window to process WM_GETMINMAXINFO again
+            GetClientRect(hwnd, &rcClient);
+            LwgShellLayout(g_shell, &rcClient, &fr);
             GetWindowRect(hwndStatus, &rcStatus);
             nStatusHeight = rcStatus.bottom - rcStatus.top;
 
             // Hide status bar if options say so
             if (!(dwOptions & OPTION_SHOW_STATUS))
             {
-                ShowWindow(hwndStatus, SW_HIDE);
+                LeewayFrameShowStatusBar(LwgShellGetFrame(g_shell), FALSE, FALSE);
             }
 
             SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER);
@@ -657,6 +661,8 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
         }
 
         case WM_DESTROY:
+            LwgShellDestroy(g_shell);
+            g_shell = NULL;
             PostQuitMessage(0);
             return 0;
 
@@ -683,14 +689,13 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
             nWidth  = LOWORD(lParam);
             nHeight = HIWORD(lParam);
 
-            if (dwOptions & OPTION_SHOW_STATUS)
             {
-                MoveWindow(SolWnd, 0, 0, nWidth, nHeight - nStatusHeight, TRUE);
-                MoveWindow(hwndStatus, 0, nHeight - nStatusHeight, nWidth, nStatusHeight, TRUE);
-            }
-            else
-            {
-                MoveWindow(SolWnd, 0, 0, nWidth, nHeight, TRUE);
+                RECT rcClient = { 0, 0, nWidth, nHeight };
+                LeewayUIFrameRects fr;
+
+                LwgShellLayout(g_shell, &rcClient, &fr);
+                MoveWindow(SolWnd, fr.work.left, fr.work.top, fr.work.right - fr.work.left,
+                           fr.work.bottom - fr.work.top, TRUE);
             }
             //parts[0] = nWidth - 256;
             //SendMessage(hwndStatus, SB_SETPARTS, 2, (LPARAM)parts);
@@ -763,6 +768,7 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
                 ret = MessageBox(hwnd, MsgQuit, szAppName, MB_YESNO|MB_ICONQUESTION);
                 if (ret == IDYES)
                 {
+                    LwgShellGameAbandon(g_shell);   // a game closed half way counts as lost
                     WinHelp(hwnd, szHelpPath, HELP_QUIT, 0);
                     DestroyWindow(hwnd);
                 }

@@ -15,10 +15,20 @@ int LastId;
 bool fGameStarted = false;
 bool bAutoroute = false;
 
+void GameStarted(void)
+{
+    fGameStarted = true;
+    LwgShellGameStart(g_shell);
+}
+
 void NewGame(void)
 {
     TRACE("ENTER NewGame()\n");
     int i, j;
+
+    /* a game that was started and is dealt over counts as lost in the statistics */
+    LwgShellGameAbandon(g_shell);
+    LwgShellSetVariant(g_shell, (dwOptions & OPTION_THREE_CARDS) ? L"Draw3" : L"Draw1");
 
     if (GetScoreMode() == SCORE_VEGAS)
     {
@@ -161,7 +171,7 @@ bool CARDLIBPROC RowStackDropProc(CardRegion &stackobj, CardStack &dragcards)
         }
     }
 
-    fGameStarted = true;
+    GameStarted();
 
     SetUndo(LastId, stackobj.Id(), dragcards.NumCards(), lScore, VisiblePileCards);
 
@@ -277,7 +287,7 @@ void CARDLIBPROC SuitStackClickProc(CardRegion &stackobj, int iNumClicked)
 {
     TRACE("ENTER SuitStackClickProc()\n");
 
-    fGameStarted = true;
+    GameStarted();
 
     LastId = stackobj.Id();
 
@@ -312,7 +322,7 @@ void CARDLIBPROC RowStackClickProc(CardRegion &stackobj, int iNumClicked)
 
     LastId = stackobj.Id();
 
-    fGameStarted = true;
+    GameStarted();
 
     TRACE("EXIT RowStackClickProc()\n");
 }
@@ -372,6 +382,7 @@ void CARDLIBPROC SuitStackAddProc(CardRegion &stackobj, const CardStack &added)
 
         UpdateStatusBar();
         ClearUndo();
+        LwgShellGameEnd(g_shell, TRUE, GetScoreMode() != SCORE_NONE, lScore);
 
         MessageBox(SolWnd, MsgWin, szAppName, MB_OK | MB_ICONINFORMATION);
 
@@ -419,7 +430,7 @@ void CARDLIBPROC RowStackDblClickProc(CardRegion &stackobj, int iNumClicked)
 
     if(pDest != 0)
     {
-        fGameStarted = true;
+        GameStarted();
         SetPlayTimer();
 
         //stackobj.MoveCards(pDest, 1, true);
@@ -439,7 +450,7 @@ void CARDLIBPROC PileClickProc(CardRegion &stackobj, int iNumClicked)
 {
     TRACE("ENTER SuitStackClickProc()\n");
 
-    fGameStarted = true;
+    GameStarted();
 
     LastId = stackobj.Id();
 
@@ -510,7 +521,7 @@ void CARDLIBPROC DeckClickProc(CardRegion &stackobj, int iNumClicked)
     CardStack cardstack = stackobj.GetCardStack();
     CardStack pile      = pPile->GetCardStack();
 
-    fGameStarted = true;
+    GameStarted();
     SetPlayTimer();
 
     //reset the face-up pile to represent 3 cards

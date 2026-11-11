@@ -2,10 +2,13 @@
 #define _SOL_PCH_
 
 #include <cardlib.h>
+#include <leewayui/game.h>
 
 extern CardWindow SolWnd;
 extern TCHAR szAppName[];
 extern bool fGameStarted;
+extern LwgShell *g_shell;
+void GameStarted(void);   /* first move of a game: sets fGameStarted, starts the shell clock */
 
 #define OPTION_SHOW_STATUS       4
 #define OPTION_THREE_CARDS       8

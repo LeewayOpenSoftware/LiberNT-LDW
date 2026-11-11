@@ -74,6 +74,7 @@ BEGIN
         MENUITEM "&Undo", IDM_GAME_UNDO, GRAYED
         MENUITEM "De&ck...", IDM_GAME_DECK
         MENUITEM "&Options...", IDM_GAME_OPTIONS
+        MENUITEM "&Statistics...", IDM_GAME_STATS
         MENUITEM SEPARATOR
         MENUITEM "E&xit", IDM_GAME_EXIT
     END

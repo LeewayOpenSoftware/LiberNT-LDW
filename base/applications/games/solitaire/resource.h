@@ -12,6 +12,7 @@
 #define IDM_GAME_DECK     1003
 #define IDM_GAME_OPTIONS  1004
 #define IDM_GAME_EXIT     1005
+#define IDM_GAME_STATS    0x7E04   /* = LWG_IDM_STATS (leewayui/game.h), handled by the shell */
 #define IDM_HELP_CONTENTS 1006
 #define IDM_HELP_ABOUT    1007
 

@@ -3,6 +3,10 @@ add_library(leewayui_static STATIC
     frame.cpp
     theme.cpp
     dpi.cpp
+    gamestats.cpp
+    gamesave.cpp
+    gameanim.cpp
+    gameshell.cpp
 )
 
 target_include_directories(leewayui_static PUBLIC

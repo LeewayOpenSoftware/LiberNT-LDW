@@ -93,3 +93,6 @@ Audit trail for the clean-room LeewayUI ribbon (OWNER DECISION 2026-11-08, `RIBB
 - Artwork: demo icons are coloured discs drawn in code; not shipped
 - Licence: LGPL-2.1+
 - IP clearance: prototyping only — distribution clearance NOT assumed (see design §8)
+
+## Game shell (G0, 2026-11-11)
+game.h, gamestats/gamesave/gameanim/gameshell.cpp are original Leeway code (no third-party source). The stats/save/physics maths are written from scratch; CRC-32 is the standard IEEE polynomial (0xEDB88320).
