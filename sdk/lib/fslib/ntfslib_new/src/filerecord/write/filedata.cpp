@@ -928,9 +928,14 @@ WriteRunBytes(_In_ PVolume DiskVolume,
  * list can reach the disk before the bytes it points to; after a cut the
  * extent reads as whatever the clusters held (J36 r149: a zero $ATTRIBUTE_LIST
  * extent made the directory unreadable, a zero INDX block made its index
- * unreachable). Only the attributes whose missing content breaks the record
- * or the index pay for the ordering; $DATA keeps the plain write-back path,
- * where lost content reads as zeros, which NTFS allows after a cut.
+ * unreachable). On an in-place write only the attributes whose missing
+ * content breaks the record or the index pay for the ordering; $DATA keeps
+ * the plain write-back path there, where lost content reads as zeros, which
+ * NTFS allows after a cut. Where new clusters are allocated (promotion,
+ * extension, sparse and compressed allocation) every attribute is ordered,
+ * $DATA included, so a cut cannot expose the clusters' previous content
+ * through the new run list. That ordering is per range (a barrier, or a
+ * commit of the bytes just written), not a flush of the whole volume.
  */
 static BOOLEAN
 AttributeContentIsOrdered(_In_ PAttribute Attribute)
@@ -5048,28 +5053,18 @@ FileRecord::PromoteResidentData(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
-    if (TargetAttribute->AttributeType == TypeData)
-    {
-        Status = DiskVolume->FlushVolume();
-        if (!NT_SUCCESS(Status))
-            goto Rollback;
-    }
-
     /*
      * The record is about to say "non-resident, NewInitializedSize bytes"
      * over clusters whose content still sits in the write-back cache. Order
      * the record after that content (OrderRecordAfterRunBytes).
      */
-    if (AttributeContentIsOrdered(TargetAttribute))
-    {
-        Status = OrderRecordAfterRunBytes(DiskVolume,
-                                          this,
-                                          AllocatedRuns,
-                                          0,
-                                          NewInitializedSize);
-        if (!NT_SUCCESS(Status))
-            goto Rollback;
-    }
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      this,
+                                      AllocatedRuns,
+                                      0,
+                                      NewInitializedSize);
+    if (!NT_SUCCESS(Status))
+        goto Rollback;
 
     WriteAttempted = TRUE;
     Status = DiskVolume->MFT->WriteFileRecordToMFT(this);
@@ -5788,9 +5783,11 @@ FileRecord::ResizeNonResidentStream(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
-    Status = DiskVolume->FlushVolume();
-    if (!NT_SUCCESS(Status))
-        goto Rollback;
+    /*
+     * No content is written here (InitializedDataSize never grows), so
+     * nothing has to reach the disk before the record. The released runs
+     * are freed only after the record that dropped them is durable (below).
+     */
     Status = MappingUpdate
         ? CommitNonResidentMappingUpdate(
             &MappingUpdate)
@@ -6115,9 +6112,6 @@ FileRecord::ExtendNonResidentData(
     if (!NT_SUCCESS(Status))
         goto Rollback;
 
-    Status = DiskVolume->FlushVolume();
-    if (!NT_SUCCESS(Status))
-        goto Rollback;
     /*
      * The record is about to publish the grown run list and sizes over the
      * zeroes and data written above, which still sit in the write-back
@@ -6125,7 +6119,6 @@ FileRecord::ExtendNonResidentData(
      * spread over the attribute list and the records it spans, so the bytes
      * are committed synchronously instead (no pointer record).
      */
-    if (AttributeContentIsOrdered(TargetAttribute))
     {
         ULONGLONG OrderedFrom =
             min(OldInitializedSize, Offset);
@@ -6626,9 +6619,25 @@ FileRecord::WriteSparseData(
     if (!NT_SUCCESS(Status))
         goto Restore;
 
-    Status = DiskVolume->FlushVolume();
-    if (!NT_SUCCESS(Status))
-        goto Restore;
+    /*
+     * Order the record holding the run list after the zeroes and data just
+     * written (OrderRecordAfterRunBytes; with a mapping update the bytes are
+     * committed synchronously, as in ExtendNonResidentData).
+     */
+    {
+        ULONGLONG OrderedFrom =
+            min(OldInitializedSize, Offset);
+
+        Status = OrderRecordAfterRunBytes(DiskVolume,
+                                          MappingUpdate
+                                              ? NULL
+                                              : AttributeOwner,
+                                          CombinedRuns,
+                                          OrderedFrom,
+                                          Offset + *Length - OrderedFrom);
+        if (!NT_SUCCESS(Status))
+            goto Restore;
+    }
     if (MappingUpdate)
     {
         Status = CommitNonResidentMappingUpdate(
@@ -7083,7 +7092,12 @@ FileRecord::WriteCompressedUnits(_Inout_ PAttribute* Attribute,
     if (!NT_SUCCESS(Status))
         goto Restore;
 
-    Status = DiskVolume->FlushVolume();
+    /* The record names the packed units written above: order it after them. */
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      MappingUpdate ? NULL : this,
+                                      NewPhysicalRuns,
+                                      0,
+                                      PackedBytes);
     if (!NT_SUCCESS(Status))
         goto Restore;
     Status = MappingUpdate
@@ -7721,7 +7735,11 @@ FileRecord::PromoteResidentCompressedData(
         NULL);
     if (!NT_SUCCESS(Status))
         goto Rollback;
-    Status = DiskVolume->FlushVolume();
+    Status = OrderRecordAfterRunBytes(DiskVolume,
+                                      this,
+                                      AllocatedRuns,
+                                      0,
+                                      StoredClusters * ClusterSize);
     if (!NT_SUCCESS(Status))
         goto Rollback;
     WriteAttempted = TRUE;
