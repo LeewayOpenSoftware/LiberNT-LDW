@@ -1042,12 +1042,22 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     size_t len = 0;
     DWORD err;
     BOOL any = FALSE;
+    int group = 0, g;
+    size_t total = 0;
 
     for (i = 0; i < m->itemCount; i++)
     {
         if (!m->items[i].bootClass)
             continue;
         any = TRUE;
+        total++;
+        g = LnTargetBootGroup(m->items[i].target);
+        if (group && g != group)
+        {
+            strcpy(why, "one boot-class group per transaction: the kernel trio and drivers go in separate packages");
+            return LN_E_PRECONDITION;
+        }
+        group = g;
         if (n < RTL_NUMBER_OF(targets))
             targets[n++] = m->items[i].target;
     }
@@ -1087,6 +1097,48 @@ static DWORD BootClassPrecheck(const LN_TARGET *t, const LN_MANIFEST *m, char *w
     {
         strcpy(why, "cannot read freeldr.ini");
         return LN_E_PRECONDITION;
+    }
+    if (group == 2)
+    {
+        /* drivers: the trio stays, but a fallback boot must exist (the entry and its .old files), because
+         * that boot is what loads the swapped drivers from their .old pre-image if the new ones do not boot */
+        char old[3][80];
+        size_t k;
+
+        if (total > 8)
+        {
+            strcpy(why, "at most 8 boot-class drivers per transaction");
+            free(ini);
+            return LN_E_PRECONDITION;
+        }
+        if (!LnFreeldrFallbackPresent((const char *)ini, len, old, why, whyCch))
+        {
+            free(ini);
+            return LN_E_PRECONDITION;
+        }
+        free(ini);
+        for (k = 0; k < 3; k++)
+        {
+            WCHAR rel[128] = L"Windows\\System32\\";
+            size_t q, base = wcslen(rel);
+            WCHAR *fp;
+            DWORD attr;
+
+            for (q = 0; old[k][q] && base + q < RTL_NUMBER_OF(rel) - 1; q++)
+                rel[base + q] = (WCHAR)(unsigned char)old[k][q];
+            rel[base + q] = 0;
+            fp = LnTargetFile(t, rel);
+            if (!fp)
+                return ERROR_NOT_ENOUGH_MEMORY;
+            attr = GetFileAttributesW(fp);
+            free(fp);
+            if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
+            {
+                strcpy(why, "a .old kernel, HAL or bootvid the fallback entry loads is not on disk: no fallback boot for a driver swap");
+                return LN_E_PRECONDITION;
+            }
+        }
+        return ERROR_SUCCESS;
     }
     if (n != 3 || !LnFreeldrFallbackMatches((const char *)ini, len, targets, n, why, whyCch))
     {
@@ -1262,10 +1314,33 @@ static DWORD BootLoadedSetIsNew(const LN_TARGET *t, const char *txid, const LN_M
         }
         CloseHandle(h);
 
-        /* only the module the alias names: kernel = load order 0, HAL = 1, bootvid by file name */
+        /* only the module the alias names: kernel = load order 0, HAL = 1, bootvid by file name; a driver
+         * by its file name, and it must be loaded (a Start 0/1 driver that is not running is not confirmed) */
         base = wcsrchr(m->items[k].target, L'\\');
         base = base ? base + 1 : m->items[k].target;
-        if (!_wcsnicmp(base, L"nt", 2))
+        if (LnTargetBootGroup(m->items[k].target) == 2)
+        {
+            char nb[64];
+            size_t q;
+
+            for (q = 0; base[q] && q < sizeof(nb) - 1; q++)
+                nb[q] = (char)base[q];
+            nb[q] = 0;
+            for (i = 0; i < count; i++)
+            {
+                const char *p = (const char *)mods[i].FullPathName + mods[i].OffsetToFileName;
+
+                if (!_stricmp(p, nb))
+                    idx = i;
+            }
+            if (idx >= count)
+            {
+                strcpy(why, "a boot-class driver is not loaded: the new set did not bring it up");
+                result = LN_E_PRECONDITION;
+                goto out;
+            }
+        }
+        else if (!_wcsnicmp(base, L"nt", 2))
             idx = 0;
         else if (!_wcsnicmp(base, L"hal", 3))
             idx = 1;

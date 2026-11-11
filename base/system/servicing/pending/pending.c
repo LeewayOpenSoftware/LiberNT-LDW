@@ -1841,6 +1841,46 @@ S1WriteBootState(_In_ PCSTR Text)
         S1VolumeFlush();
 }
 
+/* "ARMED" plus one "old <target>" line per swapped driver: on a fallback boot freeldr and the kernel load
+ * those from their .old pre-image (S1-BOOT-DRIVERS-DESIGN.md). The trio needs no line: the fallback entry
+ * names its .old files itself. The first five bytes stay "ARMED" for the boot-try loader. */
+static VOID
+S1BootStateArmedText(_In_ const S1_PLAN *Plan, _Out_writes_z_(Cch) PSTR Out, _In_ size_t Cch)
+{
+    static const char Drivers[] = "Windows\\System32\\drivers\\";
+    size_t Used, i;
+
+    if (Cch < 7)
+    {
+        if (Cch)
+            Out[0] = 0;
+        return;
+    }
+    memcpy(Out, "ARMED\n", 7);
+    Used = 6;
+    for (i = 0; i < Plan->OperationCount; i++)
+    {
+        const S1_PLAN_OP *Op = &Plan->Operations[i];
+        const char *Target = Op->Target;
+        size_t Len;
+
+        if (Op->Type != S1_OP_SWAP_FILE)
+            continue;
+        while (*Target == '\\' || *Target == '/')
+            Target++;
+        if (_strnicmp(Target, Drivers, sizeof(Drivers) - 1) != 0)
+            continue;
+        Len = strlen(Target);
+        if (Used + 4 + Len + 1 >= Cch)
+            break;
+        memcpy(Out + Used, "old ", 4);
+        memcpy(Out + Used + 4, Target, Len);
+        Used += 4 + Len;
+        Out[Used++] = '\n';
+        Out[Used] = 0;
+    }
+}
+
 /* B2 review M1: did THIS boot load the previous kernel set? SystemStartOptions (HKLM\SYSTEM\CurrentControlSet\
  * Control) is the load option string the loader handed the kernel, and both the automatic and the manual
  * Fallback entry put /KERNEL=, /HAL= or /BOOTVID= with a *.old file in it. No loader marker needed. */
@@ -2499,7 +2539,12 @@ NtProcessStartup(
         snprintf(Attempt.LastResult, sizeof(Attempt.LastResult), "%s", "swapped");
         S1AttemptSave(&Attempt);
         S1Log(L"S1: swapped");
-        S1WriteBootState("ARMED\n");
+        {
+            static CHAR ArmedText[4096];
+
+            S1BootStateArmedText(&Plan, ArmedText, sizeof(ArmedText));
+            S1WriteBootState(ArmedText);
+        }
         S1RebootNow();
         NtTerminateProcess(NtCurrentProcess(), 0);
     }

@@ -114,7 +114,7 @@ static BOOL BootBaseIs(const WCHAR *base, const WCHAR *const *names, size_t n)
     return FALSE;
 }
 
-#define LN_BOOT_GROUPS_ENABLED (1 << 1)         /* bit n = group n; 1 = kernel trio */
+#define LN_BOOT_GROUPS_ENABLED ((1 << 1) | (1 << 2))    /* bit n = group n; 1 = kernel trio, 2 = drivers */
 
 int LnTargetBootGroup(const WCHAR *rel)
 {
@@ -230,8 +230,10 @@ static void LnfStem(const char *file, char *out, size_t cch)
     LnfCopy(out, cch, file, dot ? (size_t)(dot - file) : strlen(file));
 }
 
-BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *targets, size_t n,
-                              char *why, size_t whyCch)
+/* targets NULL: only the fallback entry is checked (a driver swap keeps the trio), and the three .old file
+ * names it loads are returned in old[]. */
+static BOOL LnfCheck(const char *ini, size_t len, const WCHAR *const *targets, size_t n, char old[3][80],
+                     char *why, size_t whyCch)
 {
     LNF_SEC secs[LNF_MAXSEC];
     char entries[LNF_MAXSEC][48];
@@ -245,7 +247,7 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
     const char *msg;
 
     msg = "";
-    if (!ini || !targets || n != 3)
+    if (!ini || (targets && n != 3) || (!targets && n != 0))
     {
         msg = "the package must carry exactly the kernel, HAL and bootvid files";
         goto out_msg;
@@ -370,6 +372,7 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
     LnfEffective(def, "/BOOTVID=", NULL, "bootvid.dll", db, sizeof(db));
 
     /* the package must replace exactly these three files, nothing else */
+    if (targets)
     {
         const char *want[3];
         BOOL used[3] = { FALSE, FALSE, FALSE };
@@ -431,6 +434,12 @@ BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *t
             if (!_stricmp(ok, e1) && !_stricmp(oh, e2) && !_stricmp(ob, e3))
             {
                 found = TRUE;
+                if (old)
+                {
+                    LnfCopy(old[0], 80, e1, strlen(e1));
+                    LnfCopy(old[1], 80, e2, strlen(e2));
+                    LnfCopy(old[2], 80, e3, strlen(e3));
+                }
                 break;
             }
         }
@@ -448,6 +457,17 @@ out_msg:
     if (why && whyCch)
         LnfCopy(why, whyCch, msg, strlen(msg));
     return FALSE;
+}
+
+BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *targets, size_t n,
+                              char *why, size_t whyCch)
+{
+    return LnfCheck(ini, len, targets, n, NULL, why, whyCch);
+}
+
+BOOL LnFreeldrFallbackPresent(const char *ini, size_t len, char old[3][80], char *why, size_t whyCch)
+{
+    return LnfCheck(ini, len, NULL, 0, old, why, whyCch);
 }
 
 BOOL LnPeIdentity(const BYTE *data, size_t len, DWORD *sizeOfImage, DWORD *checkSum, DWORD *timeDateStamp)
@@ -529,9 +549,9 @@ BOOL LnTargetBootItemAllowed(const WCHAR *rel, int driverStart)
     group = LnTargetBootGroup(rel);
     if (!group)
         return FALSE;
-    /* First delivery: the kernel/HAL/bootvid trio only (review M3). Boot-start drivers (ntfs.sys, disk class)
-     * and ntdll/win32k/the critical processes have no loader fallback, so they wait for the control-set
-     * fallback design. Enable more groups by widening this mask, with that design in place. */
+    /* Groups 1 (trio, review M3) and 2 (drivers under System32\drivers: on a fallback boot the loader and
+     * the kernel take the listed drivers from their .old pre-image, S1-BOOT-DRIVERS-DESIGN.md). ntdll/win32k/
+     * the critical processes have no fallback at all and wait for the control-set design. */
     if (!((1 << group) & LN_BOOT_GROUPS_ENABLED))
         return FALSE;
     if (group == 2)

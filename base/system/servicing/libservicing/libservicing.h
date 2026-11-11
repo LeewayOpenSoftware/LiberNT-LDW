@@ -159,6 +159,9 @@ DWORD LnBootStateClear(const LN_TARGET *t);
  * reason otherwise. */
 BOOL LnFreeldrFallbackMatches(const char *ini, size_t len, const WCHAR *const *targets, size_t n,
                               char *why, size_t whyCch);
+/* Same fallback-entry check without a package trio (a driver swap keeps the kernel set): TRUE when the default
+ * entry has a fallback entry loading its <stem>.old kernel, HAL and bootvid, whose file names go to old[]. */
+BOOL LnFreeldrFallbackPresent(const char *ini, size_t len, char old[3][80], char *why, size_t whyCch);
 /* Parents must not be reparse points, and the real path must equal the lexical one (8.3, junctions). */
 DWORD LnTargetValidateReal(const LN_TARGET *t, const WCHAR *relInRoot);
 

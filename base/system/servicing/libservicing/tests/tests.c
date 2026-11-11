@@ -195,7 +195,13 @@ static void TestPaths(void)
     /* review M3: ntdll, win32k and boot-start drivers (ntfs.sys) have no loader fallback: not in the first delivery */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\ntdll.dll", -1));
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\win32k.sys", -1));
-    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\ntfs.sys", 0));                   /* group 2 */
+    CHECK(LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.sys", 1));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.sys", -1));               /* Start required */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.sys", 5));
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\usbstor.sys", 0));                          /* not under drivers */
+    CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\drivers\\usbstor.dll", -1));               /* not a .sys */
+    CHECK(LnTargetBootGroup(L"Windows\\System32\\drivers\\usbstor.sys") == 2);
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\hal.dll", 0));                          /* Start only for a .sys */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\config\\SYSTEM", -1));                  /* hives never */
     CHECK(!LnTargetBootItemAllowed(L"Windows\\System32\\freeldr.sys", -1));                     /* loader never */
@@ -298,6 +304,17 @@ static void TestPaths(void)
         CHECK(!LnFreeldrFallbackMatches(halacpi, sizeof(halacpi) - 1, good, 3, why, sizeof(why))); /* HAL differs */
         CHECK(!LnFreeldrFallbackMatches(halacpi, sizeof(halacpi) - 1, halmac, 3, why, sizeof(why))); /* fallback names hal.old */
         CHECK(!LnFreeldrFallbackMatches(ok, sizeof(ok) - 1, good, 2, why, sizeof(why)));          /* not the whole trio */
+        {
+            /* a driver swap keeps the trio: only the fallback entry and its .old names are needed */
+            char old[3][80];
+
+            CHECK(LnFreeldrFallbackPresent(dx2400, sizeof(dx2400) - 1, old, why, sizeof(why)));
+            CHECK(!_stricmp(old[0], "ntkrnlmp.old") && !_stricmp(old[1], "hal.old") && !_stricmp(old[2], "bootvid.old"));
+            CHECK(!LnFreeldrFallbackPresent(halacpi, sizeof(halacpi) - 1, old, why, sizeof(why)));  /* default loads halmacpi, fallback names hal.old */
+            CHECK(!LnFreeldrFallbackPresent(nofb, sizeof(nofb) - 1, old, why, sizeof(why)));
+            CHECK(!LnFreeldrFallbackPresent(detecthal, sizeof(detecthal) - 1, old, why, sizeof(why)));
+            CHECK(!LnFreeldrFallbackPresent(otherpath, sizeof(otherpath) - 1, old, why, sizeof(why)));
+        }
     }
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\a.dll", 3));                                /* Start only for a .sys */
     CHECK(!LnTargetItemAllowed(L"Windows\\System32\\drivers\\win32k.sys", 3));
