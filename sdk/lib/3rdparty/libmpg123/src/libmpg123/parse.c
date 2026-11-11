@@ -11,11 +11,17 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#ifndef __REACTOS__
 #include "getbits.h"
+#endif
 
 #if defined (WANT_WIN32_SOCKETS)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#endif
+
+#ifdef __REACTOS__
+#include "getbits.h"
 #endif
 
 /* a limit for number of frames in a track; beyond that unsigned long may not be enough to hold byte addresses */
