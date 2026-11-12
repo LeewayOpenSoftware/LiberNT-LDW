@@ -351,6 +351,7 @@ void ribbon_layout_statusbar(HWND hStatusBar);
 void ribbon_set_dpi(UINT dpi);
 void ribbon_on_theme_changed(void);
 void ribbon_add_recent_file(LPCWSTR path);
+void ribbon_set_theme_pref(int pref);
 
 /* print.c ruler */
 void set_ruler_unit(int unit);
