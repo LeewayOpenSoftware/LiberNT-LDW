@@ -2,6 +2,7 @@ add_library(leewayui_static STATIC
     ribbon.cpp
     theme.cpp
     dpi.cpp
+    tabstrip.cpp
 )
 
 target_include_directories(leewayui_static PUBLIC
