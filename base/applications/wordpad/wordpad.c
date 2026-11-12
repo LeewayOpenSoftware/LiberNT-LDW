@@ -2298,6 +2298,116 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         break;
         }
 
+    case ID_FORMAT_STRIKE:
+        {
+        CHARFORMAT2W fmt;
+
+        ZeroMemory(&fmt, sizeof(fmt));
+        fmt.cbSize = sizeof(fmt);
+        SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        fmt.dwMask = CFM_STRIKEOUT;
+        fmt.dwEffects ^= CFE_STRIKEOUT;
+        SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        break;
+        }
+
+    case ID_FORMAT_SUBSCRIPT:
+    case ID_FORMAT_SUPERSCRIPT:
+        {
+        CHARFORMAT2W fmt;
+        DWORD effect = LOWORD(wParam) == ID_FORMAT_SUBSCRIPT ? CFE_SUBSCRIPT : CFE_SUPERSCRIPT;
+
+        ZeroMemory(&fmt, sizeof(fmt));
+        fmt.cbSize = sizeof(fmt);
+        SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+        fmt.dwMask = CFM_SUBSCRIPT | CFM_SUPERSCRIPT;
+        if(fmt.dwEffects & effect)
+            fmt.dwEffects &= ~(CFE_SUBSCRIPT | CFE_SUPERSCRIPT);
+        else
+            fmt.dwEffects = (fmt.dwEffects & ~(CFE_SUBSCRIPT | CFE_SUPERSCRIPT)) | effect;
+
+        SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        break;
+        }
+
+    case ID_GROW_FONT:
+    case ID_SHRINK_FONT:
+        {
+        CHARFORMAT2W fmt;
+
+        ZeroMemory(&fmt, sizeof(fmt));
+        fmt.cbSize = sizeof(fmt);
+        SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+        fmt.dwMask = CFM_SIZE;
+        fmt.yHeight += (LOWORD(wParam) == ID_GROW_FONT) ? 20 : -20;
+        if(fmt.yHeight < 20)
+            fmt.yHeight = 20;
+        if(fmt.yHeight > 32760)
+            fmt.yHeight = 32760;
+
+        SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        break;
+        }
+
+    case ID_INDENT_INCREASE:
+    case ID_INDENT_DECREASE:
+        {
+        PARAFORMAT2 pf;
+
+        pf.cbSize = sizeof(pf);
+        pf.dwMask = PFM_STARTINDENT;
+        SendMessageW(hwndEditor, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
+
+        pf.dwMask = PFM_STARTINDENT;
+        pf.dxStartIndent += (LOWORD(wParam) == ID_INDENT_INCREASE) ? 720 : -720;
+        if(pf.dxStartIndent < 0)
+            pf.dxStartIndent = 0;
+
+        SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
+        break;
+        }
+
+    case ID_ZOOM_IN:
+    case ID_ZOOM_OUT:
+    case ID_ZOOM_100:
+        {
+        int num = 1, den = 1;
+
+        if(LOWORD(wParam) != ID_ZOOM_100)
+            SendMessageW(hwndEditor, EM_GETZOOM, (WPARAM)&num, (LPARAM)&den);
+
+        if(LOWORD(wParam) == ID_ZOOM_100)
+        {
+            num = 1;
+            den = 1;
+        }
+        else if(LOWORD(wParam) == ID_ZOOM_IN)
+        {
+            num = (num * 5 + den - 1) / den;
+            den = 4;
+            if(num > 20)
+            {
+                num = 5;
+                den = 1;
+            }
+        }
+        else
+        {
+            num = (num * 4 + den - 1) / den;
+            den = 5;
+            if(!num)
+            {
+                num = 1;
+                den = 10;
+            }
+        }
+
+        SendMessageW(hwndEditor, EM_SETZOOM, num, den);
+        break;
+        }
+
     case ID_FORMAT_COLOR:
     {
         HWND hReBarWnd = GetDlgItem(hWnd, IDC_REBAR);
@@ -2499,6 +2609,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
     case ID_ALIGN_LEFT:
     case ID_ALIGN_CENTER:
     case ID_ALIGN_RIGHT:
+    case ID_ALIGN_JUSTIFY:
         {
         PARAFORMAT2 pf;
 
@@ -2508,6 +2619,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         case ID_ALIGN_LEFT: pf.wAlignment = PFA_LEFT; break;
         case ID_ALIGN_CENTER: pf.wAlignment = PFA_CENTER; break;
         case ID_ALIGN_RIGHT: pf.wAlignment = PFA_RIGHT; break;
+        case ID_ALIGN_JUSTIFY: pf.wAlignment = PFA_JUSTIFY; break;
         }
         SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
         break;
