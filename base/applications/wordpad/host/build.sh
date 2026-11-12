@@ -40,7 +40,7 @@ $CXX -static -mwindows -DUNICODE -D_UNICODE \
   "$OBJ/wordpad.o" "$OBJ/print.o" "$OBJ/registry.o" "$OBJ/olecallback.o" \
   "$OBJ/ribbon.o" "$OBJ/ribbonfw.o" "$OBJ/theme.o" "$OBJ/dpi.o" "$OBJ/aureline.o" \
   "$OBJ/wordpad_rc.o" "$OBJ/rsrc_rc.o" -o "$OUT" \
-  -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -loleaut32 -lshlwapi -luuid -lmsimg32 -loleacc -luxtheme
+  -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -loleaut32 -lshlwapi -luuid -lmsimg32 -loleacc -lwindowscodecs -luxtheme
 
 rm -rf "$OBJ"
 echo "built $OUT"

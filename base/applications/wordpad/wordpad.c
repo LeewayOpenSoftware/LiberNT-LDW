@@ -20,6 +20,7 @@
  */
 
 #define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@
 
 #include <windows.h>
 #include <richedit.h>
+#include <wincodec.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -1623,6 +1625,194 @@ static void apply_color_to_selection(int index, BOOL highlight)
     SendMessageW(hEditorWnd, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
 }
 
+struct rtf_view
+{
+    HGLOBAL h;
+    SIZE_T offset;
+};
+
+static DWORD CALLBACK picture_stream_in(DWORD_PTR cookie, LPBYTE buffer, LONG cb, LONG *pcb)
+{
+    struct rtf_view *v = (struct rtf_view *)cookie;
+    BYTE *src = (BYTE *)GlobalLock(v->h);
+    SIZE_T size = GlobalSize(v->h);
+
+    if (v->offset >= size)
+    {
+        *pcb = 0;
+        GlobalUnlock(v->h);
+        return 0;
+    }
+    if ((SIZE_T)cb > size - v->offset)
+        cb = (LONG)(size - v->offset);
+    CopyMemory(buffer, src + v->offset, cb);
+    v->offset += cb;
+    *pcb = cb;
+    GlobalUnlock(v->h);
+    return 0;
+}
+
+static HGLOBAL picture_build_rtf(LPCWSTR path, UINT *width, UINT *height)
+{
+    static const char head[] = "{\\rtf1{\\pict\\dibitmap0";
+    static const char goalw[] = "\\picwgoal";
+    static const char goalh[] = "\\pichgoal";
+    IWICImagingFactory *factory = NULL;
+    IWICBitmapDecoder *decoder = NULL;
+    IWICBitmapFrameDecode *frame = NULL;
+    IWICFormatConverter *conv = NULL;
+    HGLOBAL rtf = NULL;
+    HRESULT hr;
+    UINT w = 0, h = 0, stride, y;
+    BITMAPINFOHEADER *bih;
+    BYTE *dib, *out, *row;
+    SIZE_T dibsize, rtfsz, i;
+    DWORD pos;
+    char dims[128];
+    int dimlen;
+    static const char hexd[] = "0123456789abcdef";
+
+    *width = *height = 0;
+
+    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_IWICImagingFactory, (void **)&factory);
+    if (FAILED(hr))
+        return NULL;
+    hr = IWICImagingFactory_CreateDecoderFromFilename(factory, path, NULL, GENERIC_READ,
+                                                      WICDecodeMetadataCacheOnLoad, &decoder);
+    if (FAILED(hr))
+        goto end;
+    hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
+    if (FAILED(hr))
+        goto end;
+    hr = IWICImagingFactory_CreateFormatConverter(factory, &conv);
+    if (FAILED(hr))
+        goto end;
+    hr = IWICFormatConverter_Initialize(conv, (IWICBitmapSource *)frame,
+                                        &GUID_WICPixelFormat24bppBGR,
+                                        WICBitmapDitherTypeNone, NULL, 0.0,
+                                        WICBitmapPaletteTypeCustom);
+    if (FAILED(hr))
+        goto end;
+    hr = IWICBitmapSource_GetSize((IWICBitmapSource *)conv, &w, &h);
+    if (FAILED(hr) || !w || !h || w > 4096 || h > 4096)
+        goto end;
+    *width = w;
+    *height = h;
+    stride = (w * 3 + 3) & ~3;
+    dibsize = sizeof(BITMAPINFOHEADER) + (SIZE_T)stride * h;
+    dib = (BYTE *)GlobalAlloc(GMEM_FIXED, dibsize);
+    if (!dib)
+        goto end;
+    bih = (BITMAPINFOHEADER *)dib;
+    ZeroMemory(bih, sizeof(BITMAPINFOHEADER));
+    bih->biSize = sizeof(BITMAPINFOHEADER);
+    bih->biWidth = (LONG)w;
+    bih->biHeight = (LONG)h;
+    bih->biPlanes = 1;
+    bih->biBitCount = 24;
+    bih->biCompression = BI_RGB;
+    bih->biSizeImage = stride * h;
+    hr = IWICBitmapSource_CopyPixels((IWICBitmapSource *)conv, NULL, stride, stride * h, dib + sizeof(BITMAPINFOHEADER));
+    if (FAILED(hr))
+    {
+        GlobalFree(dib);
+        goto end;
+    }
+    {
+        BYTE *tmp = (BYTE *)GlobalAlloc(GMEM_FIXED, stride);
+        if (tmp)
+        {
+            for (y = 0; y < h / 2; y++)
+            {
+                row = dib + sizeof(BITMAPINFOHEADER) + (SIZE_T)y * stride;
+                CopyMemory(tmp, row, stride);
+                CopyMemory(row, dib + sizeof(BITMAPINFOHEADER) + (SIZE_T)(h - 1 - y) * stride, stride);
+                CopyMemory(dib + sizeof(BITMAPINFOHEADER) + (SIZE_T)(h - 1 - y) * stride, tmp, stride);
+            }
+            GlobalFree(tmp);
+        }
+    }
+
+    rtfsz = sizeof(head) + 128 + dibsize * 2 + 8;
+    rtf = GlobalAlloc(GMEM_MOVEABLE, rtfsz);
+    if (!rtf)
+    {
+        GlobalFree(dib);
+        goto end;
+    }
+    out = (BYTE *)GlobalLock(rtf);
+    pos = 0;
+    CopyMemory(out + pos, head, sizeof(head) - 1); pos += sizeof(head) - 1;
+    dimlen = wsprintfA(dims, "%s%d%s%d ", goalw, w * 15, goalh, h * 15);
+    CopyMemory(out + pos, dims, (DWORD)dimlen); pos += dimlen;
+    for (i = 0; i < dibsize; i++)
+    {
+        out[pos++] = hexd[dib[i] >> 4];
+        out[pos++] = hexd[dib[i] & 15];
+    }
+    out[pos++] = '}';
+    out[pos++] = '}';
+    GlobalUnlock(rtf);
+    GlobalFree(dib);
+
+end:
+    if (conv) IWICFormatConverter_Release(conv);
+    if (frame) IWICBitmapFrameDecode_Release(frame);
+    if (decoder) IWICBitmapDecoder_Release(decoder);
+    if (factory) IWICImagingFactory_Release(factory);
+    return rtf;
+}
+
+static void insert_picture(void)
+{
+    static const WCHAR filter[] = L"Image files (*.bmp;*.png;*.jpg;*.gif) *.bmp;*.png;*.jpg;*.jpeg;*.gif All files *.* ";
+    OPENFILENAMEW ofn;
+    WCHAR path[MAX_PATH];
+    HGLOBAL rtf;
+    UINT width, height;
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    path[0] = L' ';
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hMainWnd;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+
+    if (!GetOpenFileNameW(&ofn))
+        return;
+
+    rtf = picture_build_rtf(path, &width, &height);
+    if (!rtf)
+    {
+        MessageBoxW(hMainWnd, L"The image could not be decoded.", wszAppName, MB_OK | MB_ICONEXCLAMATION);
+        return;
+    }
+
+    {
+        EDITSTREAM es;
+        struct rtf_view view;
+        LRESULT sr;
+
+        view.h = rtf;
+        view.offset = 0;
+        ZeroMemory(&es, sizeof(es));
+        es.dwCookie = (DWORD_PTR)&view;
+        es.pfnCallback = picture_stream_in;
+        sr = SendMessageW(hEditorWnd, EM_STREAMIN, SF_RTF | SFF_SELECTION, (LPARAM)&es);
+        if (sr >= 0)
+        {
+            SetFocus(hEditorWnd);
+            return;
+        }
+    }
+
+    GlobalFree(rtf);
+    MessageBoxW(hMainWnd, L"The image could not be inserted.", wszAppName, MB_OK | MB_ICONEXCLAMATION);
+}
+
 static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 {
     HWND hwndEditor = GetDlgItem(hWnd, IDC_EDITOR);
@@ -1776,9 +1966,12 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         }
         break;
 
+    case ID_INSERT_PICTURE:
+        insert_picture();
+        break;
+
     case ID_EDIT_PASTESPECIAL:
     case ID_INSERT_OBJECT:
-    case ID_INSERT_PICTURE:
     case ID_SEND_MAIL:
         /* not available yet: ribbon shows these disabled */
         break;
@@ -2447,6 +2640,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     registry_read_winrect(&rc);
     registry_read_maximized(&bMaximized);
 
+    OleInitialize(NULL);
+
     hMainWnd = CreateWindowExW(0, L"WORDPADTOP", wszAppName, WS_CLIPCHILDREN|WS_OVERLAPPEDWINDOW,
                                CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
                                NULL, NULL, hInstance, NULL);
@@ -2476,6 +2671,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     SendMessageW(hRulerWnd, WM_USER, (WPARAM)&EditPoint, hPrevRulerProc);
 
     HandleCommandLine(GetCommandLineW());
+
 
     while(GetMessageW(&msg,0,0,0))
     {
