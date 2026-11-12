@@ -41,6 +41,8 @@ static HWND g_mainWnd;
 static HWND g_zoomSlider;
 static int g_sliderUpdating;
 static UINT g_cfRichText;
+static LeewayThemePref g_themePref = LEEWAY_THEME_PREF_SYSTEM;
+static BOOL g_themePrefSet;
 
 #define TAB_HOME 1
 #define TAB_VIEW 2
@@ -818,8 +820,20 @@ BOOL ribbon_create(HWND hMainWnd)
         }
     }
 
+    if (g_themePrefSet)
+        LeewayRibbonSetThemePreference(g_ribbon, g_themePref);
+
     LeewayRibbonSetContext(g_ribbon, L"PrintPreview", FALSE);
     return TRUE;
+}
+
+void ribbon_set_theme_pref(int pref)
+{
+    if (pref >= LEEWAY_THEME_PREF_SYSTEM && pref <= LEEWAY_THEME_PREF_DARK)
+    {
+        g_themePref = (LeewayThemePref)pref;
+        g_themePrefSet = TRUE;
+    }
 }
 
 void ribbon_destroy(void)
