@@ -2431,6 +2431,19 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
 
     LoadStringW(hInstance, STRING_APP_NAME, wszAppName, MAX_STRING_LEN);
 
+    {
+        LPCWSTR cmdline = GetCommandLineW();
+        LPCWSTR t = wcsstr(cmdline, L"--theme");
+        if (t)
+        {
+            t += 7;
+            while (*t == L' ') t++;
+            if (!wcsncmp(t, L"light", 5)) ribbon_set_theme_pref(1);
+            else if (!wcsncmp(t, L"dark", 4)) ribbon_set_theme_pref(2);
+            else if (!wcsncmp(t, L"system", 6)) ribbon_set_theme_pref(0);
+        }
+    }
+
     registry_read_winrect(&rc);
     registry_read_maximized(&bMaximized);
 
