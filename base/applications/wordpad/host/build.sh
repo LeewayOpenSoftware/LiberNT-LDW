@@ -34,10 +34,11 @@ $CC $CFLAGS $SHIM -I"$APP" -I"$ROOT/sdk/include" -c "$APP/ribbon.c" -o "$OBJ/rib
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/ribbon.cpp" -o "$OBJ/ribbonfw.o"
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/theme.cpp"  -o "$OBJ/theme.o"
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/dpi.cpp"    -o "$OBJ/dpi.o"
+$CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/aureline_icons.cpp" -o "$OBJ/aureline.o"
 
 $CXX -static -mwindows -DUNICODE -D_UNICODE \
   "$OBJ/wordpad.o" "$OBJ/print.o" "$OBJ/registry.o" "$OBJ/olecallback.o" \
-  "$OBJ/ribbon.o" "$OBJ/ribbonfw.o" "$OBJ/theme.o" "$OBJ/dpi.o" \
+  "$OBJ/ribbon.o" "$OBJ/ribbonfw.o" "$OBJ/theme.o" "$OBJ/dpi.o" "$OBJ/aureline.o" \
   "$OBJ/wordpad_rc.o" "$OBJ/rsrc_rc.o" -o "$OUT" \
   -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -loleaut32 -lshlwapi -luuid -lmsimg32 -loleacc -luxtheme
 
