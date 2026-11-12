@@ -537,6 +537,7 @@ static void DoOpenFile(LPCWSTR szOpenFileName)
     lstrcpyW(wszFileName, szOpenFileName);
     SendMessageW(hEditorWnd, EM_SETMODIFY, FALSE, 0);
     registry_set_filelist(szOpenFileName, hMainWnd);
+    ribbon_add_recent_file(szOpenFileName);
 }
 
 static void ShowWriteError(DWORD Code)
@@ -2494,6 +2495,12 @@ void wordpad_apply_font_size(LPCWSTR size)
 void wordpad_open_recent_file(int index)
 {
     LPCWSTR path = registry_get_recent_file(index);
+    if (path && path[0])
+        wordpad_open_file_path(path);
+}
+
+void wordpad_open_file_path(LPCWSTR path)
+{
     if (path && path[0] && prompt_save_changes())
         DoOpenFile(path);
 }

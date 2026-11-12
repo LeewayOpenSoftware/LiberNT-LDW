@@ -31,6 +31,8 @@
 #include <commctrl.h>
 
 #include <leewayui/ribbon.h>
+#include <leewayui/ribbon_icons.h>
+#include <leewayui/aureline_icons.h>
 
 #include "wordpad.h"
 
@@ -48,55 +50,51 @@ static UINT g_cfRichText;
  * Icons stay at LWUI_ICON_NONE until the Aureline resolver lands (ribbon-f2). */
 static LeewayUICommand ribbon_commands[] = {
     /* application menu */
-    { ID_FILE_NEW,       L"New",              L"Create a new document",                 L"N",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FILE_OPEN,      L"Open",             L"Open an existing document",             L"O",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FILE_SAVE,      L"Save",             L"Save the document",                     L"S",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FILE_SAVEAS,    L"Save as",          L"Save the document with a new name or type", L"A", LWUI_ICON_NONE, TRUE, FALSE, TRUE },
-    { ID_PRINT,          L"Print",            L"Print the document",                    L"P",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_PRINTSETUP,     L"Page setup",       L"Change page layout settings",           L"G",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_VIEWPROPERTIES, L"Properties",       L"Document display properties",           L"I",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_SEND_MAIL,      L"Send in e-mail",   L"Send a copy in an e-mail (not available yet)", L"D", LWUI_ICON_NONE, FALSE, FALSE, TRUE },
-    { ID_ABOUT,          L"About WordPad",    L"About WordPad",                         L"T",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FILE_EXIT,      L"Exit",             L"Exit WordPad",                          L"X",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FILE_RECENT1,   L"(Recent 1)",       L"Open this document",                    L"1",  LWUI_ICON_NONE, FALSE, FALSE, TRUE },
-    { ID_FILE_RECENT2,   L"(Recent 2)",       L"Open this document",                    L"2",  LWUI_ICON_NONE, FALSE, FALSE, TRUE },
-    { ID_FILE_RECENT3,   L"(Recent 3)",       L"Open this document",                    L"3",  LWUI_ICON_NONE, FALSE, FALSE, TRUE },
-    { ID_FILE_RECENT4,   L"(Recent 4)",       L"Open this document",                    L"4",  LWUI_ICON_NONE, FALSE, FALSE, TRUE },
+    { ID_FILE_NEW,       L"New",              L"Create a new document",                 L"N",  LWUI_AUR_COMMON_NEW, TRUE,  FALSE, TRUE },
+    { ID_FILE_OPEN,      L"Open",             L"Open an existing document",             L"O",  LWUI_AUR_COMMON_OPEN, TRUE,  FALSE, TRUE },
+    { ID_FILE_SAVE,      L"Save",             L"Save the document",                     L"S",  LWUI_AUR_COMMON_SAVE, TRUE,  FALSE, TRUE },
+    { ID_FILE_SAVEAS,    L"Save as",          L"Save the document with a new name or type", L"A", LWUI_AUR_COMMON_SAVEAS, TRUE, FALSE, TRUE },
+    { ID_PRINT,          L"Print",            L"Print the document",                    L"P",  LWUI_AUR_COMMON_PRINT, TRUE,  FALSE, TRUE },
+    { ID_PRINTSETUP,     L"Page setup",       L"Change page layout settings",           L"G",  LWUI_AUR_COMMON_PAGESETUP, TRUE,  FALSE, TRUE },
+    { ID_VIEWPROPERTIES, L"Properties",       L"Document display properties",           L"I",  LWUI_AUR_COMMON_PROPERTIES, TRUE,  FALSE, TRUE },
+    { ID_SEND_MAIL,      L"Send in e-mail",   L"Send a copy in an e-mail (not available yet)", L"D", LWUI_AUR_COMMON_EMAIL, FALSE, FALSE, TRUE },
+    { ID_ABOUT,          L"About WordPad",    L"About WordPad",                         L"T",  LWUI_AUR_COMMON_ABOUT, TRUE,  FALSE, TRUE },
+    { ID_FILE_EXIT,      L"Exit",             L"Exit WordPad",                          L"X",  LWUI_AUR_COMMON_EXIT, TRUE,  FALSE, TRUE },
 
     /* QAT */
     { ID_EDIT_UNDO,      L"Undo",             L"Undo (Ctrl+Z)",                         L"1",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_EDIT_REDO,      L"Redo",             L"Redo (Ctrl+Y)",                         L"2",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
 
     /* clipboard */
-    { ID_EDIT_PASTE,     L"Paste",            L"Paste (Ctrl+V)",                        L"V",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_EDIT_CUT,       L"Cut",              L"Cut (Ctrl+X)",                          L"X",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_EDIT_COPY,      L"Copy",             L"Copy (Ctrl+C)",                         L"C",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_EDIT_PASTESPECIAL, L"Paste special", L"Insert clipboard content with format choice", L"S", LWUI_ICON_NONE, FALSE, FALSE, TRUE },
+    { ID_EDIT_PASTE,     L"Paste",            L"Paste (Ctrl+V)",                        L"V",  LWUI_AUR_COMMON_PASTE, TRUE,  FALSE, TRUE },
+    { ID_EDIT_CUT,       L"Cut",              L"Cut (Ctrl+X)",                          L"X",  LWUI_AUR_COMMON_CUT, TRUE,  FALSE, TRUE },
+    { ID_EDIT_COPY,      L"Copy",             L"Copy (Ctrl+C)",                         L"C",  LWUI_AUR_COMMON_COPY, TRUE,  FALSE, TRUE },
+    { ID_EDIT_PASTESPECIAL, L"Paste special", L"Insert clipboard content with format choice", L"S", LWUI_AUR_COMMON_PASTE, FALSE, FALSE, TRUE },
 
     /* font */
     { ID_FONT_FAMILY,    L"Font",             L"Change the font",                       L"FF", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_FONT_SIZE,      L"Size",             L"Change the font size",                  L"FS", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_GROW_FONT,      L"Grow font",        L"Increase the font size",                L"FG", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_SHRINK_FONT,    L"Shrink font",      L"Decrease the font size",                L"FK", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_BOLD,    L"Bold",             L"Bold (Ctrl+B)",                         L"B",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_ITALIC,  L"Italic",           L"Italic (Ctrl+I)",                       L"I",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_UNDERLINE, L"Underline",      L"Underline (Ctrl+U)",                    L"U",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_STRIKE,  L"Strikethrough",    L"Strikethrough",                         L"4",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_SUBSCRIPT, L"Subscript",      L"Subscript",                             L"5",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_SUPERSCRIPT, L"Superscript",  L"Superscript",                           L"6",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_FORMAT_HIGHLIGHT, L"Text highlight colour", L"Mark text with a highlight colour", L"H", LWUI_ICON_NONE, TRUE, FALSE, TRUE },
-    { ID_FORMAT_COLOR,   L"Text colour",      L"Change the text colour",                L"FC", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_GROW_FONT,      L"Grow font",        L"Increase the font size",                L"FG", LWUI_AUR_WORDPAD_FONT_GROW, TRUE,  FALSE, TRUE },
+    { ID_SHRINK_FONT,    L"Shrink font",      L"Decrease the font size",                L"FK", LWUI_AUR_WORDPAD_FONT_SHRINK, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_BOLD,    L"Bold",             L"Bold (Ctrl+B)",                         L"B",  LWUI_AUR_PAINT_BOLD, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_ITALIC,  L"Italic",           L"Italic (Ctrl+I)",                       L"I",  LWUI_AUR_PAINT_ITALIC, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_UNDERLINE, L"Underline",      L"Underline (Ctrl+U)",                    L"U",  LWUI_AUR_PAINT_UNDERLINE, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_STRIKE,  L"Strikethrough",    L"Strikethrough",                         L"4",  LWUI_AUR_WORDPAD_STRIKE, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_SUBSCRIPT, L"Subscript",      L"Subscript",                             L"5",  LWUI_AUR_WORDPAD_SUBSCRIPT, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_SUPERSCRIPT, L"Superscript",  L"Superscript",                           L"6",  LWUI_AUR_WORDPAD_SUPERSCRIPT, TRUE,  FALSE, TRUE },
+    { ID_FORMAT_HIGHLIGHT, L"Text highlight colour", L"Mark text with a highlight colour", L"H", LWUI_AUR_WORDPAD_HIGHLIGHT, TRUE, FALSE, TRUE },
+    { ID_FORMAT_COLOR,   L"Text colour",      L"Change the text colour",                L"FC", LWUI_AUR_WORDPAD_TEXT_COLOUR, TRUE,  FALSE, TRUE },
     { ID_FONTSETTINGS,   L"Font settings",    L"Open the font dialog",                  L"FN", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
 
     /* paragraph */
-    { ID_INDENT_DECREASE, L"Decrease indent", L"Decrease the indent",                   L"AO", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_INDENT_INCREASE, L"Increase indent", L"Increase the indent",                   L"AI", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_BULLETONOFF,    L"Bullets",          L"Start a list",                          L"N",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_LINESPACING,    L"Line spacing",     L"Choose the line spacing",               L"K",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ALIGN_LEFT,     L"Align left",       L"Align left (Ctrl+L)",                   L"AL", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ALIGN_CENTER,   L"Centre",           L"Centre text (Ctrl+E)",                  L"AC", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ALIGN_RIGHT,    L"Align right",      L"Align right (Ctrl+R)",                  L"AR", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ALIGN_JUSTIFY,  L"Justify",          L"Justify text",                          L"AJ", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_INDENT_DECREASE, L"Decrease indent", L"Decrease the indent",                   L"AO", LWUI_AUR_WORDPAD_INDENT_LESS, TRUE,  FALSE, TRUE },
+    { ID_INDENT_INCREASE, L"Increase indent", L"Increase the indent",                   L"AI", LWUI_AUR_WORDPAD_INDENT_MORE, TRUE,  FALSE, TRUE },
+    { ID_BULLETONOFF,    L"Bullets",          L"Start a list",                          L"N",  LWUI_AUR_WORDPAD_LIST, TRUE,  FALSE, TRUE },
+    { ID_LINESPACING,    L"Line spacing",     L"Choose the line spacing",               L"K",  LWUI_AUR_WORDPAD_LINE_SPACING, TRUE,  FALSE, TRUE },
+    { ID_ALIGN_LEFT,     L"Align left",       L"Align left (Ctrl+L)",                   L"AL", LWUI_AUR_WORDPAD_ALIGN_LEFT, TRUE,  FALSE, TRUE },
+    { ID_ALIGN_CENTER,   L"Centre",           L"Centre text (Ctrl+E)",                  L"AC", LWUI_AUR_WORDPAD_ALIGN_CENTRE, TRUE,  FALSE, TRUE },
+    { ID_ALIGN_RIGHT,    L"Align right",      L"Align right (Ctrl+R)",                  L"AR", LWUI_AUR_WORDPAD_ALIGN_RIGHT, TRUE,  FALSE, TRUE },
+    { ID_ALIGN_JUSTIFY,  L"Justify",          L"Justify text",                          L"AJ", LWUI_AUR_WORDPAD_ALIGN_JUSTIFY, TRUE,  FALSE, TRUE },
     { ID_PARAFORMAT,     L"Paragraph settings", L"Open the paragraph dialog",           NULL,  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_LINESPACING_100, L"1.0",             L"Single line spacing",                   L"1",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_LINESPACING_115, L"1.15",            L"Line spacing 1.15",                     L"2",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
@@ -104,23 +102,23 @@ static LeewayUICommand ribbon_commands[] = {
     { ID_LINESPACING_200, L"2.0",             L"Double line spacing",                   L"4",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
 
     /* insert */
-    { ID_DATETIME,       L"Date and time",    L"Insert the current date and time",      L"D",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_INSERT_OBJECT,  L"Insert object",    L"Embed an object (not available yet)",   L"J",  LWUI_ICON_NONE, FALSE, FALSE, TRUE },
-    { ID_INSERT_PICTURE, L"Picture",          L"Insert a picture from a file (not available yet)", L"P", LWUI_ICON_NONE, FALSE, FALSE, TRUE },
+    { ID_DATETIME,       L"Date and time",    L"Insert the current date and time",      L"D",  LWUI_AUR_WORDPAD_DATETIME, TRUE,  FALSE, TRUE },
+    { ID_INSERT_OBJECT,  L"Insert object",    L"Embed an object (not available yet)",   L"J",  LWUI_AUR_WORDPAD_OBJECT, FALSE, FALSE, TRUE },
+    { ID_INSERT_PICTURE, L"Picture",          L"Insert a picture from a file (not available yet)", L"P", LWUI_AUR_WORDPAD_PICTURE, FALSE, FALSE, TRUE },
 
     /* editing */
-    { ID_FIND,           L"Find",             L"Find text (Ctrl+F)",                    L"FD", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_REPLACE,        L"Replace",          L"Replace text (Ctrl+H)",                 L"R",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_EDIT_SELECTALL, L"Select all",       L"Select all (Ctrl+A)",                   L"SL", LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_FIND,           L"Find",             L"Find text (Ctrl+F)",                    L"FD", LWUI_AUR_COMMON_FIND, TRUE,  FALSE, TRUE },
+    { ID_REPLACE,        L"Replace",          L"Replace text (Ctrl+H)",                 L"R",  LWUI_AUR_COMMON_REPLACE, TRUE,  FALSE, TRUE },
+    { ID_EDIT_SELECTALL, L"Select all",       L"Select all (Ctrl+A)",                   L"SL", LWUI_AUR_COMMON_SELECT_ALL, TRUE,  FALSE, TRUE },
 
     /* view */
-    { ID_ZOOM_IN,        L"Zoom in",          L"Zoom in",                               L"I",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ZOOM_OUT,       L"Zoom out",         L"Zoom out",                              L"O",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_ZOOM_100,       L"100%",             L"Zoom to 100%",                          L"1",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_ZOOM_IN,        L"Zoom in",          L"Zoom in",                               L"I",  LWUI_AUR_COMMON_ZOOM_IN, TRUE,  FALSE, TRUE },
+    { ID_ZOOM_OUT,       L"Zoom out",         L"Zoom out",                              L"O",  LWUI_AUR_COMMON_ZOOM_OUT, TRUE,  FALSE, TRUE },
+    { ID_ZOOM_100,       L"100%",             L"Zoom to 100%",                          L"1",  LWUI_AUR_COMMON_ZOOM, TRUE,  FALSE, TRUE },
     { ID_TOGGLE_RULER,   L"Ruler",            L"Show or hide the ruler",                L"R",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_TOGGLE_STATUSBAR, L"Status bar",     L"Show or hide the status bar",           L"S",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_WORDWRAP_OPTIONS, L"Word wrap",      L"Choose how text wraps",                 L"W",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_MEASUREMENT_UNITS, L"Measurement units", L"Units for the ruler",              L"M",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_TOGGLE_STATUSBAR, L"Status bar",     L"Show or hide the status bar",           L"S",  LWUI_AUR_COMMON_STATUSBAR, TRUE,  FALSE, TRUE },
+    { ID_WORDWRAP_OPTIONS, L"Word wrap",      L"Choose how text wraps",                 L"W",  LWUI_AUR_WORDPAD_WRAP, TRUE,  FALSE, TRUE },
+    { ID_MEASUREMENT_UNITS, L"Measurement units", L"Units for the ruler",              L"M",  LWUI_AUR_WORDPAD_UNITS, TRUE,  FALSE, TRUE },
     { ID_WORDWRAP_OPT_NONE,   L"No wrap",         L"Do not wrap text",                  L"1",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_WORDWRAP_OPT_WINDOW, L"Wrap to window",  L"Wrap text to the window",           L"2",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
     { ID_WORDWRAP_OPT_MARGIN, L"Wrap to ruler",   L"Wrap text at the ruler margin",     L"3",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
@@ -130,12 +128,12 @@ static LeewayUICommand ribbon_commands[] = {
     { ID_UNITS_PICAS,       L"Picas",            L"Measure in picas",                  L"4",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
 
     /* print preview (contextual tab) */
-    { ID_PREVIEW_ZOOMIN,  L"Zoom in",          L"Zoom in",                               L"I",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_PREVIEW_ZOOMOUT, L"Zoom out",         L"Zoom out",                              L"O",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_PREVIEW_NUMPAGES, L"One page / two pages", L"Switch between one and two pages", L"T",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_PREVIEW_PREVPAGE, L"Previous page",  L"Previous page",                         L"V",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_PREVIEW_NEXTPAGE, L"Next page",      L"Next page",                             L"N",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_CLOSE_PREVIEW,   L"Close print preview", L"Close print preview",                L"C",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_PREVIEW_ZOOMIN,  L"Zoom in",          L"Zoom in",                               L"I",  LWUI_AUR_COMMON_ZOOM_IN, TRUE,  FALSE, TRUE },
+    { ID_PREVIEW_ZOOMOUT, L"Zoom out",         L"Zoom out",                              L"O",  LWUI_AUR_COMMON_ZOOM_OUT, TRUE,  FALSE, TRUE },
+    { ID_PREVIEW_NUMPAGES, L"One page / two pages", L"Switch between one and two pages", L"T",  LWUI_AUR_WORDPAD_TWO_PAGES, TRUE,  FALSE, TRUE },
+    { ID_PREVIEW_PREVPAGE, L"Previous page",  L"Previous page",                         L"V",  LWUI_AUR_VIEWER_PREV, TRUE,  FALSE, TRUE },
+    { ID_PREVIEW_NEXTPAGE, L"Next page",      L"Next page",                             L"N",  LWUI_AUR_VIEWER_NEXT, TRUE,  FALSE, TRUE },
+    { ID_CLOSE_PREVIEW,   L"Close print preview", L"Close print preview",                L"C",  LWUI_AUR_COMMON_CLOSE, TRUE,  FALSE, TRUE },
 
     /* text colour collection (also used by highlight) */
     { 1800, L"Black",     NULL, L"1", LWUI_ICON_NONE, TRUE, FALSE, TRUE },
@@ -171,8 +169,7 @@ static const COLORREF ribbon_textcolors[] =
 static const UINT ribbon_appmenu[] = {
     ID_FILE_NEW, ID_FILE_OPEN, ID_FILE_SAVE, ID_FILE_SAVEAS,
     ID_PRINT, ID_PRINTSETUP, ID_VIEWPROPERTIES, ID_SEND_MAIL,
-    ID_ABOUT, ID_FILE_RECENT1, ID_FILE_RECENT2, ID_FILE_RECENT3, ID_FILE_RECENT4,
-    ID_FILE_EXIT
+    ID_ABOUT, ID_FILE_EXIT
 };
 
 static const UINT ribbon_qat[] = { ID_FILE_SAVE, ID_EDIT_UNDO, ID_EDIT_REDO };
@@ -487,20 +484,10 @@ static void ribbon_recent_label(int index, WCHAR *buffer, UINT cch)
 static HRESULT CALLBACK ribbon_query_state(UINT32 id, LeewayUICommandState *state, void *ctx)
 {
     static WCHAR comboLabel[64];
-    static WCHAR recentLabel[FILELIST_ENTRIES][MAX_PATH];
     HWND editor = ribbon_editor();
     BOOL preview = preview_isactive();
     CHARFORMAT2W fmt;
     PARAFORMAT2 pf;
-
-    if (id >= ID_FILE_RECENT1 && id <= ID_FILE_RECENT4)
-    {
-        int index = id - ID_FILE_RECENT1;
-        ribbon_recent_label(index, recentLabel[index], MAX_PATH);
-        state->label = recentLabel[index];
-        state->enabled = recentLabel[index][0] != L'\0';
-        return S_OK;
-    }
 
     if (preview)
     {
@@ -685,6 +672,19 @@ static HRESULT CALLBACK ribbon_execute(UINT32 id, void *ctx)
     return S_OK;
 }
 
+static void CALLBACK ribbon_recent_open(const WCHAR *path, void *context)
+{
+    (void)context;
+    if (path && path[0])
+        wordpad_open_file_path(path);
+}
+
+void ribbon_add_recent_file(LPCWSTR path)
+{
+    if (g_ribbon && path && path[0])
+        LeewayRibbonAddRecentFile(g_ribbon, path);
+}
+
 /* ---- status bar zoom slider ---- */
 
 void ribbon_layout_statusbar(HWND hStatusBar)
@@ -788,6 +788,34 @@ BOOL ribbon_create(HWND hMainWnd)
         SendMessageW(g_zoomSlider, TBM_SETRANGE, TRUE, MAKELPARAM(10, 500));
         SendMessageW(g_zoomSlider, TBM_SETLINESIZE, 0, 10);
         SendMessageW(g_zoomSlider, TBM_SETPAGESIZE, 0, 50);
+    }
+
+    /* Aureline icons: assets ship in the tree next to the framework */
+    {
+        static LeewayAurelineConfig aurcfg;
+        static WCHAR iconroot[MAX_PATH];
+        WCHAR *slash;
+
+        GetModuleFileNameW(NULL, iconroot, MAX_PATH);
+        slash = wcsrchr(iconroot, L'\\');
+        if (slash)
+            *slash = L'\0';
+        lstrcatW(iconroot, L"\\..\\..\\..\\..\\sdk\\lib\\leewayui\\icons");
+        aurcfg.root = iconroot;
+        aurcfg.mono_fallback_to_colour = TRUE;
+        LeewayRibbonUseAurelineIcons(g_ribbon, &aurcfg);
+    }
+
+    /* recent files: framework right pane, backed by our existing MRU */
+        LeewayRibbonSetRecentProvider(g_ribbon, ribbon_recent_open, NULL, FILELIST_ENTRIES);
+    {
+        int i;
+        for (i = 0; i < FILELIST_ENTRIES; i++)
+        {
+            LPCWSTR path = registry_get_recent_file(i);
+            if (path && path[0])
+                LeewayRibbonAddRecentFile(g_ribbon, path);
+        }
     }
 
     LeewayRibbonSetContext(g_ribbon, L"PrintPreview", FALSE);

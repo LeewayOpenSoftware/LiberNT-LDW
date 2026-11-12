@@ -349,6 +349,7 @@ void ribbon_sync_zoom(void);
 void ribbon_layout_statusbar(HWND hStatusBar);
 void ribbon_set_dpi(UINT dpi);
 void ribbon_on_theme_changed(void);
+void ribbon_add_recent_file(LPCWSTR path);
 
 /* print.c ruler */
 void set_ruler_unit(int unit);
@@ -358,6 +359,7 @@ int get_ruler_unit(void);
 void wordpad_apply_font_face(LPCWSTR face);
 void wordpad_apply_font_size(LPCWSTR size);
 void wordpad_open_recent_file(int index);
+void wordpad_open_file_path(LPCWSTR path);
 void wordpad_set_word_wrap(int mode);
 int wordpad_get_word_wrap_option(void);
 BOOL wordpad_is_readonly(void);
