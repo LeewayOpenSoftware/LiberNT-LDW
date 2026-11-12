@@ -1045,6 +1045,29 @@ SoftGpuValidateFunctionalVidPn(
     return STATUS_SUCCESS;
 }
 
+#if defined(_M_IX86) || defined(_M_AMD64)
+static VOID
+SoftGpuK2LogDispi(_In_ PCSTR Where, _In_ PSOFTGPU_DEVICE Device)
+{
+    USHORT V[10];
+    ULONG i;
+
+    for (i = 0; i < RTL_NUMBER_OF(V); ++i)
+    {
+        WRITE_PORT_USHORT((PUSHORT)(ULONG_PTR)0x1CE, (USHORT)i);
+        V[i] = READ_PORT_USHORT((PUSHORT)(ULONG_PTR)0x1CF);
+    }
+    DPRINT1("K2DISPI(%s): id=%04x xres=%u yres=%u bpp=%u enable=%04x bank=%u "
+            "virtw=%u virth=%u xoff=%u yoff=%u | scanoutVA=%p PA=0x%I64X "
+            "size=%Iu pitch=%lu shadowed=%d\n",
+            Where, V[0], V[1], V[2], V[3], V[4], V[5], V[6], V[7], V[8], V[9],
+            Device->Scanout, Device->ScanoutPhys.QuadPart, Device->ScanoutSize,
+            Device->ScanoutPitch, (int)Device->ScanoutShadowed);
+}
+#else
+#define SoftGpuK2LogDispi(Where, Device) ((VOID)0)
+#endif
+
 static NTSTATUS
 SoftGpuSetDisplayMode(
     _Inout_ PSOFTGPU_DEVICE Device,
@@ -1094,6 +1117,7 @@ SoftGpuSetDisplayMode(
             RtlZeroMemory(Device->Scanout, (SIZE_T)Mode->Pitch * Mode->Height);
     }
 
+    SoftGpuK2LogDispi("after-modeset", Device);
     KeReleaseMutex(&Device->ScanoutMutex, FALSE);
     DPRINT1("K2MODE: display mode %lux%lu pitch %lu: 0x%08lx\n",
             Mode->Width, Mode->Height, Mode->Pitch, Status);
@@ -1871,6 +1895,7 @@ SoftGpuDdiPresentDisplayOnly(
 
         if (InterlockedIncrement(&K2PresentLog) <= 8)
         {
+            SoftGpuK2LogDispi("present", Device);
             DPRINT1("K2MODE: present srcPitch=%ld dstPitch=%lu dev=%lux%lu "
                     "scanoutPitch=%lu direct=%d primaryValid=%d destSize=%Iu\n",
                     PresentDisplayOnly->Pitch, DestinationPitch,
