@@ -162,6 +162,44 @@
 #define ID_COLOR_WHITE 1815
 #define ID_COLOR_AUTOMATIC 1816
 
+/* New WordPad commands for the LeewayUI ribbon (RIBBON-APPS-SPEC.md section 3, range 1900-1999) */
+#define ID_SAVEAS_RICHTEXT 1901
+#define ID_SAVEAS_TEXT 1902
+#define ID_SAVEAS_OTHER 1903
+#define ID_SEND_MAIL 1904
+#define ID_EDIT_PASTESPECIAL 1905
+#define ID_FONT_FAMILY 1906
+#define ID_FONT_SIZE 1907
+#define ID_GROW_FONT 1908
+#define ID_SHRINK_FONT 1909
+#define ID_FORMAT_STRIKE 1910
+#define ID_FORMAT_SUBSCRIPT 1911
+#define ID_FORMAT_SUPERSCRIPT 1912
+#define ID_FORMAT_HIGHLIGHT 1913
+#define ID_INDENT_DECREASE 1914
+#define ID_INDENT_INCREASE 1915
+#define ID_LINESPACING 1916
+#define ID_LINESPACING_100 1917
+#define ID_LINESPACING_115 1918
+#define ID_LINESPACING_150 1919
+#define ID_LINESPACING_200 1920
+#define ID_ALIGN_JUSTIFY 1921
+#define ID_INSERT_OBJECT 1922
+#define ID_INSERT_PICTURE 1923
+#define ID_ZOOM_IN 1924
+#define ID_ZOOM_OUT 1925
+#define ID_ZOOM_100 1926
+#define ID_WORDWRAP_OPTIONS 1927
+#define ID_MEASUREMENT_UNITS 1928
+#define ID_CLOSE_PREVIEW 1929
+#define ID_WORDWRAP_OPT_NONE 1930
+#define ID_WORDWRAP_OPT_WINDOW 1931
+#define ID_WORDWRAP_OPT_MARGIN 1932
+#define ID_UNITS_INCHES 1933
+#define ID_UNITS_CENTIMETERS 1934
+#define ID_UNITS_POINTS 1935
+#define ID_UNITS_PICAS 1936
+
 #define IDC_STATUSBAR 2000
 #define IDC_EDITOR 2001
 #define IDC_TOOLBAR 2002
@@ -260,6 +298,7 @@ void dialog_print(HWND, LPWSTR);
 void target_device(HWND, DWORD);
 void print_quick(HWND, LPWSTR);
 LRESULT preview_command(HWND, WPARAM);
+void preview_exit(HWND);
 void init_preview(HWND, LPWSTR);
 void close_preview(HWND);
 BOOL preview_isactive(void);
@@ -281,6 +320,46 @@ void registry_read_maximized(DWORD*);
 void registry_set_filelist(LPCWSTR, HWND);
 void registry_set_formatopts_all(DWORD[], DWORD[]);
 void registry_set_options(HWND);
+LPCWSTR registry_get_recent_file(int);
+DWORD registry_get_ruler_unit(void);
+void registry_set_ruler_unit(DWORD);
 
 /* olecallback.c */
 HRESULT setup_richedit_olecallback(HWND hEditorWnd);
+
+/* ribbon.c (LeewayUI ribbon chrome, RIBBON-APPS-SPEC.md section 3) */
+typedef enum
+{
+    UNIT_CM,
+    UNIT_INCH,
+    UNIT_PT,
+    UNIT_PICA
+} UNIT;
+
+BOOL ribbon_create(HWND hMainWnd);
+void ribbon_destroy(void);
+UINT ribbon_height(void);
+HWND ribbon_hwnd(void);
+void ribbon_on_idle_state(void);
+BOOL ribbon_on_notify(NMHDR *);
+BOOL ribbon_pretranslate(MSG *);
+BOOL ribbon_on_hscroll(HWND hwndCtl, int code);
+void ribbon_set_preview(BOOL active);
+void ribbon_sync_zoom(void);
+void ribbon_layout_statusbar(HWND hStatusBar);
+void ribbon_set_dpi(UINT dpi);
+void ribbon_on_theme_changed(void);
+
+/* print.c ruler */
+void set_ruler_unit(int unit);
+int get_ruler_unit(void);
+
+/* wordpad.c helpers for the ribbon */
+void wordpad_apply_font_face(LPCWSTR face);
+void wordpad_apply_font_size(LPCWSTR size);
+void wordpad_open_recent_file(int index);
+void wordpad_set_word_wrap(int mode);
+int wordpad_get_word_wrap_option(void);
+BOOL wordpad_is_readonly(void);
+int wordpad_get_zoom(void);
+void wordpad_set_zoom(int pct);
