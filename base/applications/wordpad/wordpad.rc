@@ -128,7 +128,7 @@ BEGIN
     END
     POPUP "&Help"
     BEGIN
-        MENUITEM "&About Wine Wordpad",      ID_ABOUT
+        MENUITEM "&About WordPad",      ID_ABOUT
     END
 END
 
@@ -216,6 +216,7 @@ END
 STRINGTABLE
 BEGIN
     STRING_DEFAULT_FILENAME,     "Document"
+    STRING_APP_NAME,             "WordPad"
     STRING_PROMPT_SAVE_CHANGES,  "Save changes to '%s'?"
     STRING_SEARCH_FINISHED,      "Finished searching the document."
     STRING_LOAD_RICHED_FAILED,   "Failed to load the RichEdit library."
