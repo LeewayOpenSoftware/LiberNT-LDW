@@ -2696,7 +2696,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     wp.ptMaxPosition.x = -1;
     wp.ptMaxPosition.y = -1;
     wp.rcNormalPosition = rc;
-    SetWindowPlacement(hMainWnd, &wp);
+    if(!SetWindowPlacement(hMainWnd, &wp))
+    if(!bMaximized)
+        SetWindowPos(hMainWnd, NULL, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER | SWP_NOACTIVATE);
 
     set_caption(NULL);
     set_bar_states();
