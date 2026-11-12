@@ -191,15 +191,15 @@ static const LeewayUIPlacement ribbon_font_controls[] = {
     { ID_FORMAT_STRIKE,  LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
     { ID_FORMAT_SUBSCRIPT, LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
     { ID_FORMAT_SUPERSCRIPT, LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
-    { ID_FORMAT_HIGHLIGHT, LWUI_CONTROL_SPLIT_SMALL, NULL, 0 },
-    { ID_FORMAT_COLOR,   LWUI_CONTROL_SPLIT_SMALL, NULL, 0 },
+    { ID_FORMAT_HIGHLIGHT, LWUI_CONTROL_SPLIT_SMALL_ICON, NULL, 0 },
+    { ID_FORMAT_COLOR,   LWUI_CONTROL_SPLIT_SMALL_ICON, NULL, 0 },
 };
 
 static const LeewayUIPlacement ribbon_paragraph_controls[] = {
     { ID_INDENT_DECREASE, LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
     { ID_INDENT_INCREASE, LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
-    { ID_BULLETONOFF,    LWUI_CONTROL_SPLIT_SMALL, NULL, 0 },
-    { ID_LINESPACING,    LWUI_CONTROL_DROPDOWN,    NULL, 0 },
+    { ID_BULLETONOFF,    LWUI_CONTROL_SPLIT_SMALL_ICON, NULL, 0 },
+    { ID_LINESPACING,    LWUI_CONTROL_SPLIT_SMALL_ICON, NULL, 0 },
     { ID_ALIGN_LEFT,     LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
     { ID_ALIGN_CENTER,   LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
     { ID_ALIGN_RIGHT,    LWUI_CONTROL_BUTTON_SMALL_ICON, NULL, 0 },
@@ -252,23 +252,23 @@ static const LeewayUIPlacement ribbon_pv_page_controls[] = {
 };
 
 static const LeewayUIGroup ribbon_home_groups[] = {
-    { L"Clipboard", NULL, 0, 0, ARRAY_SIZE(ribbon_clipboard_controls), ribbon_clipboard_controls },
-    { L"Font", L"FO", 0, ID_FONTSETTINGS, ARRAY_SIZE(ribbon_font_controls), ribbon_font_controls },
-    { L"Paragraph", L"GR", 0, ID_PARAFORMAT, ARRAY_SIZE(ribbon_paragraph_controls), ribbon_paragraph_controls },
-    { L"Insert", NULL, 0, 0, ARRAY_SIZE(ribbon_insert_controls), ribbon_insert_controls },
-    { L"Editing", L"ED", 0, 0, ARRAY_SIZE(ribbon_editing_controls), ribbon_editing_controls },
+    { L"Clipboard", NULL, 0, 0, ARRAY_SIZE(ribbon_clipboard_controls), ribbon_clipboard_controls, 0 },
+    { L"Font", L"FO", 0, ID_FONTSETTINGS, ARRAY_SIZE(ribbon_font_controls), ribbon_font_controls, 2 },
+    { L"Paragraph", L"GR", 0, ID_PARAFORMAT, ARRAY_SIZE(ribbon_paragraph_controls), ribbon_paragraph_controls, 2 },
+    { L"Insert", NULL, 0, 0, ARRAY_SIZE(ribbon_insert_controls), ribbon_insert_controls, 0 },
+    { L"Editing", L"ED", 0, 0, ARRAY_SIZE(ribbon_editing_controls), ribbon_editing_controls, 0 },
 };
 
 static const LeewayUIGroup ribbon_view_groups[] = {
-    { L"Zoom", L"ZM", 0, 0, ARRAY_SIZE(ribbon_zoom_controls), ribbon_zoom_controls },
-    { L"Show or hide", L"HW", 0, 0, ARRAY_SIZE(ribbon_show_controls), ribbon_show_controls },
-    { L"Settings", L"TS", 0, 0, ARRAY_SIZE(ribbon_settings_controls), ribbon_settings_controls },
+    { L"Zoom", L"ZM", 0, 0, ARRAY_SIZE(ribbon_zoom_controls), ribbon_zoom_controls, 0 },
+    { L"Show or hide", L"HW", 0, 0, ARRAY_SIZE(ribbon_show_controls), ribbon_show_controls, 0 },
+    { L"Settings", L"TS", 0, 0, ARRAY_SIZE(ribbon_settings_controls), ribbon_settings_controls, 0 },
 };
 
 static const LeewayUIGroup ribbon_preview_groups[] = {
-    { L"Print", NULL, 0, 0, ARRAY_SIZE(ribbon_pv_print_controls), ribbon_pv_print_controls },
-    { L"Zoom", L"ZM", 0, 0, ARRAY_SIZE(ribbon_pv_zoom_controls), ribbon_pv_zoom_controls },
-    { L"Preview", NULL, 0, 0, ARRAY_SIZE(ribbon_pv_page_controls), ribbon_pv_page_controls },
+    { L"Print", NULL, 0, 0, ARRAY_SIZE(ribbon_pv_print_controls), ribbon_pv_print_controls, 0 },
+    { L"Zoom", L"ZM", 0, 0, ARRAY_SIZE(ribbon_pv_zoom_controls), ribbon_pv_zoom_controls, 0 },
+    { L"Preview", NULL, 0, 0, ARRAY_SIZE(ribbon_pv_page_controls), ribbon_pv_page_controls, 0 },
 };
 
 static const LeewayUITab ribbon_tabs[] = {
