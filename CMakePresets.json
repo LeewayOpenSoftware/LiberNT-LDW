@@ -1,0 +1,90 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "win11-msvc-amd64",
+      "displayName": "Windows 11 (MSVC, amd64)",
+      "description": "Standalone Win11 build with MSVC toolchain (amd64)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARCH": "amd64",
+        "CMAKE_SYSTEM_NAME": "Windows"
+      },
+      "binaryDir": "${sourceDir}/build-win11-msvc-amd64",
+      "hidden": false
+    },
+    {
+      "name": "win11-llvmmingw-amd64",
+      "displayName": "Windows 11 (LLVM-MinGW, amd64)",
+      "description": "Standalone Win11 build with LLVM-MinGW toolchain (amd64)",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARCH": "amd64",
+        "CMAKE_SYSTEM_NAME": "Windows",
+        "CMAKE_C_COMPILER": "clang.exe",
+        "CMAKE_CXX_COMPILER": "clang++.exe",
+        "CMAKE_RC_COMPILER": "llvm-rc.exe",
+        "CMAKE_AR": "llvm-ar.exe",
+        "CMAKE_RANLIB": "llvm-ranlib.exe"
+      },
+      "binaryDir": "${sourceDir}/build-win11-llvmingw-amd64",
+      "hidden": false,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "win11-clang-amd64",
+      "displayName": "Windows 11 (Clang, amd64) - MSYS2",
+      "description": "Standalone Win11 build with Clang from MSYS2 (amd64)",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARCH": "amd64",
+        "CMAKE_SYSTEM_NAME": "Windows",
+        "CMAKE_C_COMPILER": "C:/msys64/clang64/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/clang64/bin/clang++.exe",
+        "CMAKE_RC_COMPILER": "C:/msys64/clang64/bin/windres.exe",
+        "CMAKE_AR": "C:/msys64/clang64/bin/llvm-ar.exe"
+      },
+      "binaryDir": "${sourceDir}/build-win11-clang-amd64",
+      "hidden": false
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "win11-msvc-amd64",
+      "configurePreset": "win11-msvc-amd64",
+      "jobs": 0
+    },
+    {
+      "name": "win11-llvmingw-amd64",
+      "configurePreset": "win11-llvmingw-amd64",
+      "jobs": 0
+    },
+    {
+      "name": "win11-clang-amd64",
+      "configurePreset": "win11-clang-amd64",
+      "jobs": 0
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "win11-msvc-amd64",
+      "configurePreset": "win11-msvc-amd64"
+    },
+    {
+      "name": "win11-llvmingw-amd64",
+      "configurePreset": "win11-llvmingw-amd64"
+    },
+    {
+      "name": "win11-clang-amd64",
+      "configurePreset": "win11-clang-amd64"
+    }
+  ]
+}
