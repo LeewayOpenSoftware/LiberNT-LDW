@@ -269,7 +269,7 @@ static void char_from_pagenum(HWND hEditorWnd, FORMATRANGE *fr, int page)
 
 static HWND get_ruler_wnd(HWND hMainWnd)
 {
-    return GetDlgItem(GetDlgItem(hMainWnd, IDC_REBAR), IDC_RULER);
+    return GetDlgItem(hMainWnd, IDC_RULER);
 }
 
 void redraw_ruler(HWND hRulerWnd)
@@ -278,6 +278,16 @@ void redraw_ruler(HWND hRulerWnd)
 
     GetClientRect(hRulerWnd, &rc);
     InvalidateRect(hRulerWnd, &rc, TRUE);
+}
+
+int get_ruler_unit(void)
+{
+    return (int)registry_get_ruler_unit();
+}
+
+void set_ruler_unit(int unit)
+{
+    registry_set_ruler_unit((DWORD)unit);
 }
 
 static void update_ruler(HWND hRulerWnd)
@@ -289,14 +299,16 @@ static void update_ruler(HWND hRulerWnd)
 static void add_ruler_units(HDC hdcRuler, RECT* drawRect, BOOL NewMetrics, LONG EditLeftmost)
 {
     static HDC hdc;
+    static int cachedUnit = -1;
 
-    if(NewMetrics)
+    if(NewMetrics || cachedUnit != get_ruler_unit())
     {
         static HBITMAP hBitmap;
-        int i, x, y, RulerTextEnd;
-        int CmPixels;
-        int QuarterCmPixels;
+        int i, s, x, y, RulerTextEnd;
+        int UnitPixels, SubPixels, SubCount;
+        LONG UnitTwips;
         HFONT hFont;
+        int unit = get_ruler_unit();
 
         if(hdc)
         {
@@ -306,8 +318,31 @@ static void add_ruler_units(HDC hdcRuler, RECT* drawRect, BOOL NewMetrics, LONG 
 
         hdc = CreateCompatibleDC(0);
 
-        CmPixels = twips_to_pixels(centmm_to_twips(1000), GetDeviceCaps(hdc, LOGPIXELSX));
-        QuarterCmPixels = (int)((float)CmPixels / 4.0);
+        switch (unit)
+        {
+        default:
+        case UNIT_CM:
+            UnitTwips = centmm_to_twips(1000);
+            SubCount = 4;
+            break;
+        case UNIT_INCH:
+            UnitTwips = 1440;
+            SubCount = 8;
+            break;
+        case UNIT_PT:
+            UnitTwips = 720;
+            SubCount = 12;
+            break;
+        case UNIT_PICA:
+            UnitTwips = 1440;
+            SubCount = 6;
+            break;
+        }
+
+        UnitPixels = twips_to_pixels(UnitTwips, GetDeviceCaps(hdc, LOGPIXELSX));
+        SubPixels = (int)((float)UnitPixels / (float)SubCount);
+        if (SubPixels < 1)
+            SubPixels = 1;
 
         hBitmap = CreateCompatibleBitmap(hdc, drawRect->right, drawRect->bottom);
         SelectObject(hdc, hBitmap);
@@ -320,40 +355,42 @@ static void add_ruler_units(HDC hdcRuler, RECT* drawRect, BOOL NewMetrics, LONG 
         SetTextAlign(hdc, TA_CENTER);
         y = (int)(((float)drawRect->bottom - (float)drawRect->top) / 2.0) + 1;
         RulerTextEnd = drawRect->right - EditLeftmost + 1;
-        for(i = 1, x = EditLeftmost; x < (drawRect->right - EditLeftmost + 1); i ++)
+        for(i = 1, x = EditLeftmost; x < RulerTextEnd; i++)
         {
-            WCHAR str[3];
+            WCHAR str[6];
             int x2 = x;
 
-            x2 += QuarterCmPixels;
-            if(x2 > RulerTextEnd)
-                break;
+            for (s = 1; s < SubCount; s++)
+            {
+                x2 = x + SubPixels * s;
+                if (x2 > RulerTextEnd)
+                    break;
 
-            MoveToEx(hdc, x2, y, NULL);
-            LineTo(hdc, x2, y+2);
+                if (s == SubCount / 2)
+                {
+                    MoveToEx(hdc, x2, y - 3, NULL);
+                    LineTo(hdc, x2, y + 3);
+                } else
+                {
+                    MoveToEx(hdc, x2, y, NULL);
+                    LineTo(hdc, x2, y + 2);
+                }
+            }
 
-            x2 += QuarterCmPixels;
-            if(x2 > RulerTextEnd)
-                break;
-
-            MoveToEx(hdc, x2, y - 3, NULL);
-            LineTo(hdc, x2, y + 3);
-
-            x2 += QuarterCmPixels;
-            if(x2 > RulerTextEnd)
-                break;
-
-            MoveToEx(hdc, x2, y, NULL);
-            LineTo(hdc, x2, y+2);
-
-            x += CmPixels;
+            x += UnitPixels;
             if(x > RulerTextEnd)
                 break;
 
-            wsprintfW(str, L"%d", i);
+            if (unit == UNIT_PT)
+                wsprintfW(str, L"%d", i * 36);
+            else if (unit == UNIT_PICA)
+                wsprintfW(str, L"%d", i * 6);
+            else
+                wsprintfW(str, L"%d", i);
             TextOutW(hdc, x, 5, str, lstrlenW(str));
         }
         DeleteObject(hFont);
+        cachedUnit = unit;
     }
 
     BitBlt(hdcRuler, 0, 0, drawRect->right, drawRect->bottom, hdc, 0, 0, SRCAND);

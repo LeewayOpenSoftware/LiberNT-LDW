@@ -43,13 +43,13 @@ LRESULT CALLBACK preview_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 static HWND hMainWnd;
 static HWND hEditorWnd;
 static HWND hFindWnd;
-static HMENU hColorPopupMenu;
 
 static UINT ID_FINDMSGSTRING;
 
 static DWORD wordWrap[2];
 static DWORD barState[2];
 static WPARAM fileFormat = SF_RTF;
+static int saveas_filter_override = -1;
 
 static WCHAR wszFileName[MAX_PATH];
 static WCHAR wszFilter[MAX_STRING_LEN*4+6*3+5];
@@ -63,13 +63,6 @@ static WCHAR units_ptW[MAX_STRING_LEN];
 static int last_bullet = PFN_BULLET;
 
 static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam );
-
-typedef enum
-{
-    UNIT_CM,
-    UNIT_INCH,
-    UNIT_PT
-} UNIT;
 
 typedef struct
 {
@@ -129,39 +122,6 @@ static int MessageBoxWithResStringW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption
     return MessageBoxIndirectW(&params);
 }
 
-
-static void AddButtonStyle(HWND hwndToolBar, int nImage, int nCommand, BYTE style)
-{
-    TBBUTTON button;
-
-    ZeroMemory(&button, sizeof(button));
-    button.iBitmap = nImage;
-    button.idCommand = nCommand;
-    button.fsState = TBSTATE_ENABLED;
-    button.fsStyle = style;
-    button.dwData = 0;
-    button.iString = -1;
-    SendMessageW(hwndToolBar, TB_ADDBUTTONSW, 1, (LPARAM)&button);
-}
-
-static void AddButton(HWND hwndToolBar, int nImage, int nCommand)
-{
-    AddButtonStyle(hwndToolBar, nImage, nCommand, BTNS_BUTTON);
-}
-
-static void AddSeparator(HWND hwndToolBar)
-{
-    TBBUTTON button;
-
-    ZeroMemory(&button, sizeof(button));
-    button.iBitmap = -1;
-    button.idCommand = 0;
-    button.fsState = 0;
-    button.fsStyle = BTNS_SEP;
-    button.dwData = 0;
-    button.iString = -1;
-    SendMessageW(hwndToolBar, TB_ADDBUTTONSW, 1, (LPARAM)&button);
-}
 
 static DWORD CALLBACK stream_in(DWORD_PTR cookie, LPBYTE buffer, LONG cb, LONG *pcb)
 {
@@ -301,127 +261,6 @@ static void set_size(float size)
     SendMessageW(hEditorWnd, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
 }
 
-static void on_sizelist_modified(HWND hwndSizeList, LPWSTR wszNewFontSize)
-{
-    WCHAR sizeBuffer[MAX_STRING_LEN];
-    CHARFORMAT2W format;
-
-    ZeroMemory(&format, sizeof(format));
-    format.cbSize = sizeof(format);
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&format);
-
-    wsprintfW(sizeBuffer, L"%2d", format.yHeight / 20);
-    if(lstrcmpW(sizeBuffer, wszNewFontSize))
-    {
-        float size = 0;
-        if(number_from_string(wszNewFontSize, &size, NULL)
-           && size > 0)
-        {
-            set_size(size);
-        } else
-        {
-            SetWindowTextW(hwndSizeList, sizeBuffer);
-            MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_INVALID_NUMBER),
-                        L"Wine Wordpad", MB_OK | MB_ICONINFORMATION);
-        }
-    }
-}
-
-static void add_size(HWND hSizeListWnd, unsigned size)
-{
-    WCHAR buffer[3];
-    COMBOBOXEXITEMW cbItem;
-    cbItem.mask = CBEIF_TEXT;
-    cbItem.iItem = -1;
-
-    wsprintfW(buffer, L"%2d", size);
-    cbItem.pszText = buffer;
-    SendMessageW(hSizeListWnd, CBEM_INSERTITEMW, 0, (LPARAM)&cbItem);
-}
-
-static void populate_size_list(HWND hSizeListWnd)
-{
-    HWND hReBarWnd = GetDlgItem(hMainWnd, IDC_REBAR);
-    HWND hFontListWnd = GetDlgItem(hReBarWnd, IDC_FONTLIST);
-    COMBOBOXEXITEMW cbFontItem;
-    CHARFORMAT2W fmt;
-    HWND hListEditWnd = (HWND)SendMessageW(hSizeListWnd, CBEM_GETEDITCONTROL, 0, 0);
-    HDC hdc = GetDC(hMainWnd);
-    static const unsigned choices[] = {8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,72};
-    WCHAR buffer[3];
-    size_t i;
-    DWORD fontStyle;
-
-    ZeroMemory(&fmt, sizeof(fmt));
-    fmt.cbSize = sizeof(fmt);
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
-
-    cbFontItem.mask = CBEIF_LPARAM;
-    cbFontItem.iItem = SendMessageW(hFontListWnd, CB_FINDSTRINGEXACT, -1, (LPARAM)fmt.szFaceName);
-    SendMessageW(hFontListWnd, CBEM_GETITEMW, 0, (LPARAM)&cbFontItem);
-
-    fontStyle = (DWORD)LOWORD(cbFontItem.lParam);
-
-    SendMessageW(hSizeListWnd, CB_RESETCONTENT, 0, 0);
-
-    if((fontStyle & RASTER_FONTTYPE) && cbFontItem.iItem)
-    {
-        add_size(hSizeListWnd, (BYTE)MulDiv(HIWORD(cbFontItem.lParam), 72,
-                               GetDeviceCaps(hdc, LOGPIXELSY)));
-    } else
-    {
-        for(i = 0; i < ARRAY_SIZE(choices); i++)
-            add_size(hSizeListWnd, choices[i]);
-    }
-
-    wsprintfW(buffer, L"%2d", fmt.yHeight / 20);
-    SendMessageW(hListEditWnd, WM_SETTEXT, 0, (LPARAM)buffer);
-}
-
-static void update_size_list(void)
-{
-    HWND hReBar = GetDlgItem(hMainWnd, IDC_REBAR);
-    HWND hwndSizeList = GetDlgItem(hReBar, IDC_SIZELIST);
-    HWND hwndSizeListEdit = (HWND)SendMessageW(hwndSizeList, CBEM_GETEDITCONTROL, 0, 0);
-    WCHAR fontSize[MAX_STRING_LEN], sizeBuffer[MAX_STRING_LEN];
-    CHARFORMAT2W fmt;
-
-    ZeroMemory(&fmt, sizeof(fmt));
-    fmt.cbSize = sizeof(fmt);
-
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
-
-    SendMessageW(hwndSizeListEdit, WM_GETTEXT, MAX_PATH, (LPARAM)fontSize);
-    wsprintfW(sizeBuffer, L"%2d", fmt.yHeight / 20);
-
-    if(lstrcmpW(fontSize, sizeBuffer))
-        SendMessageW(hwndSizeListEdit, WM_SETTEXT, 0, (LPARAM)sizeBuffer);
-}
-
-static void update_font_list(void)
-{
-    HWND hReBar = GetDlgItem(hMainWnd, IDC_REBAR);
-    HWND hFontList = GetDlgItem(hReBar, IDC_FONTLIST);
-    HWND hFontListEdit = (HWND)SendMessageW(hFontList, CBEM_GETEDITCONTROL, 0, 0);
-    WCHAR fontName[MAX_STRING_LEN];
-    CHARFORMAT2W fmt;
-
-    ZeroMemory(&fmt, sizeof(fmt));
-    fmt.cbSize = sizeof(fmt);
-
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
-    if (!SendMessageW(hFontListEdit, WM_GETTEXT, MAX_PATH, (LPARAM)fontName)) return;
-
-    if(lstrcmpW(fontName, fmt.szFaceName))
-    {
-        SendMessageW(hFontListEdit, WM_SETTEXT, 0, (LPARAM)fmt.szFaceName);
-        populate_size_list(GetDlgItem(hReBar, IDC_SIZELIST));
-    } else
-    {
-        update_size_list();
-    }
-}
-
 static void clear_formatting(void)
 {
     PARAFORMAT2 pf;
@@ -455,10 +294,6 @@ static WPARAM fileformat_flags(int format)
 
 static void set_font(LPCWSTR wszFaceName)
 {
-    HWND hReBarWnd = GetDlgItem(hMainWnd, IDC_REBAR);
-    HWND hSizeListWnd = GetDlgItem(hReBarWnd, IDC_SIZELIST);
-    HWND hFontListWnd = GetDlgItem(hReBarWnd, IDC_FONTLIST);
-    HWND hFontListEditWnd = (HWND)SendMessageW(hFontListWnd, CBEM_GETEDITCONTROL, 0, 0);
     CHARFORMAT2W fmt;
 
     ZeroMemory(&fmt, sizeof(fmt));
@@ -469,10 +304,6 @@ static void set_font(LPCWSTR wszFaceName)
     lstrcpyW(fmt.szFaceName, wszFaceName);
 
     SendMessageW(hEditorWnd, EM_SETCHARFORMAT,  SCF_SELECTION, (LPARAM)&fmt);
-
-    populate_size_list(hSizeListWnd);
-
-    SendMessageW(hFontListEditWnd, WM_SETTEXT, 0, (LPARAM)wszFaceName);
 }
 
 static void set_default_font(void)
@@ -494,17 +325,6 @@ static void set_default_font(void)
     lstrcpyW(fmt.szFaceName, font);
 
     SendMessageW(hEditorWnd, EM_SETCHARFORMAT,  SCF_DEFAULT, (LPARAM)&fmt);
-}
-
-static void on_fontlist_modified(LPWSTR wszNewFaceName)
-{
-    CHARFORMAT2W format;
-    ZeroMemory(&format, sizeof(format));
-    format.cbSize = sizeof(format);
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&format);
-
-    if(lstrcmpW(format.szFaceName, wszNewFaceName))
-        set_font(wszNewFaceName);
 }
 
 static void dialog_choose_font(void)
@@ -568,125 +388,6 @@ struct font_array
     size_t capacity;
 };
 
-static BOOL array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
-{
-    size_t new_capacity, max_capacity;
-    void *new_elements;
-
-    if (count <= *capacity)
-        return TRUE;
-
-    max_capacity = ~(SIZE_T)0 / size;
-    if (count > max_capacity)
-        return FALSE;
-
-    new_capacity = max(4, *capacity);
-    while (new_capacity < count && new_capacity <= max_capacity / 2)
-        new_capacity *= 2;
-    if (new_capacity < count)
-        new_capacity = max_capacity;
-
-    new_elements = *elements ? realloc(*elements, new_capacity * size) :
-            malloc(new_capacity * size);
-    if (!new_elements)
-        return FALSE;
-
-    *elements = new_elements;
-    *capacity = new_capacity;
-
-    return TRUE;
-}
-
-static void add_font(struct font_array *fonts, LPCWSTR fontName, DWORD fontType, const NEWTEXTMETRICEXW *ntmc)
-{
-    int fontHeight = 0;
-    size_t idx;
-
-    if (!array_reserve((void **)&fonts->fonts, &fonts->capacity, fonts->count + 1, sizeof(*fonts->fonts)))
-        return;
-
-    if (fontType & RASTER_FONTTYPE)
-        fontHeight = ntmc->ntmTm.tmHeight - ntmc->ntmTm.tmInternalLeading;
-
-    idx = fonts->count;
-    fonts->fonts[idx].name = wcsdup(fontName);
-    fonts->fonts[idx].lParam = MAKELONG(fontType, fontHeight);
-
-    fonts->count++;
-}
-
-static int CALLBACK enum_font_proc(const LOGFONTW *lpelfe, const TEXTMETRICW *lpntme,
-                            DWORD FontType, LPARAM lParam)
-{
-    struct font_array *fonts = (void *)lParam;
-
-    if (lpelfe->lfFaceName[0] == '@') return 1;  /* ignore vertical fonts */
-
-    add_font(fonts, lpelfe->lfFaceName, FontType, (const NEWTEXTMETRICEXW *)lpntme);
-
-    return 1;
-}
-
-static int __cdecl fonts_desc_compare(const void *a, const void *b)
-{
-    const struct font_desc *left = a, *right = b;
-    return lstrcmpiW(left->name, right->name);
-}
-
-static void populate_font_list(HWND hListWnd)
-{
-    struct font_array font_array = { 0 };
-    HDC hdc = GetDC(hMainWnd);
-    LOGFONTW fontinfo;
-    HWND hListEditWnd = (HWND)SendMessageW(hListWnd, CBEM_GETEDITCONTROL, 0, 0);
-    CHARFORMAT2W fmt;
-    size_t i, j;
-
-    fontinfo.lfCharSet = DEFAULT_CHARSET;
-    *fontinfo.lfFaceName = '\0';
-    fontinfo.lfPitchAndFamily = 0;
-
-    /* Collect font names, sort, remove duplicates. */
-    EnumFontFamiliesExW(hdc, &fontinfo, enum_font_proc, (LPARAM)&font_array, 0);
-
-    qsort(font_array.fonts, font_array.count, sizeof(*font_array.fonts), fonts_desc_compare);
-
-    for (i = 1, j = 0; i < font_array.count; ++i)
-    {
-        if (!lstrcmpiW(font_array.fonts[i].name, font_array.fonts[j].name))
-        {
-            free(font_array.fonts[i].name);
-            font_array.fonts[i].name = NULL;
-        }
-        else if (++j != i)
-        {
-            font_array.fonts[j] = font_array.fonts[i];
-            font_array.fonts[i].name = NULL;
-        }
-    }
-    font_array.count = j + 1;
-
-    for (i = 0; i < font_array.count; ++i)
-    {
-        COMBOBOXEXITEMW cbitem = { 0 };
-
-        cbitem.mask = CBEIF_TEXT | CBEIF_LPARAM;
-        cbitem.pszText = font_array.fonts[i].name;
-        cbitem.iItem = -1;
-        cbitem.lParam = font_array.fonts[i].lParam;
-
-        SendMessageW(hListWnd, CBEM_INSERTITEMW, 0, (LPARAM)&cbitem);
-
-        free(font_array.fonts[i].name);
-    }
-    free(font_array.fonts);
-
-    ZeroMemory(&fmt, sizeof(fmt));
-    fmt.cbSize = sizeof(fmt);
-    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_DEFAULT, (LPARAM)&fmt);
-    SendMessageW(hListEditWnd, WM_SETTEXT, 0, (LPARAM)fmt.szFaceName);
-}
-
 static void update_window(void)
 {
     RECT rect;
@@ -713,26 +414,11 @@ static void store_bar_state(int bandId, BOOL show)
 
 static void set_toolbar_state(int bandId, BOOL show)
 {
-    HWND hwndReBar = GetDlgItem(hMainWnd, IDC_REBAR);
-
-    SendMessageW(hwndReBar, RB_SHOWBAND, SendMessageW(hwndReBar, RB_IDTOINDEX, bandId, 0), show);
-
-    if(bandId == BANDID_TOOLBAR)
+    if(bandId == BANDID_RULER)
     {
-        REBARBANDINFOW rbbinfo;
-        int index = SendMessageW(hwndReBar, RB_IDTOINDEX, BANDID_FONTLIST, 0);
-
-        rbbinfo.cbSize = REBARBANDINFOW_V6_SIZE;
-        rbbinfo.fMask = RBBIM_STYLE;
-
-        SendMessageW(hwndReBar, RB_GETBANDINFOW, index, (LPARAM)&rbbinfo);
-
-        if(!show)
-            rbbinfo.fStyle &= ~RBBS_BREAK;
-        else
-            rbbinfo.fStyle |= RBBS_BREAK;
-
-        SendMessageW(hwndReBar, RB_SETBANDINFOW, index, (LPARAM)&rbbinfo);
+        HWND hRulerWnd = GetDlgItem(hMainWnd, IDC_RULER);
+        if(hRulerWnd)
+            ShowWindow(hRulerWnd, show ? SW_SHOW : SW_HIDE);
     }
 
     if(bandId == BANDID_TOOLBAR || bandId == BANDID_FORMATBAR || bandId == BANDID_RULER)
@@ -750,8 +436,6 @@ static void set_statusbar_state(BOOL show)
 static void set_bar_states(void)
 {
     set_toolbar_state(BANDID_TOOLBAR, is_bar_visible(BANDID_TOOLBAR));
-    set_toolbar_state(BANDID_FONTLIST, is_bar_visible(BANDID_FORMATBAR));
-    set_toolbar_state(BANDID_SIZELIST, is_bar_visible(BANDID_FORMATBAR));
     set_toolbar_state(BANDID_FORMATBAR, is_bar_visible(BANDID_FORMATBAR));
     set_toolbar_state(BANDID_RULER, is_bar_visible(BANDID_RULER));
     set_statusbar_state(is_bar_visible(BANDID_STATUSBAR));
@@ -759,9 +443,8 @@ static void set_bar_states(void)
     update_window();
 }
 
-static void preview_exit(HWND hMainWnd)
+void preview_exit(HWND hMainWnd)
 {
-    HMENU hMenu = LoadMenuW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDM_MAINMENU));
     HWND hEditorWnd = GetDlgItem(hMainWnd, IDC_EDITOR);
 
     set_bar_states();
@@ -769,8 +452,7 @@ static void preview_exit(HWND hMainWnd)
 
     close_preview(hMainWnd);
 
-    SetMenu(hMainWnd, hMenu);
-    registry_read_filelist(hMainWnd);
+    ribbon_set_preview(FALSE);
 
     update_window();
 }
@@ -855,7 +537,6 @@ static void DoOpenFile(LPCWSTR szOpenFileName)
     lstrcpyW(wszFileName, szOpenFileName);
     SendMessageW(hEditorWnd, EM_SETMODIFY, FALSE, 0);
     registry_set_filelist(szOpenFileName, hMainWnd);
-    update_font_list();
 }
 
 static void ShowWriteError(DWORD Code)
@@ -950,7 +631,8 @@ static BOOL DialogSaveFile(void)
     sfn.lpstrFile = wszFile;
     sfn.nMaxFile = MAX_PATH;
     sfn.lpstrDefExt = L"rtf";
-    sfn.nFilterIndex = fileformat_number(fileFormat)+1;
+    sfn.nFilterIndex = (saveas_filter_override >= 0) ? saveas_filter_override + 1
+                                                     : fileformat_number(fileFormat)+1;
 
     while(GetSaveFileNameW(&sfn))
     {
@@ -1402,6 +1084,8 @@ static int units_to_twips(UNIT unit, float number)
     case UNIT_PT:
         twips = (int)(number * (0.0138 * (float)TWIPS_PER_INCH));
         break;
+        case UNIT_PICA:
+            return (int)(number * 240);
     }
 
     return twips;
@@ -1418,35 +1102,6 @@ static void number_with_units(LPWSTR buffer, int number)
     float converted = (float)number / (float)TWIPS_PER_INCH *(float)CENTMM_PER_INCH / 1000.0;
 
     swprintf(buffer, MAX_STRING_LEN, L"%.2f %s", converted, units_cmW);
-}
-
-static BOOL get_comboexlist_selection(HWND hComboEx, LPWSTR wszBuffer, UINT bufferLength)
-{
-    COMBOBOXEXITEMW cbItem;
-    COMBOBOXINFO cbInfo;
-    HWND hCombo, hList;
-    int idx, result;
-
-    hCombo = (HWND)SendMessageW(hComboEx, CBEM_GETCOMBOCONTROL, 0, 0);
-    if (!hCombo)
-        return FALSE;
-    cbInfo.cbSize = sizeof(COMBOBOXINFO);
-    result = SendMessageW(hCombo, CB_GETCOMBOBOXINFO, 0, (LPARAM)&cbInfo);
-    if (!result)
-        return FALSE;
-    hList = cbInfo.hwndList;
-    idx = SendMessageW(hList, LB_GETCURSEL, 0, 0);
-    if (idx < 0)
-        return FALSE;
-
-    ZeroMemory(&cbItem, sizeof(cbItem));
-    cbItem.mask = CBEIF_TEXT;
-    cbItem.iItem = idx;
-    cbItem.pszText = wszBuffer;
-    cbItem.cchTextMax = bufferLength-1;
-    result = SendMessageW(hComboEx, CBEM_GETITEMW, 0, (LPARAM)&cbItem);
-
-    return result != 0;
 }
 
 static INT_PTR CALLBACK datetime_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1840,142 +1495,13 @@ static INT_PTR CALLBACK tabstops_proc(HWND hWnd, UINT message, WPARAM wParam, LP
 
 static LRESULT OnCreate( HWND hWnd )
 {
-    HWND hToolBarWnd, hFormatBarWnd,  hReBarWnd, hFontListWnd, hSizeListWnd, hRulerWnd;
     HINSTANCE hInstance = GetModuleHandleW(0);
     HANDLE hDLL;
-    TBADDBITMAP ab;
-    int nStdBitmaps = 0;
-    REBARINFO rbi;
-    REBARBANDINFOW rbb;
-    RECT rect;
-    HFONT font;
-    HDC hdc;
-    SIZE name_sz, size_sz;
-    int height, dpi;
 
     CreateStatusWindowW(CCS_NODIVIDER|WS_CHILD|WS_VISIBLE, L"RichEdit text", hWnd, IDC_STATUSBAR);
 
-    hReBarWnd = CreateWindowExW(WS_EX_TOOLWINDOW, REBARCLASSNAMEW, NULL,
-      CCS_NODIVIDER|WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CLIPCHILDREN|RBS_VARHEIGHT|CCS_TOP,
-      CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, hWnd, (HMENU)IDC_REBAR, hInstance, NULL);
-
-    rbi.cbSize = sizeof(rbi);
-    rbi.fMask = 0;
-    rbi.himl = NULL;
-    if(!SendMessageW(hReBarWnd, RB_SETBARINFO, 0, (LPARAM)&rbi))
-        return -1;
-
-    hToolBarWnd = CreateToolbarEx(hReBarWnd, CCS_NOPARENTALIGN|CCS_NOMOVEY|WS_VISIBLE|WS_CHILD|TBSTYLE_TOOLTIPS,
-      IDC_TOOLBAR,
-      1, hInstance, IDB_TOOLBAR,
-      NULL, 0,
-      24, 24, 16, 16, sizeof(TBBUTTON));
-
-    hdc = GetDC(hWnd);
-    dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-    ReleaseDC(hWnd, hdc);
-
-    ab.hInst = HINST_COMMCTRL;
-    ab.nID = dpi >= 120 ? IDB_STD_LARGE_COLOR : IDB_STD_SMALL_COLOR;
-    nStdBitmaps = SendMessageW(hToolBarWnd, TB_ADDBITMAP, 0, (LPARAM)&ab);
-
-    AddButton(hToolBarWnd, nStdBitmaps+STD_FILENEW, ID_FILE_NEW);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_FILEOPEN, ID_FILE_OPEN);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_FILESAVE, ID_FILE_SAVE);
-    AddSeparator(hToolBarWnd);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_PRINT, ID_PRINT_QUICK);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_PRINTPRE, ID_PREVIEW);
-    AddSeparator(hToolBarWnd);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_FIND, ID_FIND);
-    AddSeparator(hToolBarWnd);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_CUT, ID_EDIT_CUT);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_COPY, ID_EDIT_COPY);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_PASTE, ID_EDIT_PASTE);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_UNDO, ID_EDIT_UNDO);
-    AddButton(hToolBarWnd, nStdBitmaps+STD_REDOW, ID_EDIT_REDO);
-    AddSeparator(hToolBarWnd);
-    AddButton(hToolBarWnd, 0, ID_DATETIME);
-
-    SendMessageW(hToolBarWnd, TB_AUTOSIZE, 0, 0);
-    height = HIWORD(SendMessageW(hToolBarWnd, TB_GETBUTTONSIZE, 0, 0));
-
-    hFontListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
-                      WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN | CBS_SORT,
-                      0, 0, 200, 150, hReBarWnd, (HMENU)IDC_FONTLIST, hInstance, NULL);
-    GetWindowRect(hFontListWnd, &rect);
-    height = max(height, rect.bottom - rect.top);
-
-    SendMessageW(hToolBarWnd, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
-
-    rbb.cbSize = REBARBANDINFOW_V6_SIZE;
-    rbb.fMask = RBBIM_SIZE | RBBIM_CHILDSIZE | RBBIM_CHILD | RBBIM_STYLE | RBBIM_ID;
-    rbb.fStyle = RBBS_CHILDEDGE | RBBS_BREAK | RBBS_NOGRIPPER;
-    rbb.cx = 0;
-    rbb.hwndChild = hToolBarWnd;
-    rbb.cxMinChild = 0;
-    rbb.cyChild = rbb.cyMinChild = height;
-    rbb.wID = BANDID_TOOLBAR;
-
-    SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
-
-    font = (HFONT)SendMessageW(hFontListWnd, WM_GETFONT, 0, 0);
-    hdc = GetDC(hFontListWnd);
-    font = SelectObject(hdc, font);
-    GetTextExtentPointW(hdc, L"Times New Roman", ARRAY_SIZE(L"Times New Roman") - 1, &name_sz);
-    GetTextExtentPointW(hdc, L" 00", ARRAY_SIZE(L" 00") - 1, &size_sz);
-    font = SelectObject(hdc, font);
-    ReleaseDC(hFontListWnd, hdc);
-    rbb.hwndChild = hFontListWnd;
-    rbb.cx = MulDiv(name_sz.cx, 3, 2) + height; /* height is space for the dropdown arrow */
-    rbb.wID = BANDID_FONTLIST;
-
-    SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
-
-    hSizeListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
-                      WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN,
-                      0, 0, 50, 150, hReBarWnd, (HMENU)IDC_SIZELIST, hInstance, NULL);
-
-    rbb.hwndChild = hSizeListWnd;
-    rbb.cx = MulDiv(size_sz.cx, 3, 2) + height; /* height is space for the dropdown arrow */
-    rbb.fStyle ^= RBBS_BREAK;
-    rbb.wID = BANDID_SIZELIST;
-
-    SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
-
-    hFormatBarWnd = CreateToolbarEx(hReBarWnd,
-         CCS_NOPARENTALIGN | CCS_NOMOVEY | WS_VISIBLE | TBSTYLE_TOOLTIPS,
-         IDC_FORMATBAR, 8, hInstance, IDB_FORMATBAR, NULL, 0, 16, 16, 16, 16, sizeof(TBBUTTON));
-
-    SendMessageW(hFormatBarWnd, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
-    SendMessageW(hFormatBarWnd, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
-
-    AddButton(hFormatBarWnd, 0, ID_FORMAT_BOLD);
-    AddButton(hFormatBarWnd, 1, ID_FORMAT_ITALIC);
-    AddButton(hFormatBarWnd, 2, ID_FORMAT_UNDERLINE);
-    AddButton(hFormatBarWnd, 3, ID_FORMAT_COLOR);
-    AddSeparator(hFormatBarWnd);
-    AddButton(hFormatBarWnd, 4, ID_ALIGN_LEFT);
-    AddButton(hFormatBarWnd, 5, ID_ALIGN_CENTER);
-    AddButton(hFormatBarWnd, 6, ID_ALIGN_RIGHT);
-    AddSeparator(hFormatBarWnd);
-    AddButtonStyle(hFormatBarWnd, 7, ID_BULLETONOFF, BTNS_DROPDOWN);
-
-    SendMessageW(hFormatBarWnd, TB_AUTOSIZE, 0, 0);
-
-    rbb.hwndChild = hFormatBarWnd;
-    rbb.wID = BANDID_FORMATBAR;
-
-    SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
-
-    hRulerWnd = CreateWindowExW(0, WC_STATICW, NULL, WS_VISIBLE | WS_CHILD,
-                                0, 0, 200, 10, hReBarWnd,  (HMENU)IDC_RULER, hInstance, NULL);
-
-
-    rbb.hwndChild = hRulerWnd;
-    rbb.wID = BANDID_RULER;
-    rbb.fStyle |= RBBS_BREAK;
-
-    SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
+    CreateWindowExW(0, WC_STATICW, NULL, WS_VISIBLE | WS_CHILD,
+                                0, 0, 200, 25, hWnd, (HMENU)IDC_RULER, hInstance, NULL);
 
     hDLL = LoadLibraryW(L"riched20.dll");
     if(!hDLL)
@@ -1992,14 +1518,19 @@ static LRESULT OnCreate( HWND hWnd )
 
     if (!hEditorWnd) return -1;
 
+    if (!ribbon_create(hWnd))
+    {
+        MessageBoxW(hWnd, L"The ribbon interface could not be created.", L"WordPad",
+                    MB_OK | MB_ICONEXCLAMATION);
+        return -1;
+    }
+
     setup_richedit_olecallback(hEditorWnd);
     SetFocus(hEditorWnd);
     SendMessageW(hEditorWnd, EM_SETEVENTMASK, 0, ENM_SELCHANGE);
 
     set_default_font();
 
-    populate_font_list(hFontListWnd);
-    populate_size_list(hSizeListWnd);
     DoLoadStrings();
     SendMessageW(hEditorWnd, EM_SETMODIFY, FALSE, 0);
 
@@ -2015,109 +1546,17 @@ static LRESULT OnCreate( HWND hWnd )
 
 static LRESULT OnUser( HWND hWnd )
 {
-    HWND hwndEditor = GetDlgItem(hWnd, IDC_EDITOR);
-    HWND hwndReBar = GetDlgItem(hWnd, IDC_REBAR);
-    HWND hwndToolBar = GetDlgItem(hwndReBar, IDC_TOOLBAR);
-    HWND hwndFormatBar = GetDlgItem(hwndReBar, IDC_FORMATBAR);
-    int from, to;
-    CHARFORMAT2W fmt;
-    PARAFORMAT2 pf;
-    GETTEXTLENGTHEX gt;
-
-    ZeroMemory(&fmt, sizeof(fmt));
-    fmt.cbSize = sizeof(fmt);
-
-    ZeroMemory(&pf, sizeof(pf));
-    pf.cbSize = sizeof(pf);
-
-    gt.flags = GTL_NUMCHARS;
-    gt.codepage = 1200;
-
-    SendMessageW(hwndToolBar, TB_ENABLEBUTTON, ID_FIND,
-                 SendMessageW(hwndEditor, EM_GETTEXTLENGTHEX, (WPARAM)&gt, 0) ? 1 : 0);
-
-    SendMessageW(hwndEditor, EM_GETCHARFORMAT, TRUE, (LPARAM)&fmt);
-
-    SendMessageW(hwndEditor, EM_GETSEL, (WPARAM)&from, (LPARAM)&to);
-    SendMessageW(hwndToolBar, TB_ENABLEBUTTON, ID_EDIT_UNDO,
-      SendMessageW(hwndEditor, EM_CANUNDO, 0, 0));
-    SendMessageW(hwndToolBar, TB_ENABLEBUTTON, ID_EDIT_REDO,
-      SendMessageW(hwndEditor, EM_CANREDO, 0, 0));
-    SendMessageW(hwndToolBar, TB_ENABLEBUTTON, ID_EDIT_CUT, from == to ? 0 : 1);
-    SendMessageW(hwndToolBar, TB_ENABLEBUTTON, ID_EDIT_COPY, from == to ? 0 : 1);
-
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_FORMAT_BOLD, (fmt.dwMask & CFM_BOLD) &&
-            (fmt.dwEffects & CFE_BOLD));
-    SendMessageW(hwndFormatBar, TB_INDETERMINATE, ID_FORMAT_BOLD, !(fmt.dwMask & CFM_BOLD));
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_FORMAT_ITALIC, (fmt.dwMask & CFM_ITALIC) &&
-            (fmt.dwEffects & CFE_ITALIC));
-    SendMessageW(hwndFormatBar, TB_INDETERMINATE, ID_FORMAT_ITALIC, !(fmt.dwMask & CFM_ITALIC));
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_FORMAT_UNDERLINE, (fmt.dwMask & CFM_UNDERLINE) &&
-            (fmt.dwEffects & CFE_UNDERLINE));
-    SendMessageW(hwndFormatBar, TB_INDETERMINATE, ID_FORMAT_UNDERLINE, !(fmt.dwMask & CFM_UNDERLINE));
-
-    SendMessageW(hwndEditor, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_ALIGN_LEFT, (pf.wAlignment == PFA_LEFT));
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_ALIGN_CENTER, (pf.wAlignment == PFA_CENTER));
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_ALIGN_RIGHT, (pf.wAlignment == PFA_RIGHT));
-
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_BULLETONOFF, pf.wNumbering != 0);
+    ribbon_on_idle_state();
     return 0;
 }
 
 static LRESULT OnNotify( HWND hWnd, LPARAM lParam)
 {
     HWND hwndEditor = GetDlgItem(hWnd, IDC_EDITOR);
-    HWND hwndReBar = GetDlgItem(hWnd, IDC_REBAR);
     NMHDR *pHdr = (NMHDR *)lParam;
-    HWND hwndFontList = GetDlgItem(hwndReBar, IDC_FONTLIST);
-    HWND hwndSizeList = GetDlgItem(hwndReBar, IDC_SIZELIST);
-    HWND hwndFormatBar = GetDlgItem(hwndReBar, IDC_FORMATBAR);
 
-    if (pHdr->hwndFrom == hwndFontList || pHdr->hwndFrom == hwndSizeList)
-    {
-        if (pHdr->code == CBEN_ENDEDITW)
-        {
-            NMCBEENDEDITW *endEdit = (NMCBEENDEDITW *)lParam;
-            if(pHdr->hwndFrom == hwndFontList)
-            {
-                on_fontlist_modified(endEdit->szText);
-            } else if (pHdr->hwndFrom == hwndSizeList)
-            {
-                on_sizelist_modified(hwndSizeList,endEdit->szText);
-            }
-        }
-        return 0;
-    }
-
-    if (pHdr->hwndFrom == hwndFormatBar)
-    {
-        if (pHdr->code == TBN_DROPDOWN)
-        {
-            NMTOOLBARW *tb_notify = (NMTOOLBARW *)lParam;
-            HMENU menu = GetMenu( hWnd );
-            MENUITEMINFOW info;
-            TPMPARAMS params;
-            RECT rc;
-
-            if (!menu) return 0;
-            info.cbSize = sizeof(info);
-            info.fMask = MIIM_SUBMENU;
-            GetMenuItemInfoW( menu, ID_LISTMENU, FALSE, &info );
-            if (!info.hSubMenu) return 0;
-
-            SendMessageW( tb_notify->hdr.hwndFrom, TB_GETRECT, (WPARAM)tb_notify->iItem, (LPARAM)&rc );
-            MapWindowPoints( tb_notify->hdr.hwndFrom, HWND_DESKTOP, (LPPOINT)&rc, 2 );
-
-            params.cbSize = sizeof(params);
-            params.rcExclude = rc;
-            TrackPopupMenuEx( info.hSubMenu,
-                              TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
-                              rc.left, rc.bottom, hWnd, &params );
-        }
-
-        return 0;
-    }
+    if (ribbon_on_notify(pHdr))
+        return 1;
 
     if (pHdr->hwndFrom == hwndEditor)
     {
@@ -2125,8 +1564,6 @@ static LRESULT OnNotify( HWND hWnd, LPARAM lParam)
         {
             SELCHANGE *pSC = (SELCHANGE *)lParam;
             char buf[128];
-
-            update_font_list();
 
             sprintf( buf,"selection = %ld..%ld, line count=%lld",
                      pSC->chrg.cpMin, pSC->chrg.cpMax,
@@ -2148,6 +1585,39 @@ static const COLORREF textcolors[]=
     0x00ff0000L,0x00ff00ffL,0x00ffff00L,0x00FFFFFFL
 };
 
+
+static void apply_color_to_selection(int index, BOOL highlight)
+{
+    CHARFORMAT2W fmt;
+
+    ZeroMemory(&fmt, sizeof(fmt));
+    fmt.cbSize = sizeof(fmt);
+    SendMessageW(hEditorWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+    if (highlight)
+    {
+        fmt.dwMask = CFM_BACKCOLOR;
+        if (index < 16)
+        {
+            fmt.crBackColor = textcolors[index];
+            fmt.dwEffects &= ~CFE_AUTOBACKCOLOR;
+        } else {
+            fmt.dwEffects |= CFE_AUTOBACKCOLOR;
+        }
+    } else {
+        fmt.dwMask = CFM_COLOR;
+        if (index < 16)
+        {
+            fmt.crTextColor = textcolors[index];
+            fmt.dwEffects &= ~CFE_AUTOCOLOR;
+        } else {
+            fmt.dwEffects |= CFE_AUTOCOLOR;
+        }
+    }
+
+    SendMessageW(hEditorWnd, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+}
+
 static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 {
     HWND hwndEditor = GetDlgItem(hWnd, IDC_EDITOR);
@@ -2156,8 +1626,158 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
     if ((HWND)lParam == hwndEditor)
         return 0;
 
+    if (LOWORD(wParam) >= ID_COLOR_FIRST && LOWORD(wParam) <= ID_COLOR_AUTOMATIC)
+    {
+        apply_color_to_selection(LOWORD(wParam) - ID_COLOR_FIRST, FALSE);
+        return 0;
+    }
+
     switch(LOWORD(wParam))
     {
+    case ID_SAVEAS_RICHTEXT:
+        saveas_filter_override = fileformat_number(SF_RTF);
+        DialogSaveFile();
+        saveas_filter_override = -1;
+        break;
+
+    case ID_SAVEAS_TEXT:
+        saveas_filter_override = fileformat_number(SF_TEXT);
+        DialogSaveFile();
+        saveas_filter_override = -1;
+        break;
+
+    case ID_SAVEAS_OTHER:
+        DialogSaveFile();
+        break;
+
+    case ID_FORMAT_HIGHLIGHT:
+        {
+            CHARFORMAT2W fmt;
+
+            ZeroMemory(&fmt, sizeof(fmt));
+            fmt.cbSize = sizeof(fmt);
+            SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+            if ((fmt.dwMask & CFM_BACKCOLOR) && !(fmt.dwEffects & CFE_AUTOBACKCOLOR))
+                apply_color_to_selection(16, TRUE);
+            else
+                apply_color_to_selection(11, TRUE);
+        }
+        break;
+
+    case ID_GROW_FONT:
+    case ID_SHRINK_FONT:
+        {
+            CHARFORMAT2W fmt;
+
+            ZeroMemory(&fmt, sizeof(fmt));
+            fmt.cbSize = sizeof(fmt);
+            SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+            fmt.dwMask = CFM_SIZE;
+            fmt.yHeight += (LOWORD(wParam) == ID_GROW_FONT) ? 20 : -20;
+            if (fmt.yHeight < 20)
+                fmt.yHeight = 20;
+            if (fmt.yHeight > 32760)
+                fmt.yHeight = 32760;
+
+            SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        }
+        break;
+
+    case ID_FORMAT_STRIKE:
+        {
+            CHARFORMAT2W fmt;
+
+            ZeroMemory(&fmt, sizeof(fmt));
+            fmt.cbSize = sizeof(fmt);
+            SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+            fmt.dwMask = CFM_STRIKEOUT;
+            fmt.dwEffects ^= CFE_STRIKEOUT;
+            SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        }
+        break;
+
+    case ID_FORMAT_SUBSCRIPT:
+    case ID_FORMAT_SUPERSCRIPT:
+        {
+            CHARFORMAT2W fmt;
+            DWORD effect = LOWORD(wParam) == ID_FORMAT_SUBSCRIPT ? CFE_SUBSCRIPT : CFE_SUPERSCRIPT;
+
+            ZeroMemory(&fmt, sizeof(fmt));
+            fmt.cbSize = sizeof(fmt);
+            SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+
+            fmt.dwMask = CFM_SUBSCRIPT | CFM_SUPERSCRIPT;
+            if (fmt.dwEffects & effect)
+                fmt.dwEffects &= ~(CFE_SUBSCRIPT | CFE_SUPERSCRIPT);
+            else
+                fmt.dwEffects = (fmt.dwEffects & ~(CFE_SUBSCRIPT | CFE_SUPERSCRIPT)) | effect;
+
+            SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+        }
+        break;
+
+    case ID_INDENT_INCREASE:
+    case ID_INDENT_DECREASE:
+        {
+            PARAFORMAT2 pf;
+
+            pf.cbSize = sizeof(pf);
+            pf.dwMask = PFM_STARTINDENT;
+            SendMessageW(hwndEditor, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
+
+            pf.dwMask = PFM_STARTINDENT;
+            pf.dxStartIndent += (LOWORD(wParam) == ID_INDENT_INCREASE) ? 720 : -720;
+            if (pf.dxStartIndent < 0)
+                pf.dxStartIndent = 0;
+
+            SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
+        }
+        break;
+
+    case ID_LINESPACING_100:
+    case ID_LINESPACING_115:
+    case ID_LINESPACING_150:
+    case ID_LINESPACING_200:
+        {
+            PARAFORMAT2 pf;
+            static const int spacing_twips[] = { 240, 276, 360, 480 };
+
+            ZeroMemory(&pf, sizeof(pf));
+            pf.cbSize = sizeof(pf);
+            pf.dwMask = PFM_LINESPACING;
+            pf.bLineSpacingRule = 4;
+            pf.dyLineSpacing = spacing_twips[LOWORD(wParam) - ID_LINESPACING_100];
+
+            SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
+        }
+        break;
+
+    case ID_ZOOM_IN:
+    case ID_ZOOM_OUT:
+    case ID_ZOOM_100:
+        {
+            int pct = wordpad_get_zoom();
+
+            if (LOWORD(wParam) == ID_ZOOM_100)
+                pct = 100;
+            else if (LOWORD(wParam) == ID_ZOOM_IN)
+                pct = min(pct + 10, 500);
+            else
+                pct = max(pct - 10, 10);
+
+            wordpad_set_zoom(pct);
+        }
+        break;
+
+    case ID_EDIT_PASTESPECIAL:
+    case ID_INSERT_OBJECT:
+    case ID_INSERT_PICTURE:
+    case ID_SEND_MAIL:
+        /* not available yet: ribbon shows these disabled */
+        break;
+
 
     case ID_FILE_EXIT:
         PostMessageW(hWnd, WM_CLOSE, 0, 0);
@@ -2185,7 +1805,6 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 
                     SendMessageW(hEditorWnd, EM_SETMODIFY, FALSE, 0);
                     set_fileformat(ret);
-                    update_font_list();
                 }
             }
         }
@@ -2212,13 +1831,9 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
     case ID_FILE_RECENT3:
     case ID_FILE_RECENT4:
         {
-            HMENU hMenu = GetMenu(hWnd);
-            MENUITEMINFOW mi;
-
-            mi.cbSize = sizeof(MENUITEMINFOW);
-            mi.fMask = MIIM_DATA;
-            if(GetMenuItemInfoW(hMenu, LOWORD(wParam), FALSE, &mi))
-                DoOpenFile((LPWSTR)mi.dwItemData);
+            LPCWSTR path = registry_get_recent_file(LOWORD(wParam) - ID_FILE_RECENT1);
+            if (path && path[0] && prompt_save_changes())
+                DoOpenFile(path);
         }
         break;
 
@@ -2259,7 +1874,8 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 
             init_preview(hWnd, wszFileName);
 
-            SetMenu(hWnd, NULL);
+            ribbon_set_preview(TRUE);
+
             InvalidateRect(0, 0, TRUE);
         }
         break;
@@ -2299,44 +1915,29 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         }
 
     case ID_FORMAT_COLOR:
-    {
-        HWND hReBarWnd = GetDlgItem(hWnd, IDC_REBAR);
-        HWND hFormatBarWnd = GetDlgItem(hReBarWnd, IDC_FORMATBAR);
-        HMENU hPop;
-        RECT itemrc;
-        POINT pt;
-        int mid;
-        int itemidx = SendMessageW(hFormatBarWnd, TB_COMMANDTOINDEX, ID_FORMAT_COLOR, 0);
-
-        SendMessageW(hFormatBarWnd, TB_GETITEMRECT, itemidx, (LPARAM)&itemrc);
-        pt.x = itemrc.left;
-        pt.y = itemrc.bottom;
-        ClientToScreen(hFormatBarWnd, &pt);
-        hPop = GetSubMenu(hColorPopupMenu, 0);
-        mid = TrackPopupMenu(hPop, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON |
-                                   TPM_RETURNCMD | TPM_NONOTIFY,
-                             pt.x, pt.y, 0, hWnd, 0);
-        if (mid >= ID_COLOR_FIRST && mid <= ID_COLOR_AUTOMATIC)
         {
             CHARFORMAT2W fmt;
+            int index = 0;
+            int i;
 
             ZeroMemory(&fmt, sizeof(fmt));
             fmt.cbSize = sizeof(fmt);
             SendMessageW(hwndEditor, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
 
-            fmt.dwMask = CFM_COLOR;
-
-            if (mid < ID_COLOR_AUTOMATIC) {
-                fmt.crTextColor = textcolors[mid - ID_COLOR_FIRST];
-                fmt.dwEffects &= ~CFE_AUTOCOLOR;
-            } else {
-                fmt.dwEffects |= CFE_AUTOCOLOR;
+            if ((fmt.dwMask & CFM_COLOR) && !(fmt.dwEffects & CFE_AUTOCOLOR))
+            {
+                for (i = 0; i < 16; i++)
+                {
+                    if (textcolors[i] == fmt.crTextColor)
+                    {
+                        index = i;
+                        break;
+                    }
+                }
             }
-
-            SendMessageW(hwndEditor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&fmt);
+            apply_color_to_selection(index, FALSE);
         }
         break;
-    }
 
     case ID_EDIT_CUT:
         PostMessageW(hwndEditor, WM_CUT, 0, 0);
@@ -2499,6 +2100,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
     case ID_ALIGN_LEFT:
     case ID_ALIGN_CENTER:
     case ID_ALIGN_RIGHT:
+    case ID_ALIGN_JUSTIFY:
         {
         PARAFORMAT2 pf;
 
@@ -2508,6 +2110,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         case ID_ALIGN_LEFT: pf.wAlignment = PFA_LEFT; break;
         case ID_ALIGN_CENTER: pf.wAlignment = PFA_CENTER; break;
         case ID_ALIGN_RIGHT: pf.wAlignment = PFA_RIGHT; break;
+        case ID_ALIGN_JUSTIFY: pf.wAlignment = PFA_JUSTIFY; break;
         }
         SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
         break;
@@ -2561,26 +2164,6 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 
     case ID_VIEWPROPERTIES:
         dialog_viewproperties();
-        break;
-
-    case IDC_FONTLIST:
-        if (HIWORD(wParam) == CBN_SELENDOK)
-        {
-            WCHAR buffer[LF_FACESIZE];
-            HWND hwndFontList = (HWND)lParam;
-            get_comboexlist_selection(hwndFontList, buffer, LF_FACESIZE);
-            on_fontlist_modified(buffer);
-        }
-        break;
-
-    case IDC_SIZELIST:
-        if (HIWORD(wParam) == CBN_SELENDOK)
-        {
-            WCHAR buffer[MAX_STRING_LEN+1];
-            HWND hwndSizeList = (HWND)lParam;
-            get_comboexlist_selection(hwndSizeList, buffer, MAX_STRING_LEN+1);
-            on_sizelist_modified(hwndSizeList, buffer);
-        }
         break;
 
     default:
@@ -2664,13 +2247,15 @@ static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam )
     RECT rc;
     HWND hwndEditor = preview_isactive() ? GetDlgItem(hWnd, IDC_PREVIEW) : GetDlgItem(hWnd, IDC_EDITOR);
     HWND hwndStatusBar = GetDlgItem(hWnd, IDC_STATUSBAR);
-    HWND hwndReBar = GetDlgItem(hWnd, IDC_REBAR);
-    HWND hRulerWnd = GetDlgItem(hwndReBar, IDC_RULER);
-    int rebarHeight = 0;
+    HWND hRulerWnd = GetDlgItem(hWnd, IDC_RULER);
+    HWND hwndRibbon = ribbon_hwnd();
+    UINT ribbonHeight = ribbon_height();
+    int rulerHeight = 0;
 
     if (hwndStatusBar)
     {
         SendMessageW(hwndStatusBar, WM_SIZE, 0, 0);
+        ribbon_layout_statusbar(hwndStatusBar);
         if (IsWindowVisible(hwndStatusBar))
         {
             GetClientRect(hwndStatusBar, &rc);
@@ -2680,16 +2265,22 @@ static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam )
             nStatusSize = 0;
         }
     }
-    if (hwndReBar)
+    if (hwndRibbon)
     {
-        rebarHeight = SendMessageW(hwndReBar, RB_GETBARHEIGHT, 0, 0);
-
-        MoveWindow(hwndReBar, 0, 0, LOWORD(lParam), rebarHeight, TRUE);
+        MoveWindow(hwndRibbon, 0, 0, LOWORD(lParam), ribbonHeight, TRUE);
+    }
+    if (hRulerWnd && IsWindowVisible(hRulerWnd))
+    {
+        RECT rcRuler;
+        GetWindowRect(hRulerWnd, &rcRuler);
+        rulerHeight = rcRuler.bottom - rcRuler.top;
+        MoveWindow(hRulerWnd, 0, ribbonHeight, LOWORD(lParam), rulerHeight, TRUE);
     }
     if (hwndEditor)
     {
         GetClientRect(hWnd, &rc);
-        MoveWindow(hwndEditor, 0, rebarHeight, rc.right, rc.bottom-nStatusSize-rebarHeight, TRUE);
+        MoveWindow(hwndEditor, 0, ribbonHeight + rulerHeight, rc.right,
+                   rc.bottom - nStatusSize - ribbonHeight - rulerHeight, TRUE);
     }
 
     redraw_ruler(hRulerWnd);
@@ -2722,7 +2313,23 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         return OnCommand( hWnd, wParam, lParam );
 
     case WM_DESTROY:
+        ribbon_destroy();
         PostQuitMessage(0);
+        break;
+
+    case WM_HSCROLL:
+        if (ribbon_on_hscroll((HWND)lParam, LOWORD(wParam)))
+            return 0;
+        break;
+
+    case WM_DPICHANGED:
+        ribbon_set_dpi(HIWORD(wParam));
+        break;
+
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+    case WM_SETTINGCHANGE:
+        ribbon_on_theme_changed();
         break;
 
     case WM_CLOSE:
@@ -2800,7 +2407,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
                             GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     wc.hCursor = LoadCursorW(NULL, (LPWSTR)IDC_IBEAM);
     wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-    wc.lpszMenuName = MAKEINTRESOURCEW(IDM_MAINMENU);
+    wc.lpszMenuName = NULL;
     wc.lpszClassName = L"WORDPADTOP";
     RegisterClassExW(&wc);
 
@@ -2840,11 +2447,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     set_caption(NULL);
     set_bar_states();
     set_fileformat(SF_RTF);
-    hColorPopupMenu = LoadMenuW(hInstance, MAKEINTRESOURCEW(IDM_COLOR_POPUP));
     get_default_printer_opts();
     target_device(hMainWnd, wordWrap[reg_formatindex(fileFormat)]);
 
-    hRulerWnd = GetDlgItem(GetDlgItem(hMainWnd, IDC_REBAR), IDC_RULER);
+    hRulerWnd = GetDlgItem(hMainWnd, IDC_RULER);
     SendMessageW(GetDlgItem(hMainWnd, IDC_EDITOR), EM_POSFROMCHAR, (WPARAM)&EditPoint, 0);
     hPrevRulerProc = SetWindowLongPtrW(hRulerWnd, GWLP_WNDPROC, (UINT_PTR)ruler_proc);
     SendMessageW(hRulerWnd, WM_USER, (WPARAM)&EditPoint, hPrevRulerProc);
@@ -2856,6 +2462,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
         if (IsDialogMessageW(hFindWnd, &msg))
             continue;
 
+        if (ribbon_pretranslate(&msg))
+            continue;
+
         if (TranslateAcceleratorW(hMainWnd, hAccel, &msg))
             continue;
         TranslateMessage(&msg);
@@ -2865,4 +2474,61 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     }
 
     return 0;
+}
+
+
+/* helpers for ribbon.c */
+void wordpad_apply_font_face(LPCWSTR face)
+{
+    if (face && face[0])
+        set_font(face);
+}
+
+void wordpad_apply_font_size(LPCWSTR size)
+{
+    float value = 0;
+    if (size && number_from_string(size, &value, NULL) && value > 0)
+        set_size(value);
+}
+
+void wordpad_open_recent_file(int index)
+{
+    LPCWSTR path = registry_get_recent_file(index);
+    if (path && path[0] && prompt_save_changes())
+        DoOpenFile(path);
+}
+
+void wordpad_set_word_wrap(int mode)
+{
+    int index = reg_formatindex(fileFormat);
+    wordWrap[index] = mode;
+    target_device(hMainWnd, wordWrap[index]);
+}
+
+int wordpad_get_word_wrap_option(void)
+{
+    return wordWrap[reg_formatindex(fileFormat)];
+}
+
+BOOL wordpad_is_readonly(void)
+{
+    return (GetWindowLongW(hEditorWnd, GWL_STYLE) & ES_READONLY) != 0;
+}
+
+int wordpad_get_zoom(void)
+{
+    int num = 0, den = 0;
+    SendMessageW(hEditorWnd, EM_GETZOOM, (WPARAM)&num, (LPARAM)&den);
+    if (num <= 0 || den <= 0)
+        return 100;
+    return (int)((num * 100) / den);
+}
+
+void wordpad_set_zoom(int pct)
+{
+    if (pct < 10) pct = 10;
+    if (pct > 500) pct = 500;
+    SendMessageW(hEditorWnd, EM_SETZOOM, pct, 100);
+    ribbon_sync_zoom();
+    ribbon_on_idle_state();
 }
