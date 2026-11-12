@@ -2949,6 +2949,23 @@ DxgkpDisplayCommitVidPnCandidateWithTarget(
     Result->CommittedHeight = NewCommittedHeight;
     Result->VidPnCommitted = TRUE;
 
+    /*
+     * The display driver now owns the scanout geometry.  The boot display
+     * (inbv/bootvid) keeps the stride it captured from the POST mode and
+     * would draw status text at that stride into the new mode, so hand the
+     * display over right after the first successful mode set and before any
+     * present.  The check keeps the later ownership notifications (adapter
+     * start, POSTDISPLAY reassert) idempotent.
+     */
+    if (!TopologyEmpty &&
+        Adapter->IsBasicDisplayFallback &&
+        InbvCheckDisplayOwnership())
+    {
+        DXGKRNL_INFO("K2INBV: adapter %p mode %lux%lu committed, releasing the boot display\n",
+                     Adapter, NewCommittedWidth, NewCommittedHeight);
+        InbvNotifyDisplayOwnershipLost(NULL);
+    }
+
     /* The monitor on each committed target may be a different one. */
     for (i = 0; !TopologyEmpty && i < VidPn->NumPaths; i++)
         DxgkpReportTargetColorimetry(Adapter, VidPn->Paths[i].VidPnTargetId);
