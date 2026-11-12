@@ -82,13 +82,34 @@ void registry_read_winrect(RECT* rc)
 {
     HKEY hKey = 0;
     DWORD size = sizeof(RECT);
+    BOOL loaded = TRUE;
 
     if(registry_get_handle(&hKey, 0, L"Options") != ERROR_SUCCESS ||
        RegQueryValueExW(hKey, L"FrameRect", 0, NULL, (LPBYTE)rc, &size) !=
        ERROR_SUCCESS || size != sizeof(RECT))
-        SetRect(rc, 0, 0, 600, 300);
+        loaded = FALSE;
 
     RegCloseKey(hKey);
+
+    if(!loaded)
+    {
+        RECT work;
+        int w, h;
+
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        w = (work.right - work.left) * 2 / 3;
+        h = (work.bottom - work.top) * 2 / 3;
+        SetRect(rc, work.left + ((work.right - work.left) - w) / 2,
+                     work.top + ((work.bottom - work.top) - h) / 2,
+                     work.left + ((work.right - work.left) - w) / 2 + w,
+                     work.top + ((work.bottom - work.top) - h) / 2 + h);
+    } else
+    {
+        if(rc->right - rc->left < 800)
+            rc->right = rc->left + 800;
+        if(rc->bottom - rc->top < 600)
+            rc->bottom = rc->top + 600;
+    }
 }
 
 void registry_read_maximized(DWORD *bMaximized)

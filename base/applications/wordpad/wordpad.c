@@ -124,6 +124,18 @@ static int MessageBoxWithResStringW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption
     params.dwContextHelpId    = 0;
     params.lpfnMsgBoxCallback = NULL;
     params.dwLanguageId       = 0;
+
+    if(IS_INTRESOURCE(lpText))
+    {
+        WCHAR buf[512];
+
+        if(!LoadStringW(GetModuleHandleW(0), LOWORD(lpText), buf, ARRAY_SIZE(buf)))
+        {
+            WCHAR fallback[64];
+            wsprintfW(fallback, L"Message %u", LOWORD(lpText));
+            params.lpszText = fallback;
+        }
+    }
     return MessageBoxIndirectW(&params);
 }
 
@@ -312,6 +324,28 @@ static void set_font(LPCWSTR wszFaceName)
     SendMessageW(hEditorWnd, EM_SETCHARFORMAT,  SCF_SELECTION, (LPARAM)&fmt);
 }
 
+static int CALLBACK find_font_proc(const LOGFONTW *lpe, const TEXTMETRICW *lpnte, DWORD fontType, LPARAM lParam)
+{
+    (void)lpnte;
+    (void)fontType;
+    if(!lstrcmpiW(lpe->lfFaceName, (LPCWSTR)lParam))
+        return 0;
+    return 1;
+}
+
+static BOOL font_installed(LPCWSTR name)
+{
+    LOGFONTW lf;
+    HDC hdc = GetDC(NULL);
+    BOOL found;
+
+    ZeroMemory(&lf, sizeof(lf));
+    lstrcpynW(lf.lfFaceName, name, LF_FACESIZE);
+    found = !EnumFontFamiliesExW(hdc, &lf, find_font_proc, (LPARAM)name, 0);
+    ReleaseDC(NULL, hdc);
+    return found;
+}
+
 static void set_default_font(void)
 {
     CHARFORMAT2W fmt;
@@ -324,7 +358,12 @@ static void set_default_font(void)
     fmt.dwEffects = 0;
 
     if(fileFormat & SF_RTF)
-        font = L"Times New Roman";
+    {
+        font = font_installed(L"Calibri") ? L"Calibri" :
+               (font_installed(L"Arial") ? L"Arial" : L"Times New Roman");
+        fmt.dwMask |= CFM_SIZE;
+        fmt.yHeight = 11 * 20;
+    }
     else
         font = L"Courier New";
 
@@ -485,7 +524,7 @@ static void ShowOpenError(DWORD Code)
         default:
             Message = MAKEINTRESOURCEW(STRING_OPEN_FAILED);
     }
-    MessageBoxW(hMainWnd, Message, wszAppName, MB_ICONEXCLAMATION | MB_OK);
+    MessageBoxWithResStringW(hMainWnd, Message, wszAppName, MB_ICONEXCLAMATION | MB_OK);
 }
 
 static void DoOpenFile(LPCWSTR szOpenFileName)

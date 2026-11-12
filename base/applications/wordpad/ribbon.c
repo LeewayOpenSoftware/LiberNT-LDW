@@ -524,13 +524,7 @@ static HRESULT CALLBACK ribbon_query_state(UINT32 id, LeewayUICommandState *stat
             break;
         case ID_FIND:
         case ID_FIND_NEXT:
-        {
-            GETTEXTLENGTHEX gt;
-            gt.flags = GTL_NUMCHARS;
-            gt.codepage = 1200;
-            state->enabled = SendMessageW(editor, EM_GETTEXTLENGTHEX, (WPARAM)&gt, 0) != 0;
             break;
-        }
         case ID_FORMAT_BOLD:
             state->checked = (fmt.dwMask & CFM_BOLD) && (fmt.dwEffects & CFE_BOLD);
             break;
