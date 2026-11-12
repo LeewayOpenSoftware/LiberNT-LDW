@@ -54,6 +54,7 @@ static int saveas_filter_override = -1;
 static WCHAR wszFileName[MAX_PATH];
 static WCHAR wszFilter[MAX_STRING_LEN*4+6*3+5];
 static WCHAR wszDefaultFileName[MAX_STRING_LEN];
+static WCHAR wszAppName[MAX_STRING_LEN];
 static WCHAR wszSaveChanges[MAX_STRING_LEN];
 static WCHAR units_cmW[MAX_STRING_LEN];
 static WCHAR units_inW[MAX_STRING_LEN];
@@ -94,6 +95,8 @@ static void DoLoadStrings(void)
 
     p = wszDefaultFileName;
     LoadStringW(hInstance, STRING_DEFAULT_FILENAME, p, MAX_STRING_LEN);
+
+    LoadStringW(hInstance, STRING_APP_NAME, wszAppName, MAX_STRING_LEN);
 
     p = wszSaveChanges;
     LoadStringW(hInstance, STRING_PROMPT_SAVE_CHANGES, p, MAX_STRING_LEN);
@@ -177,13 +180,14 @@ static void set_caption(LPCWSTR wszNewFileName)
     else
         wszNewFileName = file_basename((LPWSTR)wszNewFileName);
 
-    wszCaption = calloc(1, lstrlenW(wszNewFileName)*sizeof(WCHAR)+sizeof(L" - Wine Wordpad"));
+    wszCaption = calloc(1, (lstrlenW(wszNewFileName)+lstrlenW(wszAppName)+4)*sizeof(WCHAR));
 
     if(!wszCaption)
         return;
 
     memcpy(wszCaption, wszNewFileName, lstrlenW(wszNewFileName)*sizeof(WCHAR));
-    wcscat(wszCaption, L" - Wine Wordpad");
+    wcscat(wszCaption, L" - ");
+    wcscat(wszCaption, wszAppName);
 
     SetWindowTextW(hMainWnd, wszCaption);
 
@@ -479,7 +483,7 @@ static void ShowOpenError(DWORD Code)
         default:
             Message = MAKEINTRESOURCEW(STRING_OPEN_FAILED);
     }
-    MessageBoxW(hMainWnd, Message, L"Wine Wordpad", MB_ICONEXCLAMATION | MB_OK);
+    MessageBoxW(hMainWnd, Message, wszAppName, MB_ICONEXCLAMATION | MB_OK);
 }
 
 static void DoOpenFile(LPCWSTR szOpenFileName)
@@ -516,7 +520,7 @@ static void DoOpenFile(LPCWSTR szOpenFileName)
         {
             CloseHandle(hFile);
             MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_OLE_STORAGE_NOT_SUPPORTED),
-                    L"Wine Wordpad", MB_OK | MB_ICONEXCLAMATION);
+                    wszAppName, MB_OK | MB_ICONEXCLAMATION);
             return;
         }
     }
@@ -553,7 +557,7 @@ static void ShowWriteError(DWORD Code)
         default:
             Message = MAKEINTRESOURCEW(STRING_WRITE_FAILED);
     }
-    MessageBoxW(hMainWnd, Message, L"Wine Wordpad", MB_ICONEXCLAMATION | MB_OK);
+    MessageBoxW(hMainWnd, Message, wszAppName, MB_ICONEXCLAMATION | MB_OK);
 }
 
 static BOOL DoSaveFile(LPCWSTR wszSaveFileName, WPARAM format)
@@ -640,7 +644,7 @@ static BOOL DialogSaveFile(void)
         if(fileformat_flags(sfn.nFilterIndex-1) != SF_RTF)
         {
             if(MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_SAVE_LOSEFORMATTING),
-                           L"Wine Wordpad", MB_YESNO | MB_ICONEXCLAMATION) != IDYES)
+                           wszAppName, MB_YESNO | MB_ICONEXCLAMATION) != IDYES)
                 continue;
         }
         return DoSaveFile(sfn.lpstrFile, fileformat_flags(sfn.nFilterIndex-1));
@@ -680,7 +684,7 @@ static BOOL prompt_save_changes(void)
 
         wsprintfW(text, wszSaveChanges, displayFileName);
 
-        ret = MessageBoxW(hMainWnd, text, L"Wine Wordpad", MB_YESNOCANCEL | MB_ICONEXCLAMATION);
+        ret = MessageBoxW(hMainWnd, text, wszAppName, MB_YESNOCANCEL | MB_ICONEXCLAMATION);
 
         free(text);
 
@@ -727,7 +731,7 @@ static void DialogOpenFile(void)
 static void dialog_about(void)
 {
     HICON icon = LoadImageW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDI_WORDPAD), IMAGE_ICON, 48, 48, LR_SHARED);
-    ShellAboutW(hMainWnd, L"Wine Wordpad", 0, icon);
+    ShellAboutW(hMainWnd, wszAppName, 0, icon);
 }
 
 static INT_PTR CALLBACK formatopts_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -924,7 +928,7 @@ static void HandleCommandLine(LPWSTR cmdline)
     }
 
     if (opt_print)
-        MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_PRINTING_NOT_IMPLEMENTED), L"Wine Wordpad", MB_OK);
+        MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_PRINTING_NOT_IMPLEMENTED), wszAppName, MB_OK);
 }
 
 static LRESULT handle_findmsg(LPFINDREPLACEW pFr)
@@ -1006,7 +1010,7 @@ static LRESULT handle_findmsg(LPFINDREPLACEW pFr)
             custom_data->endPos = -1;
             EnableWindow(hMainWnd, FALSE);
             MessageBoxWithResStringW(hFindWnd, MAKEINTRESOURCEW(STRING_SEARCH_FINISHED),
-                                     L"Wine Wordpad", MB_OK | MB_ICONASTERISK | MB_TASKMODAL);
+                                     wszAppName, MB_OK | MB_ICONASTERISK | MB_TASKMODAL);
             EnableWindow(hMainWnd, TRUE);
         } else {
             SendMessageW(hEditorWnd, EM_SETSEL, ft.chrgText.cpMin, ft.chrgText.cpMax);
@@ -1294,7 +1298,7 @@ static INT_PTR CALLBACK paraformat_proc(HWND hWnd, UINT message, WPARAM wParam, 
                         if(ret != 3)
                         {
                             MessageBoxWithResStringW(hMainWnd, MAKEINTRESOURCEW(STRING_INVALID_NUMBER),
-                                        L"Wine Wordpad", MB_OK | MB_ICONASTERISK);
+                                        wszAppName, MB_OK | MB_ICONASTERISK);
                             return FALSE;
                         } else
                         {
@@ -1414,10 +1418,10 @@ static INT_PTR CALLBACK tabstops_proc(HWND hWnd, UINT message, WPARAM wParam, LP
                             if(!number_from_string(buffer, &number, &unit))
                             {
                                 MessageBoxWithResStringW(hWnd, MAKEINTRESOURCEW(STRING_INVALID_NUMBER),
-                                             L"Wine Wordpad", MB_OK | MB_ICONINFORMATION);
+                                             wszAppName, MB_OK | MB_ICONINFORMATION);
                             } else if (item_count >= MAX_TAB_STOPS) {
                                 MessageBoxWithResStringW(hWnd, MAKEINTRESOURCEW(STRING_MAX_TAB_STOPS),
-                                             L"Wine Wordpad", MB_OK | MB_ICONINFORMATION);
+                                             wszAppName, MB_OK | MB_ICONINFORMATION);
                             } else {
                                 int i;
                                 float next_number = -1;
@@ -1507,7 +1511,7 @@ static LRESULT OnCreate( HWND hWnd )
     hDLL = LoadLibraryW(L"riched20.dll");
     if(!hDLL)
     {
-        MessageBoxWithResStringW(hWnd, MAKEINTRESOURCEW(STRING_LOAD_RICHED_FAILED), L"Wine Wordpad",
+        MessageBoxWithResStringW(hWnd, MAKEINTRESOURCEW(STRING_LOAD_RICHED_FAILED), wszAppName,
                     MB_OK | MB_ICONEXCLAMATION);
         PostQuitMessage(1);
     }
@@ -1971,7 +1975,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         TEXTRANGEW tr;
 
         GetWindowTextW(hwndEditor, data, nLen+1);
-        MessageBoxW(NULL, data, L"Wine Wordpad", MB_OK);
+        MessageBoxW(NULL, data, wszAppName, MB_OK);
 
         free(data);
         data = malloc((nLen+1)*sizeof(WCHAR));
@@ -1982,7 +1986,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
 #ifdef __REACTOS__
         data[tr.chrg.cpMax - tr.chrg.cpMin] = UNICODE_NULL;
 #endif
-        MessageBoxW(NULL, data, L"Wine Wordpad", MB_OK);
+        MessageBoxW(NULL, data, wszAppName, MB_OK);
         free(data);
 
         /* SendMessage(hwndEditor, EM_SETSEL, 0, -1); */
@@ -2022,7 +2026,7 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         SendMessageW(hwndEditor, EM_GETSELTEXT, 0, (LPARAM)data);
         sprintf(buf, "Start = %ld, End = %ld", range.cpMin, range.cpMax);
         MessageBoxA(hWnd, buf, "Editor", MB_OK);
-        MessageBoxW(hWnd, data, L"Wine Wordpad", MB_OK);
+        MessageBoxW(hWnd, data, wszAppName, MB_OK);
         free(data);
         /* SendMessage(hwndEditor, EM_SETSEL, 0, -1); */
         return 0;
@@ -2425,10 +2429,12 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     wc.lpszClassName = L"PrtPreview";
     RegisterClassExW(&wc);
 
+    LoadStringW(hInstance, STRING_APP_NAME, wszAppName, MAX_STRING_LEN);
+
     registry_read_winrect(&rc);
     registry_read_maximized(&bMaximized);
 
-    hMainWnd = CreateWindowExW(0, L"WORDPADTOP", L"Wine Wordpad", WS_CLIPCHILDREN|WS_OVERLAPPEDWINDOW,
+    hMainWnd = CreateWindowExW(0, L"WORDPADTOP", wszAppName, WS_CLIPCHILDREN|WS_OVERLAPPEDWINDOW,
                                CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
                                NULL, NULL, hInstance, NULL);
     if ((nCmdShow == SW_SHOWNORMAL || nCmdShow == SW_SHOWDEFAULT)
