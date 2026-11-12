@@ -3111,6 +3111,18 @@ DxgkpBlitShadowToGop(
     if (Src == NULL || Dst == NULL || SrcPitch <= 0 || DstPitch <= 0 || GopSize == 0)
         return STATUS_NOT_SUPPORTED;
 
+    {
+        static LONG K2BlitLog;
+
+        if (InterlockedIncrement(&K2BlitLog) <= 8)
+        {
+            DXGKRNL_INFO("K2BLIT: GOP blit srcPitch=%ld postPitch=%ld postSize=%Iu "
+                         "committed=%lux%lu rect=(%ld,%ld)-(%ld,%ld)\n",
+                         SrcPitch, DstPitch, GopSize,
+                         SharedSurface->CommittedWidth, SharedSurface->CommittedHeight,
+                         Rect->left, Rect->top, Rect->right, Rect->bottom);
+        }
+    }
     Left = Rect->left; Top = Rect->top; Right = Rect->right; Bottom = Rect->bottom;
     if (Left < 0) Left = 0;
     if (Top < 0) Top = 0;

@@ -1054,8 +1054,17 @@ SoftGpuSetDisplayMode(
     KIRQL OldIrql;
     NTSTATUS Status;
 
+    DPRINT1("K2MODE: SetDisplayMode ModeCount=%lu ModeIndex=%lu CurrentMode=%lu "
+            "SetMode=%p dev=%lux%lu pitch=%lu\n",
+            Device->ModeCount, ModeIndex, Device->CurrentMode,
+            (PVOID)Device->PlatformSetMode, Device->Width, Device->Height,
+            Device->ScanoutPitch);
     if (Device->ModeCount == 0 || ModeIndex == Device->CurrentMode)
+    {
+        DPRINT1("K2MODE: SetDisplayMode early SUCCESS (%s), hardware untouched\n",
+                Device->ModeCount == 0 ? "ModeCount==0" : "same mode");
         return STATUS_SUCCESS;
+    }
     if (ModeIndex >= Device->ModeCount || Device->PlatformSetMode == NULL)
         return STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
 
@@ -1086,7 +1095,7 @@ SoftGpuSetDisplayMode(
     }
 
     KeReleaseMutex(&Device->ScanoutMutex, FALSE);
-    DPRINT("SOFTGPU: display mode %lux%lu pitch %lu: 0x%08lx\n",
+    DPRINT1("K2MODE: display mode %lux%lu pitch %lu: 0x%08lx\n",
             Mode->Width, Mode->Height, Mode->Pitch, Status);
     return Status;
 }
@@ -1857,6 +1866,19 @@ SoftGpuDdiPresentDisplayOnly(
         goto CleanupMutex;
     }
 
+    {
+        static LONG K2PresentLog;
+
+        if (InterlockedIncrement(&K2PresentLog) <= 8)
+        {
+            DPRINT1("K2MODE: present srcPitch=%ld dstPitch=%lu dev=%lux%lu "
+                    "scanoutPitch=%lu direct=%d primaryValid=%d destSize=%Iu\n",
+                    PresentDisplayOnly->Pitch, DestinationPitch,
+                    Device->Width, Device->Height, Device->ScanoutPitch,
+                    (int)Device->PlatformDirectScanout, (int)DirectPrimaryValid,
+                    DestinationSize);
+        }
+    }
     Composite = !Device->PlatformHardwarePointer && Destination == Device->Scanout;
     Status = STATUS_SUCCESS;
     for (Index = 0; Index < PresentDisplayOnly->NumMoves; ++Index)

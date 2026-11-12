@@ -12558,6 +12558,14 @@ StorePostDisplay:
                  PostAdapter->PostDisplayPitch != DisplayInformation->Pitch ||
                  PostAdapter->PostDisplayHeight != DisplayInformation->Height);
 
+            DXGKRNL_INFO("K2POST: acquire adapter %p old pitch=%lu h=%lu va=%p new pitch=%lu "
+                         "h=%lu pa=0x%I64X changed=%d\n",
+                         PostAdapter, PostAdapter->PostDisplayPitch,
+                         PostAdapter->PostDisplayHeight,
+                         PostAdapter->PostDisplayVirtualAddress,
+                         DisplayInformation->Pitch, DisplayInformation->Height,
+                         DisplayInformation->PhysicAddress.QuadPart,
+                         (int)MappingChanged);
             if (MappingChanged)
             {
                 DXGKRNL_TRACE("DxgkCbAcquirePostDisplayOwnership: "
