@@ -24,6 +24,9 @@
 
 #include "wordpad.h"
 
+static WCHAR filelist_paths[FILELIST_ENTRIES][MAX_PATH];
+static DWORD ruler_unit_value = UNIT_CM;
+
 static LRESULT registry_get_handle(HKEY *hKey, LPDWORD action, LPCWSTR subKey)
 {
     LONG ret;
@@ -103,131 +106,57 @@ void registry_read_maximized(DWORD *bMaximized)
     RegCloseKey(hKey);
 }
 
-static void truncate_path(LPWSTR file, LPWSTR out, LPWSTR pos1, LPWSTR pos2)
+DWORD registry_get_ruler_unit(void)
 {
-    *++pos1 = 0;
-
-    lstrcatW(out, file);
-    lstrcatW(out, L"...");
-    lstrcatW(out, pos2);
+    return ruler_unit_value;
 }
 
-static void format_filelist_filename(LPWSTR file, LPWSTR out)
+void registry_set_ruler_unit(DWORD unit)
 {
-    LPWSTR pos_basename;
-    LPWSTR truncpos1, truncpos2;
-    WCHAR myDocs[MAX_PATH];
+    HKEY hKey;
+    DWORD action;
 
-    SHGetFolderPathW(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, myDocs);
-    pos_basename = file_basename(file);
-    truncpos1 = NULL;
-    truncpos2 = NULL;
-
-    *(pos_basename-1) = 0;
-    if(!lstrcmpiW(file, myDocs) || (lstrlenW(pos_basename) > FILELIST_ENTRY_LENGTH))
+    ruler_unit_value = unit;
+    if(registry_get_handle(&hKey, &action, L"Options") == ERROR_SUCCESS)
     {
-        truncpos1 = pos_basename;
-        *(pos_basename-1) = '\\';
-    } else
-    {
-        LPWSTR pos;
-        BOOL morespace = FALSE;
-
-        *(pos_basename-1) = '\\';
-
-        for(pos = file; pos < pos_basename; pos++)
-        {
-            if(*pos == '\\' || *pos == '/')
-            {
-                if(truncpos1)
-                {
-                    if((pos - file + lstrlenW(pos_basename)) > FILELIST_ENTRY_LENGTH)
-                        break;
-
-                    truncpos1 = pos;
-                    morespace = TRUE;
-                    break;
-                }
-
-                if((pos - file + lstrlenW(pos_basename)) > FILELIST_ENTRY_LENGTH)
-                    break;
-
-                truncpos1 = pos;
-            }
-        }
-
-        if(morespace)
-        {
-            for(pos = pos_basename; pos >= truncpos1; pos--)
-            {
-                if(*pos == '\\' || *pos == '/')
-                {
-                    if((truncpos1 - file + lstrlenW(pos_basename) + pos_basename - pos) > FILELIST_ENTRY_LENGTH)
-                        break;
-
-                    truncpos2 = pos;
-                }
-            }
-        }
+        RegSetValueExW(hKey, L"RulerUnit", 0, REG_DWORD, (const BYTE*)&unit, sizeof(DWORD));
+        RegCloseKey(hKey);
     }
-
-    if(truncpos1 == pos_basename)
-        lstrcatW(out, pos_basename);
-    else if(truncpos1 == truncpos2 || !truncpos2)
-        lstrcatW(out, file);
-    else
-        truncate_path(file, out, truncpos1, truncpos2);
 }
+
 
 void registry_read_filelist(HWND hMainWnd)
 {
     HKEY hFileKey;
 
+    (void)hMainWnd;
+
+    ZeroMemory(filelist_paths, sizeof(filelist_paths));
+
     if(registry_get_handle(&hFileKey, 0, L"Recent file list") == ERROR_SUCCESS)
     {
-        WCHAR itemText[MAX_PATH+3], buffer[MAX_PATH];
-        /* The menu item name is not the same as the file name, so we need to store
-        the file name here */
-        static WCHAR file1[MAX_PATH], file2[MAX_PATH], file3[MAX_PATH], file4[MAX_PATH];
-        LPWSTR pFile[] = {file1, file2, file3, file4};
-        DWORD pathSize = MAX_PATH*sizeof(WCHAR);
+        DWORD pathSize;
         int i;
         WCHAR key[6];
-        MENUITEMINFOW mi;
-        HMENU hMenu = GetMenu(hMainWnd);
 
-        mi.cbSize = sizeof(MENUITEMINFOW);
-        mi.fMask = MIIM_ID | MIIM_DATA | MIIM_STRING | MIIM_FTYPE;
-        mi.fType = MFT_STRING;
-        mi.dwTypeData = itemText;
-        mi.wID = ID_FILE_RECENT1;
-
-        RemoveMenu(hMenu, ID_FILE_RECENT_SEPARATOR, MF_BYCOMMAND);
         for(i = 0; i < FILELIST_ENTRIES; i++)
         {
             wsprintfW(key, L"File%d", i+1);
-            RemoveMenu(hMenu, ID_FILE_RECENT1+i, MF_BYCOMMAND);
-            if(RegQueryValueExW(hFileKey, (LPWSTR)key, 0, NULL, (LPBYTE)pFile[i], &pathSize)
+            pathSize = MAX_PATH*sizeof(WCHAR);
+            if(RegQueryValueExW(hFileKey, (LPWSTR)key, 0, NULL, (LPBYTE)filelist_paths[i], &pathSize)
                != ERROR_SUCCESS)
                 break;
-
-            mi.dwItemData = (ULONG_PTR)pFile[i];
-            wsprintfW(itemText, L"&%d ", i+1);
-
-            lstrcpyW(buffer, pFile[i]);
-
-            format_filelist_filename(buffer, itemText);
-
-            InsertMenuItemW(hMenu, ID_FILE_EXIT, FALSE, &mi);
-            mi.wID++;
-            pathSize = MAX_PATH*sizeof(WCHAR);
         }
-        mi.fType = MFT_SEPARATOR;
-        mi.fMask = MIIM_FTYPE | MIIM_ID;
-        InsertMenuItemW(hMenu, ID_FILE_EXIT, FALSE, &mi);
 
         RegCloseKey(hFileKey);
     }
+}
+
+LPCWSTR registry_get_recent_file(int index)
+{
+    if(index < 0 || index >= FILELIST_ENTRIES)
+        return NULL;
+    return filelist_paths[index];
 }
 
 void registry_set_filelist(LPCWSTR newFile, HWND hMainWnd)
@@ -237,49 +166,43 @@ void registry_set_filelist(LPCWSTR newFile, HWND hMainWnd)
 
     if(registry_get_handle(&hKey, &action, L"Recent file list") == ERROR_SUCCESS)
     {
-        LPCWSTR pFiles[FILELIST_ENTRIES];
+        WCHAR pFiles[FILELIST_ENTRIES][MAX_PATH];
         int i;
-        HMENU hMenu = GetMenu(hMainWnd);
-        MENUITEMINFOW mi;
         WCHAR buffer[6];
 
-        mi.cbSize = sizeof(MENUITEMINFOW);
-        mi.fMask = MIIM_DATA;
-
         for(i = 0; i < FILELIST_ENTRIES; i++)
-            pFiles[i] = NULL;
+            pFiles[i][0] = L'\0';
 
-        for(i = 0; i < FILELIST_ENTRIES && GetMenuItemInfoW(hMenu, ID_FILE_RECENT1+i, FALSE, &mi); i++)
-            pFiles[i] = (LPWSTR)mi.dwItemData;
+        registry_read_filelist(hMainWnd);
+        for(i = 0; i < FILELIST_ENTRIES; i++)
+            lstrcpynW(pFiles[i], filelist_paths[i], MAX_PATH);
 
         if(lstrcmpiW(newFile, pFiles[0]))
         {
-            for(i = 0; i < FILELIST_ENTRIES && pFiles[i]; i++)
+            for(i = 0; i < FILELIST_ENTRIES && pFiles[i][0]; i++)
             {
                 if(!lstrcmpiW(pFiles[i], newFile))
                 {
                     int j;
                     for(j = 0; j < i; j++)
-                    {
-                        pFiles[i-j] = pFiles[i-j-1];
-                    }
-                    pFiles[0] = NULL;
+                        lstrcpynW(pFiles[i-j], pFiles[i-j-1], MAX_PATH);
+                    pFiles[0][0] = L'\0';
                     break;
                 }
             }
 
-            if(!pFiles[0])
+            if(!pFiles[0][0])
             {
-                pFiles[0] = newFile;
+                lstrcpynW(pFiles[0], newFile, MAX_PATH);
             } else
             {
                 for(i = 0; i < FILELIST_ENTRIES-1; i++)
-                    pFiles[FILELIST_ENTRIES-1-i] = pFiles[FILELIST_ENTRIES-2-i];
+                    lstrcpynW(pFiles[FILELIST_ENTRIES-1-i], pFiles[FILELIST_ENTRIES-2-i], MAX_PATH);
 
-                pFiles[0] = newFile;
+                lstrcpynW(pFiles[0], newFile, MAX_PATH);
             }
 
-            for(i = 0; i < FILELIST_ENTRIES && pFiles[i]; i++)
+            for(i = 0; i < FILELIST_ENTRIES && pFiles[i][0]; i++)
             {
                 wsprintfW(buffer, L"File%d", i+1);
                 RegSetValueExW(hKey, (LPWSTR)&buffer, 0, REG_SZ, (const BYTE*)pFiles[i],
@@ -304,7 +227,9 @@ void registry_read_options(void)
         registry_read_pagemargins(NULL);
     else
     {
+        DWORD size = sizeof(DWORD);
         registry_read_pagemargins(hKey);
+        RegQueryValueExW(hKey, L"RulerUnit", 0, NULL, (LPBYTE)&ruler_unit_value, &size);
         RegCloseKey(hKey);
     }
 
