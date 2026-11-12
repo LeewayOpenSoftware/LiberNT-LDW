@@ -106,7 +106,7 @@ static LeewayUICommand ribbon_commands[] = {
     /* insert */
     { ID_DATETIME,       L"Date and time",    L"Insert the current date and time",      L"D",  LWUI_AUR_WORDPAD_DATETIME, TRUE,  FALSE, TRUE },
     { ID_INSERT_OBJECT,  L"Insert object",    L"Embed an object (not available yet)",   L"J",  LWUI_AUR_WORDPAD_OBJECT, FALSE, FALSE, TRUE },
-    { ID_INSERT_PICTURE, L"Picture",          L"Insert a picture from a file (not available yet)", L"P", LWUI_AUR_WORDPAD_PICTURE, FALSE, FALSE, TRUE },
+    { ID_INSERT_PICTURE, L"Picture",          L"Insert a picture from a file", L"P", LWUI_AUR_WORDPAD_PICTURE, TRUE, FALSE, TRUE },
 
     /* editing */
     { ID_FIND,           L"Find",             L"Find text (Ctrl+F)",                    L"FD", LWUI_AUR_COMMON_FIND, TRUE,  FALSE, TRUE },
