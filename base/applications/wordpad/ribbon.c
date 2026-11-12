@@ -62,8 +62,8 @@ static LeewayUICommand ribbon_commands[] = {
     { ID_FILE_EXIT,      L"Exit",             L"Exit WordPad",                          L"X",  LWUI_AUR_COMMON_EXIT, TRUE,  FALSE, TRUE },
 
     /* QAT */
-    { ID_EDIT_UNDO,      L"Undo",             L"Undo (Ctrl+Z)",                         L"1",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
-    { ID_EDIT_REDO,      L"Redo",             L"Redo (Ctrl+Y)",                         L"2",  LWUI_ICON_NONE, TRUE,  FALSE, TRUE },
+    { ID_EDIT_UNDO,      L"Undo",             L"Undo (Ctrl+Z)",                         L"1",  LWUI_AUR_COMMON_UNDO, TRUE,  FALSE, TRUE },
+    { ID_EDIT_REDO,      L"Redo",             L"Redo (Ctrl+Y)",                         L"2",  LWUI_AUR_COMMON_REDO, TRUE,  FALSE, TRUE },
 
     /* clipboard */
     { ID_EDIT_PASTE,     L"Paste",            L"Paste (Ctrl+V)",                        L"V",  LWUI_AUR_COMMON_PASTE, TRUE,  FALSE, TRUE },
