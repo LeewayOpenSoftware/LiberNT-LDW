@@ -66,6 +66,7 @@ static WCHAR units_ptW[MAX_STRING_LEN];
 static int last_bullet = PFN_BULLET;
 
 static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam );
+static INT_PTR CALLBACK tabstops_proc(HWND, UINT, WPARAM, LPARAM);
 
 typedef struct
 {
@@ -1230,6 +1231,10 @@ static INT_PTR CALLBACK newfile_proc(HWND hWnd, UINT message, WPARAM wParam, LPA
         case WM_COMMAND:
             switch(LOWORD(wParam))
             {
+                case IDC_PARA_TABS:
+                    DialogBoxW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDD_TABSTOPS), hWnd, tabstops_proc);
+                    break;
+
                 case IDOK:
                     {
                         LRESULT index;
@@ -1300,6 +1305,10 @@ static INT_PTR CALLBACK paraformat_proc(HWND hWnd, UINT message, WPARAM wParam, 
         case WM_COMMAND:
             switch(LOWORD(wParam))
             {
+                case IDC_PARA_TABS:
+                    DialogBoxW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDD_TABSTOPS), hWnd, tabstops_proc);
+                    break;
+
                 case IDOK:
                     {
                         HWND hListWnd = GetDlgItem(hWnd, IDC_PARA_ALIGN);
