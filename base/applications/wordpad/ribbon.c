@@ -33,6 +33,7 @@
 #include <leewayui/ribbon.h>
 #include <leewayui/ribbon_icons.h>
 #include <leewayui/aureline_icons.h>
+#include <leewayui/print.h>
 
 #include "wordpad.h"
 
@@ -43,13 +44,15 @@ static int g_sliderUpdating;
 static UINT g_cfRichText;
 static LeewayThemePref g_themePref = LEEWAY_THEME_PREF_SYSTEM;
 static BOOL g_themePrefSet;
+static LeewayAurelineConfig g_aurcfg;
+static WCHAR g_iconroot[MAX_PATH];
 
 #define TAB_HOME 1
 #define TAB_VIEW 2
 #define TAB_PRINTPREVIEW 3
 
 /* Command table: labels/tooltips/keytips per RIBBON-APPS-SPEC.md section 3.
- * Icons stay at LWUI_ICON_NONE until the Aureline resolver lands (ribbon-f2). */
+ * Icon ids are Aureline ids, resolved by the stock Aureline resolver. */
 static LeewayUICommand ribbon_commands[] = {
     /* application menu */
     { ID_FILE_NEW,       L"New",              L"Create a new document",                 L"N",  LWUI_AUR_COMMON_NEW, TRUE,  FALSE, TRUE },
@@ -788,18 +791,16 @@ BOOL ribbon_create(HWND hMainWnd)
 
     /* Aureline icons: assets ship in the tree next to the framework */
     {
-        static LeewayAurelineConfig aurcfg;
-        static WCHAR iconroot[MAX_PATH];
         WCHAR *slash;
 
-        GetModuleFileNameW(NULL, iconroot, MAX_PATH);
-        slash = wcsrchr(iconroot, L'\\');
+        GetModuleFileNameW(NULL, g_iconroot, MAX_PATH);
+        slash = wcsrchr(g_iconroot, L'\\');
         if (slash)
             *slash = L'\0';
-        lstrcatW(iconroot, L"\\..\\..\\..\\..\\sdk\\lib\\leewayui\\icons");
-        aurcfg.root = iconroot;
-        aurcfg.mono_fallback_to_colour = TRUE;
-        LeewayRibbonUseAurelineIcons(g_ribbon, &aurcfg);
+        lstrcatW(g_iconroot, L"\\..\\..\\..\\..\\sdk\\lib\\leewayui\\icons");
+        g_aurcfg.root = g_iconroot;
+        g_aurcfg.mono_fallback_to_colour = TRUE;
+        LeewayRibbonUseAurelineIcons(g_ribbon, &g_aurcfg);
     }
 
     /* recent files: framework right pane, backed by our existing MRU */
@@ -828,6 +829,16 @@ void ribbon_set_theme_pref(int pref)
         g_themePref = (LeewayThemePref)pref;
         g_themePrefSet = TRUE;
     }
+}
+
+int ribbon_theme_pref(void)
+{
+    return (int)g_themePref;
+}
+
+HRESULT ribbon_install_preview_icons(struct ILeewayPrintPreview *pv)
+{
+    return LeewayPrintPreviewSetIconResolver(pv, LeewayRibbonAurelineResolver, &g_aurcfg);
 }
 
 void ribbon_destroy(void)

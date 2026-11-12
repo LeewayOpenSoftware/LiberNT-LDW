@@ -39,11 +39,8 @@
 
 #include "wordpad.h"
 
-/* use LoadString */
-LRESULT CALLBACK preview_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-static HWND hMainWnd;
-static HWND hEditorWnd;
+HWND hMainWnd;
+HWND hEditorWnd;
 static HWND hFindWnd;
 
 static UINT ID_FINDMSGSTRING;
@@ -2491,7 +2488,7 @@ static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam )
 {
     int nStatusSize = 0;
     RECT rc;
-    HWND hwndEditor = preview_isactive() ? GetDlgItem(hWnd, IDC_PREVIEW) : GetDlgItem(hWnd, IDC_EDITOR);
+    HWND hwndEditor = preview_isactive() ? preview_hwnd() : GetDlgItem(hWnd, IDC_EDITOR);
     HWND hwndStatusBar = GetDlgItem(hWnd, IDC_STATUSBAR);
     HWND hRulerWnd = GetDlgItem(hWnd, IDC_RULER);
     HWND hwndRibbon = ribbon_hwnd();
@@ -2525,8 +2522,16 @@ static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam )
     if (hwndEditor)
     {
         GetClientRect(hWnd, &rc);
-        MoveWindow(hwndEditor, 0, ribbonHeight + rulerHeight, rc.right,
-                   rc.bottom - nStatusSize - ribbonHeight - rulerHeight, TRUE);
+        if (preview_isactive())
+        {
+            /* the shared print-preview frame has its own ribbon at the top */
+            MoveWindow(hwndEditor, 0, 0, rc.right, rc.bottom - nStatusSize, TRUE);
+        }
+        else
+        {
+            MoveWindow(hwndEditor, 0, ribbonHeight + rulerHeight, rc.right,
+                       rc.bottom - nStatusSize - ribbonHeight - rulerHeight, TRUE);
+        }
     }
 
     redraw_ruler(hRulerWnd);
@@ -2551,14 +2556,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         return OnNotify( hWnd, lParam );
 
     case WM_COMMAND:
-        if(preview_isactive())
-        {
-            return preview_command( hWnd, wParam );
-        }
+        if(preview_isactive() && LOWORD(wParam) == ID_PREVIEW)
+            return 0;
 
         return OnCommand( hWnd, wParam, lParam );
 
     case WM_DESTROY:
+        preview_destroy();
         ribbon_destroy();
         PostQuitMessage(0);
         break;
@@ -2570,12 +2574,14 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_DPICHANGED:
         ribbon_set_dpi(HIWORD(wParam));
+        preview_set_dpi(HIWORD(wParam));
         break;
 
     case WM_THEMECHANGED:
     case WM_SYSCOLORCHANGE:
     case WM_SETTINGCHANGE:
         ribbon_on_theme_changed();
+        preview_on_theme_changed();
         break;
 
     case WM_CLOSE:
@@ -2657,19 +2663,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     wc.lpszClassName = L"WORDPADTOP";
     RegisterClassExW(&wc);
 
-    wc.style = 0;
-    wc.lpfnWndProc = preview_proc;
-    wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
-    wc.hInstance = hInstance;
-    wc.hIcon = NULL;
-    wc.hIconSm = NULL;
-    wc.hCursor = LoadCursorW(NULL, (LPWSTR)IDC_IBEAM);
-    wc.hbrBackground = NULL;
-    wc.lpszMenuName = NULL;
-    wc.lpszClassName = L"PrtPreview";
-    RegisterClassExW(&wc);
-
     LoadStringW(hInstance, STRING_APP_NAME, wszAppName, MAX_STRING_LEN);
 
     {
@@ -2726,6 +2719,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     while(GetMessageW(&msg,0,0,0))
     {
         if (IsDialogMessageW(hFindWnd, &msg))
+            continue;
+
+        if (preview_pretranslate(&msg))
             continue;
 
         if (ribbon_pretranslate(&msg))

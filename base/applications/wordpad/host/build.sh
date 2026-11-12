@@ -26,7 +26,7 @@ $RC -DRC_INVOKED -D__REACTOS__ -I"$HERE/rcinclude" $SHIM $PSDK -I"$APP" -I"$HERE
 $RC -DRC_INVOKED -D__REACTOS__ -I"$HERE/rcinclude" $SHIM $PSDK -I"$APP" "$APP/rsrc.rc" -O coff -o "$OBJ/rsrc_rc.o"
 
 $CC $CFLAGS $SHIM -I"$APP" -c "$APP/wordpad.c"    -o "$OBJ/wordpad.o"
-$CC $CFLAGS $SHIM -I"$APP" -c "$APP/print.c"      -o "$OBJ/print.o"
+$CC $CFLAGS $SHIM -I"$APP" -I"$ROOT/sdk/include" -c "$APP/print.c" -o "$OBJ/print.o"
 $CC $CFLAGS $SHIM -I"$APP" -c "$APP/registry.c"   -o "$OBJ/registry.o"
 $CC $CFLAGS $SHIM -I"$APP" -c "$APP/olecallback.c" -o "$OBJ/olecallback.o"
 $CC $CFLAGS $SHIM -I"$APP" -I"$ROOT/sdk/include" -c "$APP/ribbon.c" -o "$OBJ/ribbon.o"
@@ -35,10 +35,11 @@ $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/ribbon.cpp" -o "
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/theme.cpp"  -o "$OBJ/theme.o"
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/dpi.cpp"    -o "$OBJ/dpi.o"
 $CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/aureline_icons.cpp" -o "$OBJ/aureline.o"
+$CXX $CXXFLAGS -I"$ROOT/sdk/include" -c "$ROOT/sdk/lib/leewayui/print.cpp" -o "$OBJ/printfw.o"
 
 $CXX -static -mwindows -DUNICODE -D_UNICODE \
   "$OBJ/wordpad.o" "$OBJ/print.o" "$OBJ/registry.o" "$OBJ/olecallback.o" \
-  "$OBJ/ribbon.o" "$OBJ/ribbonfw.o" "$OBJ/theme.o" "$OBJ/dpi.o" "$OBJ/aureline.o" \
+  "$OBJ/ribbon.o" "$OBJ/ribbonfw.o" "$OBJ/theme.o" "$OBJ/dpi.o" "$OBJ/aureline.o" "$OBJ/printfw.o" \
   "$OBJ/wordpad_rc.o" "$OBJ/rsrc_rc.o" -o "$OUT" \
   -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -ladvapi32 -luser32 -lole32 -loleaut32 -lshlwapi -luuid -lmsimg32 -loleacc -lwindowscodecs -luxtheme
 

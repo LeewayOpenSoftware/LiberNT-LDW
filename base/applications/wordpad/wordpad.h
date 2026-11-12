@@ -294,21 +294,26 @@
 /* wordpad.c */
 LPWSTR file_basename(LPWSTR);
 
+extern HWND hMainWnd;
+extern HWND hEditorWnd;
+
 /* print.c */
 void dialog_printsetup(HWND);
 void dialog_print(HWND, LPWSTR);
 void target_device(HWND, DWORD);
 void print_quick(HWND, LPWSTR);
-LRESULT preview_command(HWND, WPARAM);
 void preview_exit(HWND);
 void init_preview(HWND, LPWSTR);
 void close_preview(HWND);
 BOOL preview_isactive(void);
+HWND preview_hwnd(void);
+void preview_destroy(void);
+void preview_set_dpi(UINT dpi);
+void preview_on_theme_changed(void);
+BOOL preview_pretranslate(MSG *msg);
 void get_default_printer_opts(void);
 void registry_set_pagemargins(HKEY);
 void registry_read_pagemargins(HKEY);
-void registry_set_previewpages(HKEY hKey);
-void registry_read_previewpages(HKEY hKey);
 LRESULT CALLBACK ruler_proc(HWND, UINT, WPARAM, LPARAM);
 void redraw_ruler(HWND);
 
@@ -351,6 +356,9 @@ void ribbon_sync_zoom(void);
 void ribbon_layout_statusbar(HWND hStatusBar);
 void ribbon_set_dpi(UINT dpi);
 void ribbon_on_theme_changed(void);
+int ribbon_theme_pref(void);
+struct ILeewayPrintPreview;
+HRESULT ribbon_install_preview_icons(struct ILeewayPrintPreview *pv);
 void ribbon_add_recent_file(LPCWSTR path);
 void ribbon_set_theme_pref(int pref);
 

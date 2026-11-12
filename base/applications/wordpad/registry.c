@@ -70,12 +70,6 @@ void registry_set_options(HWND hMainWnd)
         registry_set_pagemargins(hKey);
         RegCloseKey(hKey);
     }
-
-    if(registry_get_handle(&hKey, &action, L"Settings") == ERROR_SUCCESS)
-    {
-        registry_set_previewpages(hKey);
-        RegCloseKey(hKey);
-    }
 }
 
 void registry_read_winrect(RECT* rc)
@@ -251,13 +245,6 @@ void registry_read_options(void)
         DWORD size = sizeof(DWORD);
         registry_read_pagemargins(hKey);
         RegQueryValueExW(hKey, L"RulerUnit", 0, NULL, (LPBYTE)&ruler_unit_value, &size);
-        RegCloseKey(hKey);
-    }
-
-    if(registry_get_handle(&hKey, 0, L"Settings") != ERROR_SUCCESS) {
-        registry_read_previewpages(NULL);
-    } else {
-        registry_read_previewpages(hKey);
         RegCloseKey(hKey);
     }
 }
